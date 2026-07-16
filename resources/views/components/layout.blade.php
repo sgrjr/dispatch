@@ -13,16 +13,16 @@
     --}}
     <style>
         :root {
-            --dispatch-bg: #f4f5f7;
+            --dispatch-bg: #c9c9c9;
             --dispatch-surface: #ffffff;
             --dispatch-surface-muted: #f8fafc;
-            --dispatch-border: #e2e8f0;
+            --dispatch-border: #a4a5a5;
             --dispatch-text: #0f172a;
             --dispatch-text-muted: #64748b;
             --dispatch-text-faint: #94a3b8;
-            --dispatch-accent: #f97316;
+            --dispatch-accent: #2a7f2e;
             --dispatch-accent-contrast: #ffffff;
-            --dispatch-accent-hover: #ea580c;
+            --dispatch-accent-hover: #59755a;
             --dispatch-danger: #dc2626;
             --dispatch-danger-bg: #fef2f2;
             --dispatch-warning: #d97706;
@@ -50,7 +50,7 @@
                 --dispatch-text-faint: #64748b;
                 --dispatch-accent: #fb923c;
                 --dispatch-accent-contrast: #1c1917;
-                --dispatch-accent-hover: #f97316;
+                --dispatch-accent-hover: #2a7f2e;
                 --dispatch-danger: #f87171;
                 --dispatch-danger-bg: #3f1d1d;
                 --dispatch-warning: #fbbf24;
