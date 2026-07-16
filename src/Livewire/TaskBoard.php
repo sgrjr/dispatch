@@ -31,7 +31,13 @@ class TaskBoard extends Component
 
     public function mount(): void
     {
-        Gate::authorize('viewAny', config('dispatch.models.task'));
+        // Non-staff have no board — redirect them to their own submissions
+        // instead of 403 (staff-only surface; the portal is the non-staff view).
+        if (! app(DispatchGate::class)->isStaff(Auth::user())) {
+            $this->redirect(route(config('dispatch.routes.name_prefix', 'dispatch.').'portal'));
+
+            return;
+        }
     }
 
     /**

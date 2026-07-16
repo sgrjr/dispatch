@@ -4,7 +4,6 @@ namespace Sgrjr\Dispatch\Livewire;
 
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Gate;
 use Livewire\Attributes\Url;
 use Livewire\Component;
 use Livewire\WithPagination;
@@ -39,7 +38,13 @@ class TaskList extends Component
 
     public function mount(): void
     {
-        Gate::authorize('viewAny', config('dispatch.models.task'));
+        // Non-staff have no list — redirect them to their own submissions
+        // instead of 403 (staff-only surface; the portal is the non-staff view).
+        if (! app(DispatchGate::class)->isStaff(Auth::user())) {
+            $this->redirect(route(config('dispatch.routes.name_prefix', 'dispatch.').'portal'));
+
+            return;
+        }
     }
 
     public function updating($name): void
