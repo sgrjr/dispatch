@@ -15,6 +15,18 @@ import { ref, computed } from 'vue'
 
 const props = defineProps({
   endpoint: { type: String, default: '/dispatch/capture' },
+  // 'float' = fixed floating button (default); 'inline' = a plain trigger the
+  // host places itself (e.g. in a footer). The modal is identical in both.
+  variant: { type: String, default: 'float' },
+  label: { type: String, default: 'Feedback' },
+  // Quick links to the feature's core pages, shown inside the modal, e.g.
+  // [{ label: 'My submissions', href: '/dispatch/mine' }, ...]. Host-supplied
+  // so it can show role-appropriate destinations.
+  links: { type: Array, default: () => [] },
+  // Base path of the package's own routes (matches config('dispatch.routes.prefix')).
+  // Used to build the built-in nav links when `links` isn't supplied — so the
+  // host gets navigation for free and never has to hard-code the package's URLs.
+  basePath: { type: String, default: '/dispatch' },
 })
 
 const open = ref(false)
@@ -27,6 +39,19 @@ const result = ref(null)
 const error = ref('')
 
 const canSubmit = computed(() => title.value.trim().length > 0 && !submitting.value)
+
+// Built-in navigation to the feature's core pages. The host needs no knowledge
+// of the package's routes; it may override via `links`, or set `basePath` if it
+// changed the package's route prefix.
+const navLinks = computed(() =>
+  props.links.length
+    ? props.links
+    : [
+        { label: 'My submissions', href: `${props.basePath}/mine` },
+        { label: 'Feedback board', href: `${props.basePath}/board` },
+        { label: 'New', href: `${props.basePath}/new` },
+      ],
+)
 
 function csrfToken() {
   const el = document.head.querySelector('meta[name="csrf-token"]')
@@ -125,13 +150,23 @@ function previewUrl(file) {
 <template>
   <div class="dispatch-widget">
     <button
+      v-if="variant === 'float'"
       type="button"
       class="dw-fab"
       title="Report a bug or suggest a feature"
       @click="open = true"
     >
       <span aria-hidden="true">✎</span>
-      <span class="dw-fab-label">Feedback</span>
+      <span class="dw-fab-label">{{ label }}</span>
+    </button>
+    <button
+      v-else
+      type="button"
+      class="dw-trigger"
+      title="Report a bug or suggest a feature"
+      @click="open = true"
+    >
+      {{ label }}
     </button>
 
     <div v-if="open" class="dw-overlay" @click.self="close">
@@ -140,6 +175,11 @@ function previewUrl(file) {
           <strong>Report a bug / suggest a feature</strong>
           <button type="button" class="dw-x" @click="close" aria-label="Close">×</button>
         </header>
+
+        <nav v-if="navLinks.length" class="dw-links">
+          <span class="dw-links-label">Go to</span>
+          <a v-for="l in navLinks" :key="l.href" :href="l.href" class="dw-navlink">{{ l.label }}</a>
+        </nav>
 
         <div v-if="result" class="dw-success">
           <p>Thanks — logged as <strong>{{ result.code }}</strong>.</p>
@@ -209,6 +249,11 @@ function previewUrl(file) {
   box-shadow: 0 6px 20px rgba(0,0,0,.18); font-size: 0.9rem;
 }
 .dw-fab-label { font-weight: 600; }
+.dw-trigger {
+  background: none; border: none; padding: 0; margin: 0;
+  color: inherit; font: inherit; cursor: pointer; text-decoration: underline;
+}
+.dw-trigger:hover { opacity: 0.85; }
 .dw-overlay {
   position: fixed; inset: 0; z-index: 9999; display: flex;
   align-items: center; justify-content: center;
@@ -242,6 +287,10 @@ function previewUrl(file) {
 .dw-secondary { background: none; border: 1px solid var(--dw-border); padding: 0.5rem 0.9rem; border-radius: 6px; cursor: pointer; color: inherit; }
 .dw-error { color: #c0392b; font-size: 0.82rem; margin: 0; }
 .dw-link { color: var(--dw-accent); font-weight: 600; }
+.dw-links { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; padding: 0.55rem 1rem; border-bottom: 1px solid var(--dw-border); font-size: 0.8rem; }
+.dw-links-label { opacity: 0.55; }
+.dw-navlink { color: var(--dw-accent); text-decoration: none; font-weight: 600; }
+.dw-navlink:hover { text-decoration: underline; }
 @media (prefers-color-scheme: dark) {
   .dispatch-widget { --dispatch-fg: #e7edf3; --dispatch-bg: #1b232c; --dispatch-border: #33414f; }
 }
