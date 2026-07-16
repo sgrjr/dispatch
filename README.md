@@ -308,3 +308,44 @@ misconfigured disk driver could still make files guessable.
   is a single-team convenience, not a security model for a multi-role app.
 - See `.claude/skills/dispatch-track/SKILL.md` for wiring an AI coding agent
   to capture and drive tasks automatically via the CLI verb loop.
+
+## Programmatic reporting — the `DispatchTask` facade
+
+Create tasks from code. The facade is a thin proxy; all logic lives in the package.
+
+```php
+use Sgrjr\Dispatch\Facades\DispatchTask;
+
+DispatchTask::report('CSV import produced 3 malformed rows', [
+    'type' => 'bug', 'priority' => 'high', 'labels' => ['import'],
+]);
+
+DispatchTask::bug('Checkout total is wrong when a coupon is applied');
+DispatchTask::feature('Add a dark mode toggle');
+```
+
+Returns the created `Task` (sync mode) or `null` (queued / gated / throttled).
+
+### Auto-file bug reports from your exception handler
+
+```php
+// bootstrap/app.php
+use Sgrjr\Dispatch\Facades\DispatchTask;
+
+->withExceptions(function (Illuminate\Foundation\Configuration\Exceptions $exceptions) {
+    $exceptions->report(fn (\Throwable $e) => DispatchTask::fromException($e));
+})
+```
+
+`fromException()` derives a title, a stable signature (recurring errors dedupe onto
+one task and bump `times_seen` / `last_seen`), captures request/console context, and
+labels it `source:exception`. It **never throws** and returns `null` when gated,
+throttled, or on failure — safe to call inside an exception handler.
+
+### Config (`config/dispatch.php` → `reporter`)
+
+- `queue` — `false` = synchronous (default, returns the Task); a queue name string
+  offloads to the queue (canonical `dispatch()` / `dispatchSync()`; returns null).
+- `throttle_seconds` — minimum seconds between writes per signature (error-storm guard).
+- `environments` — `null` for all, or e.g. `['production']` to gate out dev noise.
+- `redact` — keys whose values are scrubbed from captured request input.

@@ -20,6 +20,9 @@ class DispatchServiceProvider extends ServiceProvider
         $this->app->singleton(DispatchGate::class, fn ($app) => $app->make(config('dispatch.contracts.gate')));
         $this->app->singleton(TenantResolver::class, fn ($app) => $app->make(config('dispatch.contracts.tenant')));
         $this->app->singleton(SubmitterResolver::class, fn ($app) => $app->make(config('dispatch.contracts.submitter')));
+
+        // Backs the DispatchTask facade (programmatic reporting).
+        $this->app->singleton(DispatchManager::class);
     }
 
     public function boot(): void

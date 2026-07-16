@@ -137,6 +137,44 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Programmatic reporter (the DispatchTask facade)
+    |--------------------------------------------------------------------------
+    |
+    | Powers DispatchTask::report()/bug()/feature()/fromException(). The create
+    | runs through a queueable job: sync by default (returns the Task), or set
+    | `queue` to a queue name to offload it (returns null). Env gating, throttle,
+    | and context capture happen before dispatch; dedupe happens in the job.
+    */
+    'reporter' => [
+        'enabled' => env('DISPATCH_REPORTER', true),
+
+        // null / [] = all environments; e.g. ['production'] to gate out dev noise.
+        'environments' => null,
+
+        // false = run synchronously (dispatchSync). A queue name string (or true)
+        // offloads to the queue (dispatch). `connection` optionally overrides it.
+        'queue' => env('DISPATCH_REPORTER_QUEUE', false),
+        'connection' => env('DISPATCH_REPORTER_CONNECTION'),
+
+        // Minimum seconds between writes for the same dedupe signature (0 = off).
+        // Protects the DB/board from an error storm.
+        'throttle_seconds' => 60,
+
+        // Attach request context (url/method/route/user/input) to the task.
+        'capture_request' => true,
+
+        // Keys whose values are scrubbed from captured input/context.
+        'redact' => [
+            'password', 'password_confirmation', 'current_password',
+            'token', '_token', 'secret', 'api_key', 'authorization', 'cookie',
+        ],
+
+        'exception_label' => 'source:exception',
+        'trace_frames' => 20,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Notifications
     |--------------------------------------------------------------------------
     */

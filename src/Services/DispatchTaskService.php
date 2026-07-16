@@ -82,6 +82,14 @@ class DispatchTaskService
                 ['at' => now()->toIso8601String()],
             );
 
+            // Occurrence tracking: bump the counters in the stored context so a
+            // recurring error reads "seen N times" instead of spawning dupes.
+            $ctx = $existing->context ?? [];
+            $ctx['times_seen'] = (int) ($ctx['times_seen'] ?? 1) + 1;
+            $ctx['last_seen'] = now()->toIso8601String();
+            $existing->context = $ctx;
+            $existing->save();
+
             return $existing;
         }
 
