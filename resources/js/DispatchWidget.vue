@@ -352,18 +352,18 @@ function previewUrl(file) {
   background: rgba(15,23,32,.45); padding: 1rem;
 }
 .dw-modal {
-  width: 100%; max-width: 30rem; background: var(--dw-bg); color: var(--dw-fg);
+  width: 100%; max-width: 30rem; background: var(--dw-bg); color: var(--dw-fg) !important;
   border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.3); overflow: hidden;
 }
 .dw-head { display: flex; justify-content: space-between; align-items: center;
   padding: 0.9rem 1rem; border-bottom: 1px solid var(--dw-border); }
-.dw-x { border: none; background: none; font-size: 1.4rem; line-height: 1; cursor: pointer; color: inherit; }
+.dw-x { border: none; background: none; font-size: 1.4rem; line-height: 1; cursor: pointer; color: var(--dw-fg) !important; }
 .dw-body, .dw-success { padding: 1rem; display: flex; flex-direction: column; gap: 0.75rem; }
 .dw-field { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; }
 .dw-field span { font-weight: 600; }
 .dw-field input, .dw-field select, .dw-field textarea {
   padding: 0.5rem 0.6rem; border: 1px solid var(--dw-border); border-radius: 6px;
-  font: inherit; color: inherit; background: var(--dw-bg);
+  font: inherit; color: var(--dw-fg) !important; background: var(--dw-bg);
 }
 .dw-attach { display: inline-block; padding: 0.45rem 0.7rem; border: 1px dashed var(--dw-border);
   border-radius: 6px; cursor: pointer; font-size: 0.82rem; }
@@ -373,16 +373,21 @@ function previewUrl(file) {
 .dw-fileicon { display: inline-block; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.7rem; }
 .dw-thumbs button { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%;
   border: none; background: #111; color: #fff; cursor: pointer; line-height: 1; }
-.dw-foot { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.25rem; }
+.dw-foot { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.25rem; color: var(--dw-fg) !important; }
 .dw-primary { background: var(--dw-accent); color: #fff; border: none; padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer; font-weight: 600; }
 .dw-primary:disabled { opacity: .55; cursor: not-allowed; }
-.dw-secondary { background: none; border: 1px solid var(--dw-border); padding: 0.5rem 0.9rem; border-radius: 6px; cursor: pointer; color: inherit; }
-.dw-error { color: #c0392b; font-size: 0.82rem; margin: 0; }
-.dw-link { color: var(--dw-accent); font-weight: 600; }
+/* Own foreground token + !important, not `inherit`: the widget can be mounted
+   inside a host container whose ID-scoped rules (e.g. `footer#application-footer
+   a { color:white }`) out-specify our scoped classes. !important wins the
+   cascade while the value stays a variable, so host theming via --dispatch-*
+   still works — only accidental spill is blocked. */
+.dw-secondary { background: none; border: 1px solid var(--dw-border); padding: 0.5rem 0.9rem; border-radius: 6px; cursor: pointer; color: var(--dw-fg) !important; }
+.dw-error { color: #c0392b !important; font-size: 0.82rem; margin: 0; }
+.dw-link { color: var(--dw-accent) !important; font-weight: 600; }
 .dw-links { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; padding: 0.55rem 1rem; border-bottom: 1px solid var(--dw-border); font-size: 0.8rem; }
 .dw-links-label { opacity: 0.55; }
-.dw-navlink { color: var(--dw-link); text-decoration: none; font-weight: 600; }
-.dw-navlink:hover { color: var(--dw-accent); text-decoration: underline; }
+.dw-navlink { color: var(--dw-link) !important; text-decoration: none; font-weight: 600; }
+.dw-navlink:hover { color: var(--dw-accent) !important; text-decoration: underline; }
 @media (prefers-color-scheme: dark) {
   .dispatch-widget {
     --dispatch-fg: #e7edf3;
