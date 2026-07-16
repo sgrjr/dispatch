@@ -1,7 +1,40 @@
 # `sgrjr/dispatch` — Roadmap & Reference
 
 > **Living reference + backlog for the package**, kept in the repo. Use **§18 (Backlog / TODO)** as the running checklist; the sections below are the design/decision reference and build history. Edit freely as the feature evolves.
->
+
+---
+
+## ▶️ RESUME HERE — orientation for a new session (read before acting)
+
+**What this is.** The living roadmap, design reference, and backlog for **`sgrjr/dispatch`** — a standalone Laravel package: task / bug / feature dispatch with capture widgets, a Kanban board + list + submitter portal, a CLI verb-loop, attachments, client diagnostics capture, and a programmatic `DispatchTask` facade. This file lives in the package repo and travels with the code. **§18 is the actionable backlog; §1–§17 are design decisions and build history.**
+
+**Where the pieces live** (paths are from the machine this was built on — confirm they exist):
+- **This package:** `C:\Users\steph\Documents\laravel-dispatch` — git repo, GitHub `sgrjr/dispatch`, released via tags (`git tag`; was through **v0.2.1** at last write). PHP 8.2, Laravel 11/12, Livewire 3, Testbench + Pest. Its DB tables are **`dispatch_*`-prefixed**.
+- **First consumer:** `C:\Users\steph\Documents\centerpoint\staff` — a Laravel 12 app that installs this package via a Composer **path repository** (symlinked — so package source edits are live in centerpoint immediately) with a GitHub VCS fallback. It binds the contract seams to its own auth under `App\Dispatch\*`, hosts the Vue widget in its footer, and calls the facade from its exception handler.
+- **Frozen reference — do NOT edit:** `C:\Users\steph\Documents\rupkeep-app` — the original inline implementation this package was distilled from. Read-only source of patterns.
+
+**How to use this doc.** Start at **§18** for what's open. Pick an item, then **read the current code to establish ground truth before doing anything** (see trust/verify). Use §1–§17 to understand *why* things are shaped the way they are.
+
+**Trust vs verify — this matters most:**
+- ✅ **Safe to infer:** architectural intent, the contract-seam extension model, *why* decisions were made, the rough shape of what exists.
+- ⚠️ **Must verify against the code (the code is the source of truth; this doc can drift):**
+  - Any "shipped" claim, file path, class/method name, config key, or table name — confirm it exists before you rely on it.
+  - Version/tag numbers, and whether a backlog checkbox is *actually* done — check `git log` / `git tag` and the tests, not the checkbox here.
+  - The build-history sections (waves orchestration, phase logs) describe **how it was built once** — they are **narrative, not runnable instructions**; do not re-execute them.
+  - centerpoint specifics (auth rules, `account_key` tenancy, table names) — re-confirm; the host app evolves independently.
+
+**Conventions you'll need:**
+- Verify the package: `cd laravel-dispatch && ./vendor/bin/pest` (Testbench + sqlite) and `php -l` per file. There is no `composer verify` in this repo (that's a centerpoint thing).
+- Package edits are **live in centerpoint via the symlink** — EXCEPT the **published** Vue widget and config, which are **copies** in centerpoint. After editing the widget source, re-publish with `php artisan vendor:publish --tag=dispatch-vue --force`. **Never re-publish the config** (`dispatch-config`) into centerpoint — it would clobber the hand-edited contract bindings.
+- Commits: package → `master`, tag on release, push to GitHub (`GIT_TERMINAL_PROMPT=0 git push`); centerpoint → `master` directly (sole dev, no feature branches); multi-line messages via `git commit -F`.
+- The **config-bound seams are the extension model**: `DispatchGate`, `TenantResolver`, `SubmitterResolver` (and the planned `DispatchNotifier`). A host customizes behavior by binding these in `config/dispatch.php` — never by editing package internals.
+
+**Biggest caveat before real users:** the **entire UI has never been verified in a live browser** — everything is unit/feature-tested only. A human browser smoke test under real centerpoint auth is the gate. Treat the UI as "compiles + tested, not yet seen."
+
+**Decisions still pending** (see §17 open questions): the `DispatchNotifier` default (null vs mail), the capture-throttle default, and whether to build the v0.3 AI-agent set now or after the browser smoke test.
+
+---
+
 > **v4 change:** added **§15 Build orchestration (waves)** — how the build is executed with the `waves` conductor pattern (driver-owned contract + Sonnet workstream agents in dependency-ordered waves), including the repo-specific adaptation (the skill is `staff/`-tuned; the package repo has different verify/cwd/test rules).
 >
 > **BUILD LOG:**
