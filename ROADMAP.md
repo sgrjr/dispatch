@@ -562,3 +562,49 @@ Properties: no standing credential to leak · explicit per-session human consent
 - ❌ Reuse the human super-user token for agents — defeats independent revocation, attribution, and rate policy.
 
 **Also update:** the `dispatch-track` skill + any CLAUDE.md snippet must drive the verbs against the **agent API** (`--remote` / MCP), never the local dev DB, when working the real backlog.
+
+---
+
+## 20. Build plan — remote agent session system (implements §19)
+
+> **PLAN, not built.** Grounded in a code map of both repos (this session). File paths below are real extension points from that map — re-verify before editing (per the RESUME-HERE doctrine). Phased so each phase lands and is useful independently.
+
+### Architecture decision (resolved by the code map)
+Keep the token **self-contained in the package** — host-agnostic. The package owns the session protocol, a session store, the dedicated agent API, and a middleware that authenticates the **`AgentSession` itself** (a hashed bearer token on the session row). The **principal is the session, not a `User`** — the package needs no host token system. centerpoint *has* a customized Sanctum (`App\Models\PersonalAccessToken` with JSON abilities + `->can()`, but a hardcoded 48h TTL), which stays available as an **optional** `AgentTokenIssuer` binding for unified audit — **not required**. Rationale: the package is distributable; baking in Sanctum would couple it to one host and break the Gate/Tenant/Submitter/Notifier seam philosophy. The host provides only a staff-gated place to approve/deny and a scheduled prune.
+
+### Phase 1 — Package: agent session core (the auth foundation)
+- **Migration** `..._create_dispatch_agent_sessions_table.php`: `agent_name, purpose, requested_meta(json), status(pending|approved|denied|revoked|expired), token_hash(nullable,unique), scopes(json), approved_by_user_id(nullable), approved_at, expires_at, last_used_at, ip, timestamps`.
+- **Model** `src/Models/AgentSession.php` — `mintToken()` (random + hash, plaintext returned once), `approve($userId,$ttl)`, `deny()`, `revoke()`, `isUsable()` (approved && !expired && !revoked), `touch()`.
+- **Service** `src/Services/AgentSessionService.php` — `request(name,purpose,meta)`, `approve/deny/revoke`, `resolveToken($bearer): ?AgentSession` (hash lookup + usability), `prune()`.
+- **Dedicated agent API** — new `routes/agent.php`, added as a **separate group** in `DispatchServiceProvider::registerRoutes()`: prefix `api/{prefix}/agent`, name `dispatch.api.agent.`, its own middleware:
+  - *Unauthenticated (throttled, optional bootstrap gate):* `POST session` → `{session_id, poll_interval, expires_at}`; `GET session/{id}` → status; returns the **token once** on first approved poll.
+  - *Behind `src/Http/Middleware/AuthenticateAgentSession.php`* (bearer → `resolveToken` → 401 if unusable → bind session + `touch()`): the verb endpoints `next / queue / show / add / note / done / claim` in `src/Http/Controllers/AgentController.php` — thin, reuse `DispatchTaskService` + models + `DispatchGate::scopeVisible`.
+- **Config** new `agent` block in `config/dispatch.php`: `enabled`, `session_ttl` (~3600s), `poll_interval` (5s), `request_throttle`, `verb_throttle`, `verbs` allowlist (no delete/bulk), optional `bootstrap_secret`.
+- **Command** `dispatch:sessions:prune` (`src/Console/Commands/DispatchSessionsPrune.php`).
+- **Atomic claim (C1):** `claim` = `DB::transaction` → pick next actionable → set `status=in_progress` + assignee/meta to the session → return; concurrent sessions never collide.
+- **Attribution:** agent writes stamp `TaskComment.meta = {agent_session_id, agent_name}` (+ a new event convention); pass an agent-aware `$actor` to `DispatchTaskService::create()` (param already exists).
+- **Tests (Testbench):** request→pending; approve→token; token→verb authorized + `last_used_at` bumped; denied/expired/revoked→401; claim atomic (two sessions, one task); prune expires.
+
+### Phase 2 — Package: remote CLI mode + agent session commands
+- **Agent-side flow** `src/Console/Commands/DispatchSession*.php`: `dispatch:session:request` (POST, store `session_id`), `dispatch:session:status` (poll; on approved store the token in a local dotfile) — the **async, human-gated** wait.
+- **`--remote` on the verbs** — branch in `DispatchNext/Queue/Show/Note/Done/Add` (sites in §19's map) that, when `--remote` (or `DISPATCH_TARGET=remote`), routes through the agent API with the stored session token instead of the local DB. **Reuse the `client()` `Http` helper shape** from `DispatchPull`/`DispatchPush`.
+- **Config** `agent.remote`: `url`, stored-token path — distinct from `sync.*` (which stays package↔package snapshot).
+
+### Phase 3 — Package: approval UI + agent skill
+- **Livewire** `src/Livewire/AgentSessions.php` + `resources/views/livewire/agent-sessions.blade.php` — staff-gated queue: pending (name/purpose/ip/when) → **Approve / Deny**; active → **Revoke**. Consistent with the board/list components; full-page route `dispatch.agent-sessions`.
+- **Skill** `.claude/skills/dispatch-agent-session/SKILL.md` — request → **poll (async, human-gated, expect delay, don't spin)** → handle denial gracefully → use token → handle 401 revoke/expiry. Ships with the API so they don't drift.
+
+### Phase 4 — Centerpoint integration
+- **Nav + route** to the package's `AgentSessions` component, mirroring `/it/tickets` → **`/it/agent-sessions`** (new `routes/agent_sessions.php` required in the `['web','auth']` group in `bootstrap/app.php`); gate `isAdminOrStaff`/`isAdministrator` (`UserIsTrait`).
+- **Scheduler:** `Schedule::command('dispatch:sessions:prune')->everyFifteenMinutes()->withoutOverlapping()->runInBackground()` in `routes/console.php` (mirror `attachments:cleanup` / `model:prune`).
+- **Config:** set the `agent` block in centerpoint `config/dispatch.php`.
+- **(Optional)** bind an `AgentTokenIssuer` to `App\Models\PersonalAccessToken` (parameterize its 48h TTL → short; `dispatch-agent` ability) only if unified token audit is wanted.
+
+### Open design forks (decide before Phase 1)
+1. **Token mechanism** — self-contained package token *(recommended: lean, portable)* vs bind centerpoint's Sanctum via an `AgentTokenIssuer` seam (unified audit, host-coupled).
+2. **Agent principal / attribution** — null `user_id` + `meta{agent_session_id, agent_name}` *(recommended)* vs a configured "agent system user" id.
+3. **Request-endpoint protection** — throttle-only (humans gate at approval) vs also require a coarse `bootstrap_secret` / IP allowlist to even request.
+4. **Approval UI home** — package-shipped Livewire component the host links *(recommended, consistent)* vs host-built under `/it/*`.
+
+### Verification (end-to-end)
+Package: the Testbench suite above + `php -l`. Live: on a dev box, `dispatch:session:request` → approve in the centerpoint UI → `dispatch:next --remote` returns a **production** task, `dispatch:claim --remote` locks it, `dispatch:note/done --remote` write to prod with agent attribution in the timeline; revoke mid-session → the next `--remote` call `401`s and the agent stops.
