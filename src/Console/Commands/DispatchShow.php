@@ -3,7 +3,9 @@
 namespace Sgrjr\Dispatch\Console\Commands;
 
 use Illuminate\Console\Command;
+use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 use Sgrjr\Dispatch\Models\Task;
+use Sgrjr\Dispatch\Support\TaskPresenter;
 
 /**
  * Trusted CLI surface: queries tasks directly (no DispatchGate::scopeVisible —
@@ -13,14 +15,29 @@ use Sgrjr\Dispatch\Models\Task;
  */
 class DispatchShow extends Command
 {
+    use TalksToAgentApi;
+
     protected $signature = 'dispatch:show
         {code : The task code, e.g. TASK-042}
+        {--remote : Act on the configured remote agent API instead of the local DB}
         {--json : Emit machine-readable JSON}';
 
     protected $description = 'Show full detail for a task including its comment timeline.';
 
     public function handle(): int
     {
+        if ($this->option('remote')) {
+            $r = $this->agentGet('show/'.$this->argument('code'));
+
+            if ($r === null) {
+                return self::FAILURE;
+            }
+
+            $this->line(json_encode($r['task'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+            return self::SUCCESS;
+        }
+
         /** @var class-string<Task> $taskModel */
         $taskModel = config('dispatch.models.task');
 
@@ -38,31 +55,7 @@ class DispatchShow extends Command
         $comments = $task->comments;
 
         if ($this->option('json')) {
-            $this->line(json_encode([
-                'code' => $task->code,
-                'title' => $task->title,
-                'type' => $task->type,
-                'priority' => $task->priority,
-                'status' => $task->status,
-                'is_public' => (bool) $task->is_public,
-                'labels' => $task->labels->pluck('name')->all(),
-                'submitter' => $task->submitter?->email,
-                'assignee' => $task->assignee?->email,
-                'description' => $task->description,
-                'created_at' => optional($task->created_at)->toIso8601String(),
-                'updated_at' => optional($task->updated_at)->toIso8601String(),
-                'context' => $task->context,
-                'comments' => $comments->values()->map(fn ($c) => [
-                    'id' => $c->id,
-                    'event_type' => $c->event_type,
-                    'is_internal' => (bool) $c->is_internal,
-                    'notified_submitter' => (bool) $c->notified_submitter,
-                    'author' => $c->user?->email,
-                    'body' => $c->body,
-                    'meta' => $c->meta,
-                    'created_at' => optional($c->created_at)->toIso8601String(),
-                ])->all(),
-            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $this->line(json_encode(TaskPresenter::toArray($task, true), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             return self::SUCCESS;
         }

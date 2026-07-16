@@ -1,0 +1,91 @@
+<div>
+    <style>
+        .dispatch-agent-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 1rem;
+            padding: 0.9rem 0;
+            border-bottom: 1px solid var(--dispatch-border);
+        }
+        .dispatch-agent-row:last-child { border-bottom: none; }
+        .dispatch-agent-meta { font-size: 0.78rem; color: var(--dispatch-text-muted); margin-top: 0.35rem; }
+        .dispatch-agent-code {
+            display: inline-block;
+            margin-top: 0.5rem;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 1.4rem;
+            font-weight: 700;
+            letter-spacing: 0.15em;
+            padding: 0.35rem 0.75rem;
+            background: var(--dispatch-surface-muted);
+            border: 1px solid var(--dispatch-border);
+            border-radius: var(--dispatch-radius-sm);
+            color: var(--dispatch-text);
+        }
+        .dispatch-agent-confirm { font-size: 0.72rem; color: var(--dispatch-text-muted); margin-top: 0.3rem; }
+        .dispatch-agent-actions { display: flex; gap: 0.5rem; align-items: flex-start; }
+    </style>
+
+    <section class="dispatch-card">
+        <h2 style="margin:0 0 0.25rem; font-size:1rem;">Pending requests</h2>
+        <p class="dispatch-agent-meta" style="margin-top:0;">
+            A remote agent asked to work this backlog. Only approve a request if you initiated it — check that
+            the code below matches exactly what the requesting agent displayed to you.
+        </p>
+
+        @if ($pending->isEmpty())
+            <div class="dispatch-empty">No pending agent session requests.</div>
+        @else
+            @foreach ($pending as $session)
+                <div class="dispatch-agent-row" wire:key="pending-{{ $session->id }}">
+                    <div style="min-width:0; flex:1;">
+                        <div>
+                            <span class="dispatch-list-title">{{ $session->agent_name }}</span>
+                            <span class="dispatch-badge is-info">pending</span>
+                        </div>
+                        @if ($session->purpose)
+                            <div class="dispatch-agent-meta">{{ $session->purpose }}</div>
+                        @endif
+                        <div class="dispatch-agent-confirm">Did you initiate this? Confirm this matches the code the requesting agent displayed:</div>
+                        <div class="dispatch-agent-code">{{ $session->user_code }}</div>
+                        <div class="dispatch-agent-meta">
+                            ip: {{ $session->ip ?? 'unknown' }} &middot; requested {{ $session->created_at?->diffForHumans() }}
+                        </div>
+                    </div>
+                    <div class="dispatch-agent-actions">
+                        <button type="button" wire:click="approve({{ $session->id }})" wire:confirm="Approve this agent session?" class="dispatch-btn">Approve</button>
+                        <button type="button" wire:click="deny({{ $session->id }})" class="dispatch-btn is-secondary">Deny</button>
+                    </div>
+                </div>
+            @endforeach
+        @endif
+    </section>
+
+    <section class="dispatch-card" style="margin-top: 1rem;">
+        <h2 style="margin:0 0 0.5rem; font-size:1rem;">Active sessions</h2>
+
+        @if ($active->isEmpty())
+            <div class="dispatch-empty">No active agent sessions.</div>
+        @else
+            @foreach ($active as $session)
+                <div class="dispatch-agent-row" wire:key="active-{{ $session->id }}">
+                    <div style="min-width:0; flex:1;">
+                        <div>
+                            <span class="dispatch-list-title">{{ $session->agent_name }}</span>
+                            <span class="dispatch-badge is-success">approved</span>
+                        </div>
+                        <div class="dispatch-agent-meta">
+                            approved {{ $session->approved_at?->diffForHumans() }}
+                            &middot; expires {{ $session->expires_at?->diffForHumans() }}
+                        </div>
+                    </div>
+                    <div class="dispatch-agent-actions">
+                        <button type="button" wire:click="revoke({{ $session->id }})" wire:confirm="Revoke this agent session?" class="dispatch-btn is-secondary">Revoke</button>
+                    </div>
+                </div>
+            @endforeach
+        @endif
+    </section>
+</div>

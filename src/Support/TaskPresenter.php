@@ -33,8 +33,11 @@ class TaskPresenter
             'labels' => $task->labels->pluck('name')->values()->all(),
             'due_at' => optional($task->due_at)->toIso8601String(),
             'dedupe_key' => $task->dedupe_key,
-            'submitter' => self::userRef($task->submitter),
-            'assignee' => self::userRef($task->assignee),
+            // Guard on the FK before touching the relation: an agent/CLI task has
+            // a null submitter, and building the belongsTo instantiates the host
+            // user model — which need not even exist in a headless/agent context.
+            'submitter' => $task->submitter_user_id ? self::userRef($task->submitter) : null,
+            'assignee' => $task->assignee_user_id ? self::userRef($task->assignee) : null,
             'created_at' => optional($task->created_at)->toIso8601String(),
             'updated_at' => optional($task->updated_at)->toIso8601String(),
         ];
@@ -46,7 +49,7 @@ class TaskPresenter
                 'id' => $c->id,
                 'event_type' => $c->event_type,
                 'is_internal' => (bool) $c->is_internal,
-                'author' => self::userRef($c->user),
+                'author' => $c->user_id ? self::userRef($c->user) : null,
                 'body' => $c->body,
                 'meta' => $c->meta,
                 'created_at' => optional($c->created_at)->toIso8601String(),

@@ -114,6 +114,16 @@ until the user explicitly asks to sync.
 
 ## Part 2 — Drive the verb loop
 
+> **Local dev vs. the real backlog.** Everything below (`dispatch:pull` /
+> `dispatch:next` / `dispatch:done` / `dispatch:push`) reads and writes
+> **this app's own local database** — right for tracking work on this
+> checkout. If you're working the **real, production backlog** instead —
+> i.e. the authoritative task list lives on a different, deployed instance —
+> stop and use `.claude/skills/dispatch-agent-session/SKILL.md` instead: it
+> commissions a human-approved session and drives the same verbs with
+> `--remote` against production. Don't run the plain (non-`--remote`) verbs
+> below and assume they touched the real backlog — they didn't.
+
 When the user asks "what should I work on next", or you're about to start a
 unit of work that should be tracked end-to-end, drive Dispatch's CLI verbs in
 this order:
@@ -121,7 +131,12 @@ this order:
 ```
 dispatch:pull              # sync canonical state down first, if a remote is configured
     ↓
-dispatch:next --json       # pick the single highest-priority open task
+dispatch:next --json       # preview the single highest-priority open task
+    ↓
+dispatch:claim --json      # atomically claim it: in_progress + assigned, in
+                            # one transaction — do this before starting work
+                            # whenever more than one agent/human might be
+                            # picking off the same backlog
     ↓
   ...do the actual work...
     ↓
@@ -131,6 +146,13 @@ dispatch:done <code> --ref=<commit-sha-or-pr>   # close it out
     ↓
 dispatch:push              # sync local state back up, if a remote is configured
 ```
+
+`dispatch:claim` (`--type=` / `--label=*` to scope which task it claims) is
+the race-safe way to pick up work — prefer it over treating `dispatch:next`'s
+result as already yours, since `next` is read-only and doesn't reserve
+anything. `php artisan dispatch:schema` prints the documented `--json` shape
+(the frozen `TaskPresenter` contract for every verb's summary/full output) —
+parse against that instead of guessing field names from examples.
 
 ### Step by step
 
@@ -147,21 +169,28 @@ dispatch:push              # sync local state back up, if a remote is configured
    `php artisan dispatch:show <code> --json` gives full detail plus the
    discussion thread if you need more context before starting.
 
-3. **Do the work** the task describes. This is a normal coding session —
+3. **`php artisan dispatch:claim --json`** — claim it before you start:
+   marks the task `in_progress` and assigns it in one atomic transaction.
+   Scope with `--type=` / `--label=*` the same way you'd scope `next`. This
+   matters whenever more than one agent (or an agent and a human) might pull
+   from the same backlog — `next` alone is just a preview and doesn't
+   reserve anything.
+
+4. **Do the work** the task describes. This is a normal coding session —
    nothing Dispatch-specific here.
 
-4. **`php artisan dispatch:note <code> "<finding>"`** — as you discover
+5. **`php artisan dispatch:note <code> "<finding>"`** — as you discover
    things (root cause, a decision point, a blocker), log them immediately
    rather than only summarizing at the end. Defaults to an internal note;
    pass `--public` if it should be visible to a submitter.
 
-5. **`php artisan dispatch:done <code> --ref=<commit-sha-or-PR> [--note="..."]`**
+6. **`php artisan dispatch:done <code> --ref=<commit-sha-or-PR> [--note="..."]`**
    — mark the task complete once the work lands. `--status=declined` or
    `--status=verifying` are valid alternatives to `done` when that's the
    actual outcome. Always pass `--ref` when you have a commit SHA or PR
    number — it's the audit trail back to the change.
 
-6. **`php artisan dispatch:push`** — only when the user explicitly asks to
+7. **`php artisan dispatch:push`** — only when the user explicitly asks to
    sync local state to a remote install. Never push automatically as a side
    effect of finishing a task.
 
@@ -169,10 +198,33 @@ dispatch:push              # sync local state back up, if a remote is configured
 
 - `php artisan dispatch:queue --n=10` — the next N tasks in priority order, as a table (triage a backlog)
 - `php artisan dispatch:show <code>` — full detail + thread for one task
+- `php artisan dispatch:schema` — the documented `--json` shape (the frozen
+  `TaskPresenter` contract) every `--json` verb's output conforms to
+
+### Working the production backlog instead of local dev
+
+Everything in Part 2 operates on **this app's local database**. `pull` /
+`push` sync two installs of *this package* against each other (e.g. local
+dev ↔ production, over `dispatch.sync.remote_url` / `dispatch.sync.token`) —
+that's still local-DB reads/writes on this end, just kept in sync with a
+peer.
+
+That's different from **working the real, authoritative backlog directly on
+production** from somewhere else (no local checkout of the prod DB at all).
+For that, every verb needs `--remote` and a human-commissioned session
+first — see `.claude/skills/dispatch-agent-session/SKILL.md` for the full
+`dispatch:session:request` → approval → `dispatch:session:status` → `next
+--remote` / `claim --remote` / `note --remote` / `done --remote` protocol.
+Never assume the plain (non-`--remote`) verbs above reached production —
+they didn't.
 
 ### See also
 
 - [`README.md`](../../../README.md) — full install/usage guide, including the
   three contract bindings (`DispatchGate`, `TenantResolver`,
-  `SubmitterResolver`) that shape what "staff" and "visible" mean in this app
+  `SubmitterResolver`) that shape what "staff" and "visible" mean in this app,
+  plus §8 "AI / remote agent" for the full agent-CLI verb list and the
+  remote agent seam
+- `.claude/skills/dispatch-agent-session/SKILL.md` — commissioning and
+  driving a session against the production backlog
 - `config/dispatch.php` — every tunable, commented inline

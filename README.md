@@ -348,6 +348,167 @@ misconfigured disk driver could still make files guessable.
 
 ---
 
+## 8. AI / remote agent
+
+Beyond the human-oriented verb loop in §6, Dispatch ships a set of
+**agent-CLI verbs** purpose-built for an AI agent driving the backlog — plus
+a way for that agent to safely work the **production** backlog from outside
+the deploy entirely, via a human-commissioned session. Every verb below
+supports `--json`, a stable, documented machine contract (not a
+best-effort dump).
+
+### Agent-CLI verbs
+
+```
+dispatch:claim  {--type=} {--label=*} {--assignee=} {--json} {--remote}
+                → atomically claim the next actionable task: marks it
+                  in_progress + assigns it in one transaction, so two agents
+                  (or an agent and a human) never grab the same task
+
+dispatch:add    {title} ... {--key=} {--remote}
+                → idempotent create: pass --key=<dedupe key> and a re-run
+                  with the same key returns the existing task instead of
+                  creating a duplicate
+
+dispatch:next   {--type=} {--label=*} {--json} {--remote}
+dispatch:queue  {--status=} {--type=} {--label=*} {--json} {--remote}
+                → filter to only agent-appropriate work, e.g. --label agent:ok
+
+dispatch:done   {code} {--status=} {--commit=} {--result=} {--json} {--remote}
+                → record a structured completion: --commit=<sha> plus
+                  --result='{...}' land under context.result, tying the task
+                  to the exact code change and verification that closed it
+
+dispatch:show   {code} {--json} {--remote}
+dispatch:note   {code} {body} {--internal} {--remote}
+
+dispatch:schema → dumps the documented --json shape (the frozen
+                  TaskPresenter contract) — parse against this, not a guess
+```
+
+A compact verb loop, claiming a task labeled for agent work and closing it
+out with a structured result:
+
+```bash
+php artisan dispatch:claim --label=agent:ok --json
+```
+
+```json
+{
+    "code": "TASK-042",
+    "title": "Fix checkout total with coupon applied",
+    "type": "bug",
+    "priority": "high",
+    "status": "in_progress",
+    "is_public": false,
+    "labels": ["agent:ok", "area:checkout"],
+    "due_at": null,
+    "dedupe_key": null,
+    "submitter": "jane@example.com",
+    "assignee": "agent@example.com",
+    "created_at": "2026-07-10T14:02:00+00:00",
+    "updated_at": "2026-07-16T09:15:00+00:00"
+}
+```
+
+```bash
+php artisan dispatch:note TASK-042 "Root cause: coupon discount applied after tax."
+php artisan dispatch:done TASK-042 --commit=abc1234 --result='{"tests":"passing"}'
+```
+
+The `--json` shape above is the full contract for every summary view
+(`add`/`next`/`queue`/`claim`); `dispatch:show --json` adds `description`,
+`context`, and the full `comments[]` thread. Run `php artisan dispatch:schema`
+to get this shape as data instead of relying on this example.
+
+### The remote agent seam — working the production backlog from elsewhere
+
+An agent normally only ever sees the database of the app it's running
+inside. The remote agent seam (§19/§20) is a dedicated, human-commissioned
+API so an agent can work the **authoritative production backlog** from
+somewhere else — a laptop, a different CI job, another project entirely —
+**without a standing credential**. It's an RFC-8628 device-flow shape:
+
+1. The agent requests a session: `dispatch:session:request --name=... --purpose=... [--scope=next --scope=claim]`. This prints a short `user_code`.
+2. A human approves or denies it in production's "Agent Sessions" UI — a
+   staff-gated Livewire page at `/dispatch/agent-sessions` — confirming the
+   `user_code` matches what the agent displayed.
+3. The agent polls with `dispatch:session:status` (async + human-gated —
+   back off, don't spin). On approval, a short-TTL bearer token is stored in
+   a dotfile outside the repo, owner-only (`0600`).
+4. The agent then drives the same verb loop with `--remote` appended —
+   `dispatch:next --remote`, `dispatch:claim --remote`,
+   `dispatch:note --remote`, `dispatch:done --remote`, etc. — which routes
+   through the agent API to production instead of the local DB. A `401`
+   mid-session means the session was revoked or expired: the local token is
+   cleared automatically and the agent should stop.
+
+Enable it on the **production** (authoritative) instance via the `agent`
+block in `config/dispatch.php`:
+
+```php
+'agent' => [
+    'enabled' => env('DISPATCH_AGENT', false),
+    'bootstrap_secret' => env('DISPATCH_AGENT_BOOTSTRAP_SECRET'),
+    'session_ttl' => (int) env('DISPATCH_AGENT_SESSION_TTL', 3600),
+    'verbs' => ['next', 'queue', 'show', 'add', 'note', 'done', 'claim'],
+    'remote' => [
+        'url' => env('DISPATCH_AGENT_REMOTE_URL'),
+        'token_path' => env('DISPATCH_AGENT_TOKEN_PATH'),
+    ],
+    // ...
+],
+```
+
+`bootstrap_secret` gates the unauthenticated session-request endpoint (sent
+as the `X-Dispatch-Bootstrap` header) — required in production. `verbs` is
+the global allowlist every session's scopes are bounded by. `enabled` is
+`false` by default: turn it on deliberately on the instance whose backlog an
+agent should be able to work remotely.
+
+On the **client** side (wherever the agent runs), point it at that instance:
+
+```
+DISPATCH_AGENT_REMOTE_URL=https://<production-host>/api/dispatch/agent
+```
+
+See `.claude/skills/dispatch-agent-session/SKILL.md` for the full
+commissioning-and-poll protocol an agent should follow, including how to
+handle a pending/denied/revoked session gracefully.
+
+### Reactive orchestration — the `EventNotifier` binding
+
+Dispatch's notifier seam (§3-adjacent — the fourth contract binding, under
+`contracts.notifier`) fires at every mutation point regardless of which
+implementation is bound. Bind
+`Sgrjr\Dispatch\Support\EventNotifier` to additionally fire Laravel events —
+`Sgrjr\Dispatch\Events\TaskCreated`, `TaskStatusChanged`, `TaskCommented`,
+`TaskAssigned` — so a host-side listener can react automatically:
+
+```php
+// config/dispatch.php
+'contracts' => [
+    // ...
+    'notifier' => Sgrjr\Dispatch\Support\EventNotifier::class,
+],
+```
+
+```php
+// app/Providers/EventServiceProvider.php (or a dedicated listener)
+use Sgrjr\Dispatch\Events\TaskCreated;
+
+Event::listen(function (TaskCreated $event) {
+    if ($event->task->labels->contains('name', 'agent:ok')) {
+        // e.g. queue a job that runs `dispatch:claim` and starts an agent run
+    }
+});
+```
+
+This is what turns "a bug got filed" into "an agent picked it up
+automatically" — no polling loop required on the listening side.
+
+---
+
 ## Next steps
 
 - Read `config/dispatch.php` top to bottom — every option has a comment
@@ -356,7 +517,9 @@ misconfigured disk driver could still make files guessable.
   bind a real `DispatchGate` on day one (see §3) — the shipped `DefaultGate`
   is a single-team convenience, not a security model for a multi-role app.
 - See `.claude/skills/dispatch-track/SKILL.md` for wiring an AI coding agent
-  to capture and drive tasks automatically via the CLI verb loop.
+  to capture and drive tasks automatically via the CLI verb loop, and
+  `.claude/skills/dispatch-agent-session/SKILL.md` for driving the remote
+  agent protocol against a production backlog (§8).
 
 ## Programmatic reporting — the `DispatchTask` facade
 

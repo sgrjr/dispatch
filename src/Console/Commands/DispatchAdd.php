@@ -3,8 +3,10 @@
 namespace Sgrjr\Dispatch\Console\Commands;
 
 use Illuminate\Console\Command;
+use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
+use Sgrjr\Dispatch\Support\TaskPresenter;
 
 /**
  * Create a new task. Creation ALWAYS routes through DispatchTaskService (never
@@ -16,6 +18,8 @@ use Sgrjr\Dispatch\Services\DispatchTaskService;
  */
 class DispatchAdd extends Command
 {
+    use TalksToAgentApi;
+
     protected $signature = 'dispatch:add
         {title : The task title (short)}
         {--type= : bug | feature | chore | debt | verify (default: feature)}
@@ -23,6 +27,8 @@ class DispatchAdd extends Command
         {--description= : Full task body (markdown). Use heredoc or quoted multi-line.}
         {--label=* : Label name(s) to attach; auto-created if missing. Repeatable.}
         {--public : Mark visible outside staff (default: private)}
+        {--key= : Idempotency key; returns the existing task with this key instead of creating a duplicate}
+        {--remote : Act on the configured remote agent API instead of the local DB}
         {--json : Emit machine-readable JSON instead of human text}';
 
     protected $description = 'Create a new task via DispatchTaskService.';
@@ -48,6 +54,28 @@ class DispatchAdd extends Command
             fn ($n) => $n !== ''
         ));
 
+        $key = $this->option('key');
+
+        if ($this->option('remote')) {
+            $r = $this->agentPost('add', array_filter([
+                'title' => $this->argument('title'),
+                'type' => $type,
+                'priority' => $priority,
+                'description' => $this->option('description'),
+                'labels' => $labelNames ?: null,
+                'public' => $this->option('public') ? true : null,
+                'key' => $key,
+            ], fn ($v) => $v !== null));
+
+            if ($r === null) {
+                return self::FAILURE;
+            }
+
+            $this->line(json_encode($r['task'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+            return self::SUCCESS;
+        }
+
         $attributes = ['title' => $this->argument('title')];
         if ($type !== null) {
             $attributes['type'] = $type;
@@ -60,18 +88,12 @@ class DispatchAdd extends Command
         }
         $attributes['is_public'] = (bool) $this->option('public');
 
-        $task = $tasks->create($attributes, $labelNames);
+        $task = $key !== null
+            ? $tasks->firstOrCreateByKey($key, $attributes, $labelNames)
+            : $tasks->create($attributes, $labelNames);
 
         if ($this->option('json')) {
-            $this->line(json_encode([
-                'code' => $task->code,
-                'title' => $task->title,
-                'type' => $task->type,
-                'priority' => $task->priority,
-                'status' => $task->status,
-                'is_public' => (bool) $task->is_public,
-                'labels' => $labelNames,
-            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $this->line(json_encode(TaskPresenter::toArray($task, false), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             return self::SUCCESS;
         }

@@ -3,7 +3,9 @@
 namespace Sgrjr\Dispatch\Console\Commands;
 
 use Illuminate\Console\Command;
+use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 use Sgrjr\Dispatch\Models\Task;
+use Sgrjr\Dispatch\Support\TaskPresenter;
 
 /**
  * Trusted CLI surface: queries tasks directly (no DispatchGate::scopeVisible —
@@ -11,14 +13,38 @@ use Sgrjr\Dispatch\Models\Task;
  */
 class DispatchNext extends Command
 {
-    protected $signature = 'dispatch:next {--json : Emit machine-readable JSON instead of human text}';
+    use TalksToAgentApi;
+
+    protected $signature = 'dispatch:next
+        {--type= : Filter to a single type}
+        {--label=* : Filter to tasks carrying any of these labels}
+        {--remote : Act on the configured remote agent API instead of the local DB}
+        {--json : Emit machine-readable JSON instead of human text}';
 
     protected $description = 'Show the single highest-priority actionable task to pick up next.';
 
     public function handle(): int
     {
+        if ($this->option('remote')) {
+            $r = $this->agentGet('next', array_filter([
+                'type' => $this->option('type'),
+                'label' => $this->option('label'),
+            ]));
+
+            if ($r === null) {
+                return self::FAILURE;
+            }
+
+            $this->line(json_encode($r['task'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+            return self::SUCCESS;
+        }
+
         /** @var class-string<Task> $taskModel */
         $taskModel = config('dispatch.models.task');
+
+        $type = $this->option('type');
+        $labels = $this->option('label');
 
         // Actionable = open/in_progress first; triage only as a fallback group
         // when nothing is already open/in-flight. Within a group: priority,
@@ -26,6 +52,8 @@ class DispatchNext extends Command
         $task = $taskModel::query()
             ->with('labels')
             ->whereIn('status', ['open', 'in_progress', 'triage'])
+            ->when($type, fn ($q) => $q->where('type', $type))
+            ->when($labels, fn ($q) => $q->whereHas('labels', fn ($lq) => $lq->whereIn('name', (array) $labels)))
             ->orderByRaw("CASE WHEN status IN ('open', 'in_progress') THEN 0 ELSE 1 END")
             ->orderByRaw("CASE priority WHEN 'blocker' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 99 END")
             ->orderBy('position')
@@ -43,16 +71,7 @@ class DispatchNext extends Command
         }
 
         if ($this->option('json')) {
-            $this->line(json_encode([
-                'code' => $task->code,
-                'title' => $task->title,
-                'type' => $task->type,
-                'priority' => $task->priority,
-                'status' => $task->status,
-                'is_public' => (bool) $task->is_public,
-                'labels' => $task->labels->pluck('name')->all(),
-                'description' => $task->description,
-            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $this->line(json_encode(TaskPresenter::toArray($task, false), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             return self::SUCCESS;
         }
