@@ -503,6 +503,15 @@ Single at-a-glance list of everything open. Details live in §14 / §16 / §17. 
 - [ ] **`.claude/skills/dispatch-agent-session` skill** — teaches request → poll (async, human-gated) → handle denial gracefully → use token → handle revocation/expiry. Ships with the API so they don't drift.
 - [ ] Update the `dispatch-track` skill + CLAUDE snippet to target production via the agent API (`--remote` / MCP), never the local dev DB.
 
+### 🧩 Product-completeness gaps (confirmed — fill over time)
+From a completeness review, verified against code. Committed to address, not yet built.
+- [ ] **Configurable workflow** — make `Task::TYPES` / `PRIORITIES` / `STATUSES` config-driven (today hardcoded consts) so a host defines its own states/types. Load-bearing for the multi-project reuse thesis — everything else is a config seam, this isn't yet. Board columns + list filters read from config.
+- [ ] **Markdown rendering** — render task bodies + comments as **sanitized** markdown (today escaped plain-text `{{ }}`; the CLI already calls `--description` "markdown"). Needs a safe renderer (CommonMark + sanitizer). Pairs with §21 editable body.
+- [ ] **Bulk operations** — bulk status / label / assign / decline on board + list (today one task at a time; triage doesn't scale with real inbound volume).
+- [ ] **Watchers / subscribers** — let staff follow a task they didn't submit; notifications flow beyond the submitter (the *who*; the *how* is the §17B notifier seam).
+- [ ] **Merge duplicate tasks** — human merge of two tasks (consolidate thread + attachments + labels; close/redirect the loser), distinct from the automatic exception/`key` dedupe.
+- [ ] **Age / staleness surfacing** — optional `due_at` + task-age visibility + a "stale" filter/view, so feedback doesn't rot silently (a 6-week-old triage item looks identical to today's).
+
 ### 🔵 Deferred / bigger phases
 - [ ] **C7** Task dependencies (`blocks` / `blocked_by`) for agent sequencing.
 - [ ] **C8** **MCP server** exposing the verbs as native tools — the eventual crown jewel for Claude-Code-centric workflows (v0.4).
@@ -632,3 +641,14 @@ The task always shows the *current* body; scrolling the comment stream reconstru
 - New `TaskComment` constant, e.g. `EVENT_DESCRIPTION_EDITED = 'description_edited'`.
 - `Task::recordEvent()` currently hardcodes `is_internal = false`, so the memorial must either be written directly via `$task->comments()->create([... 'is_internal' => true ...])`, or `recordEvent()` gains an `is_internal` parameter — the memorial requires `is_internal = true` per the visibility decision.
 - Editable surfaces to add when built: the `TaskShow` meta editor (staff-gated by the existing `canEdit()`) gains a description field, and a `dispatch:edit {code} --description=… [--title=…]` CLI verb (the one an agent calls, `--remote`, to keep its checklist current). Not logged in §18 backlog by request — captured here.
+
+---
+
+## 22. Brainstorming — gaps to reconsider (NOT committed)
+
+Speculative ideas from the completeness review, kept **distinct from the confirmed backlog (§18)**. Not planned; revisit only if a real need appears. Do not treat as commitments.
+
+- **Inbound email → task** — an email-to-dispatch capture channel; today all capture is in-app widget / CLI / API / facade.
+- **Reporting & metrics** — cycle time, throughput, aging, backlog trend; today only per-column counts on the board.
+- **Board / widget accessibility** — native drag-drop is keyboard/screen-reader hostile; an a11y pass (keyboard reorder, ARIA) if the audience needs it.
+- **(Clarification — not a gap)** External integrations / webhooks / Slack are the intended job of the **`DispatchNotifier` seam (§17B)**: a host binds a notifier that posts anywhere. Do **not** build a parallel webhook system.
