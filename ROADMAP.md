@@ -495,10 +495,12 @@ Single at-a-glance list of everything open. Details live in §14 / §16 / §17. 
 
 ### 🌐 Remote agent seam — working the production backlog from elsewhere (§19)
 - [ ] **Dedicated agent API** (`/api/dispatch/agent/*`) — a SEPARATE endpoint group from the human/sync surface so it carries its own security posture; NOT bolted onto `SyncController`.
-- [ ] **Agent-token guard** — a distinct least-privilege credential (dispatch-only), issued per agent, revocable independently of human creds; `DISPATCH_AGENT_TOKEN` on the agent machine.
-- [ ] **Remote CLI mode** — `dispatch:* --remote` routes reads/acts to the agent API (next/queue/show/add/note/done/claim) instead of the local DB.
-- [ ] **Forced agent attribution** — the token identifies the agent; every remote action stamps agent id / run into the timeline as a structured event (non-optional).
+- [ ] **Human-commissioned session tokens** (no standing credential) — `agent/session` request → a human approves/denies in prod → short-TTL scoped token; async poll / revoke / expire (OAuth device-flow shape, RFC 8628).
+- [ ] Production **"Agent Sessions" approval UI** — pending requests (agent identity + stated purpose) a human commissions or denies; see + kill active sessions.
+- [ ] **Remote CLI mode** — `dispatch:* --remote` routes reads/acts to the agent API (next/queue/show/add/note/done/claim) instead of the local DB, using the session token.
+- [ ] **Forced agent attribution** — the session token identifies the agent; every remote action stamps agent id / run into the timeline as a structured event (non-optional).
 - [ ] **Per-agent rate limiting + restricted verb set** (no delete/bulk); optional IP allowlist / signed requests on the agent group only.
+- [ ] **`.claude/skills/dispatch-agent-session` skill** — teaches request → poll (async, human-gated) → handle denial gracefully → use token → handle revocation/expiry. Ships with the API so they don't drift.
 - [ ] Update the `dispatch-track` skill + CLAUDE snippet to target production via the agent API (`--remote` / MCP), never the local dev DB.
 
 ### 🔵 Deferred / bigger phases
@@ -532,12 +534,24 @@ Foundation (contracts · models · services · policy · migrations) · CLI verb
 
 **Dedicated agent endpoints with their own security posture — the core of Tier 1.**
 Agents get a **separate API surface** (e.g. `/api/dispatch/agent/*`, its own route group + controller) — **not** the human super-user `SyncController` endpoints. Separating them is the point: the agent surface can be strict/paranoid (automated, high-volume, credential-bearing, acting on many real tasks) without constraining the human UI, and each surface carries its own protocol stack:
-- **Agent-token guard** — a dedicated, least-privilege credential (dispatch actions only), issued per agent, **revocable independently** of human credentials. Not a human session, not a full app API token. Stored as `DISPATCH_AGENT_TOKEN` on the agent's machine.
+- **Auth is a human-commissioned, session-scoped token — NOT a standing credential** (see *Agent session commissioning* below). No long-lived key on disk to leak: each work session is explicitly approved by a human in production and issued a short-lived, scoped token tied to that session.
 - **Tighter, per-token rate limiting** — agents throttled harder and separately from humans (ties to §17A).
 - **Forced attribution** — the token *is* the agent identity; every action stamps which agent / run into the task timeline as a structured event. Non-optional, so a reviewer can always tell agent actions from human ones.
 - **Restricted verb set** — curated (`next` / `queue` / `show` / `claim` / `note` / `done` / `add`); destructive or bulk ops (delete, bulk `apply`, full snapshot) excluded or separately gated.
 - **Independent audit** — agent actions are separately observable and killable without touching human access.
 - **Optional hardening the separate group makes cheap:** IP allowlist, per-agent scopes, signed requests / mTLS — layered on the agent surface only.
+
+**Agent session commissioning — human-approved, asynchronous, no standing credential (the auth model).**
+An agent holds no permanent key. It **requests a session** and a human in production **commissions or denies** it via a UI. The shape mirrors the **OAuth 2.0 Device Authorization Grant (RFC 8628)** — request, out-of-band human approval, poll-until-granted:
+1. **Request** — the agent `POST`s `agent/session` with its identity + stated purpose/scope + machine info → prod returns `{ session_id, status: pending, poll_interval, expires_at }`.
+2. **Human decision** — production surfaces the pending request in an **"Agent Sessions" approval queue** (who / what / why); a human **commissions** it (issues a token) or **denies** it (blocks the agent). Production sees *every* agent session request.
+3. **Poll (async — expect a human delay)** — the agent polls `agent/session/{id}` on `poll_interval`. Approval is **not synchronous** (a person must act), so the agent waits/backs off and handles `pending` / `approved` / `denied` / `expired` — it must not block or spin.
+4. **Approved** → the agent receives a **short-TTL, session-scoped token** (dispatch agent verbs only, tied to `session_id`); the verb loop uses it.
+5. **Revoke / expire** — a human can kill an active session anytime → the token dies → the agent's next call `401`s → it stops gracefully. TTL expiry → re-request.
+
+Properties: no standing credential to leak · explicit per-session human consent · full request visibility · independent per-session revocation · each session is a discrete, attributable audit unit.
+
+**Agent-side contract — a skill this package ships.** A `.claude/skills/dispatch-agent-session` skill teaches an agent the protocol: request a session; understand that **approval is human-gated and asynchronous** (expect a delay of seconds→minutes — do NOT assume instant, do NOT spin); poll with backoff; **handle a denial gracefully** (stop + report, never retry-spam); use the session token for the verb loop; and handle **mid-session revocation / expiry** (`401` → stop). This is the agent's manual for talking to production safely, and it ships *with* the API so the two never drift.
 
 **Atomic claim is a prerequisite here (C1).** A remote agent must **claim** a production task (atomic `in_progress` + assign) before working it, so parallel agents/humans never grab the same one. Across a network seam this isn't optional.
 
