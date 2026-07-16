@@ -1,0 +1,152 @@
+<div>
+    <style>
+        .dispatch-show-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem; }
+        .dispatch-show-code { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--dispatch-accent); }
+        .dispatch-show-title { font-size: 1.4rem; font-weight: 700; margin: 0.2rem 0 0.6rem; }
+        .dispatch-show-badges { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+        .dispatch-show-side { text-align: right; font-size: 0.75rem; color: var(--dispatch-text-muted); }
+        .dispatch-show-desc {
+            margin-top: 1rem;
+            background: var(--dispatch-surface-muted);
+            border: 1px solid var(--dispatch-border);
+            border-radius: var(--dispatch-radius-md);
+            padding: 0.9rem;
+            white-space: pre-wrap;
+        }
+        .dispatch-section-title { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--dispatch-text-muted); margin: 0 0 0.75rem; }
+        .dispatch-meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: 0.9rem; }
+        .dispatch-label-picker { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.5rem; }
+        .dispatch-label-chip { display: inline-flex; align-items: center; gap: 0.35rem; border: 1px solid var(--dispatch-border); border-radius: var(--dispatch-radius-pill); padding: 0.25rem 0.6rem; font-size: 0.72rem; font-weight: 600; cursor: pointer; }
+        .dispatch-gallery { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.75rem; }
+        .dispatch-gallery-thumb { width: 6rem; height: 6rem; border-radius: var(--dispatch-radius-sm); overflow: hidden; border: 1px solid var(--dispatch-border); display: block; }
+        .dispatch-gallery-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .dispatch-file-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.6rem; border: 1px solid var(--dispatch-border); border-radius: var(--dispatch-radius-sm); font-size: 0.78rem; }
+    </style>
+
+    {{-- Header --}}
+    <section class="dispatch-card">
+        <div class="dispatch-show-head">
+            <div style="min-width:0; flex:1;">
+                <p class="dispatch-show-code">{{ $task->code }}</p>
+                <h1 class="dispatch-show-title">{{ $task->title }}</h1>
+                <div class="dispatch-show-badges">
+                    <span class="dispatch-badge is-{{ $task->priority }}">{{ $task->priority }}</span>
+                    <span class="dispatch-badge">{{ $task->type }}</span>
+                    <span class="dispatch-badge is-info">{{ str_replace('_', ' ', $task->status) }}</span>
+                    @if ($task->is_public)
+                        <span class="dispatch-badge is-success">public</span>
+                    @endif
+                    @foreach ($task->labels as $label)
+                        <span class="dispatch-badge" style="background-color: {{ $label->color ?: '#94a3b8' }}; color:#fff;">{{ $label->name }}</span>
+                    @endforeach
+                </div>
+            </div>
+            <div class="dispatch-show-side">
+                <p style="margin:0;">Submitted by: <strong>{{ $task->submitter?->name ?? '—' }}</strong></p>
+                <p style="margin:0;">Assignee: <strong>{{ $task->assignee?->name ?? '—' }}</strong></p>
+                <p style="margin:0;">{{ $task->updated_at?->diffForHumans() }}</p>
+            </div>
+        </div>
+
+        @if ($task->description)
+            <div class="dispatch-show-desc">{{ $task->description }}</div>
+        @endif
+
+        {{--
+            Attachment gallery. Files live on a private disk; the download
+            route is the ONLY authorized way to reach one — used both as the
+            <img> src (browsers render embedded images regardless of the
+            Content-Disposition header the download response sends) and as
+            the lightbox's full-size source. Non-image files are plain
+            download-link rows.
+        --}}
+        @if ($task->attachments->isNotEmpty())
+            <div class="dispatch-gallery">
+                @foreach ($task->attachments->where('is_image', true) as $attachment)
+                    <a
+                        href="{{ route('dispatch.attachments.download', $attachment) }}"
+                        class="dispatch-gallery-thumb"
+                        data-dispatch-lightbox
+                        data-dispatch-lightbox-src="{{ route('dispatch.attachments.download', $attachment) }}"
+                        title="{{ $attachment->original_name }}"
+                    >
+                        <img src="{{ route('dispatch.attachments.download', $attachment) }}" alt="{{ $attachment->original_name }}" loading="lazy">
+                    </a>
+                @endforeach
+            </div>
+            @if ($task->attachments->where('is_image', false)->isNotEmpty())
+                <div class="dispatch-gallery" style="flex-direction: column; align-items: stretch;">
+                    @foreach ($task->attachments->where('is_image', false) as $attachment)
+                        <a href="{{ route('dispatch.attachments.download', $attachment) }}" class="dispatch-file-row">
+                            📎 {{ $attachment->original_name }}
+                            <span style="color: var(--dispatch-text-faint); margin-left:auto;">{{ number_format($attachment->size_bytes / 1024, 1) }} KB</span>
+                        </a>
+                    @endforeach
+                </div>
+            @endif
+        @endif
+    </section>
+
+    {{-- Meta editor (staff only, gated by the `update` policy ability) --}}
+    @if ($this->canEdit())
+        <section class="dispatch-card" style="margin-top: 1rem;">
+            <h2 class="dispatch-section-title">Task properties</h2>
+            <div class="dispatch-meta-grid">
+                <div>
+                    <label class="dispatch-label">Status</label>
+                    <select wire:model="status" class="dispatch-select">
+                        @foreach ($statuses as $s) <option value="{{ $s }}">{{ str_replace('_', ' ', $s) }}</option> @endforeach
+                    </select>
+                </div>
+                <div>
+                    <label class="dispatch-label">Type</label>
+                    <select wire:model="type" class="dispatch-select">
+                        @foreach ($types as $t) <option value="{{ $t }}">{{ $t }}</option> @endforeach
+                    </select>
+                </div>
+                <div>
+                    <label class="dispatch-label">Priority</label>
+                    <select wire:model="priority" class="dispatch-select">
+                        @foreach ($priorities as $p) <option value="{{ $p }}">{{ $p }}</option> @endforeach
+                    </select>
+                </div>
+                <div>
+                    <label class="dispatch-label">Assignee</label>
+                    <select wire:model="assignee_user_id" class="dispatch-select">
+                        <option value="">Unassigned</option>
+                        @foreach ($assigneeOptions as $u)
+                            <option value="{{ $u->id }}">{{ $u->name }} ({{ $u->email }})</option>
+                        @endforeach
+                    </select>
+                </div>
+                <div style="display:flex; align-items:center; gap:0.5rem;">
+                    <input type="checkbox" id="is_public" wire:model="is_public">
+                    <label for="is_public" class="dispatch-label" style="margin:0; cursor:pointer;">Visible to submitter/customer</label>
+                </div>
+            </div>
+
+            <div style="margin-top: 0.9rem;">
+                <label class="dispatch-label">Labels</label>
+                <div class="dispatch-label-picker">
+                    @foreach ($allLabels as $label)
+                        <label class="dispatch-label-chip">
+                            <input type="checkbox" value="{{ $label->id }}" wire:model="label_ids">
+                            <span>{{ $label->name }}</span>
+                        </label>
+                    @endforeach
+                </div>
+            </div>
+
+            <div style="margin-top: 1rem; display:flex; justify-content:flex-end;">
+                <button type="button" wire:click="saveMeta" wire:loading.attr="disabled" wire:target="saveMeta" class="dispatch-btn">
+                    Save properties
+                </button>
+            </div>
+        </section>
+    @endif
+
+    {{-- Comment thread --}}
+    <div style="margin-top: 1rem;">
+        <livewire:dispatch-thread :task="$task" :key="'task-thread-'.$task->id" />
+    </div>
+</div>

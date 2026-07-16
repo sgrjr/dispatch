@@ -1,0 +1,310 @@
+# Dispatch
+
+Drop-in task / bug / feature dispatch pipeline for Laravel: capture from any
+page (with screenshots), a Kanban board + list for staff, a submitter portal,
+and a CLI verb-loop that AI agents drive.
+
+Dispatch is a standalone package (`sgrjr/dispatch`) designed to be installed
+into any Laravel 11/12 app, not just one project. Everything app-specific
+(who's staff, what "tenant" means, who submitted a task) is a config-bound
+seam — the package ships sane single-team defaults and lets you override
+exactly the three points where your app's rules matter.
+
+This guide walks through installing Dispatch into a **brand-new third app**,
+so it doubles as the "multi-project ready" proof: nothing below assumes any
+prior Dispatch install.
+
+---
+
+## 1. Install
+
+Dispatch isn't (yet) on Packagist, so pull it straight from GitHub via a VCS
+repository entry.
+
+```jsonc
+// composer.json
+{
+    "repositories": [
+        {
+            "type": "vcs",
+            "url": "https://github.com/sgrjr/dispatch"
+        }
+    ]
+}
+```
+
+```bash
+composer require sgrjr/dispatch:dev-master
+```
+
+Publish the config and migrations, then migrate:
+
+```bash
+php artisan vendor:publish --tag=dispatch-config
+php artisan vendor:publish --tag=dispatch-migrations
+php artisan migrate
+```
+
+This creates `config/dispatch.php` and copies the package's migrations
+(`tasks`, `labels`, `task_label`, `task_comments`, `task_attachments`) into
+your app's `database/migrations/`.
+
+Optional publish tags:
+
+```bash
+# Blade views, if you want to override the shipped dispatch:: views
+php artisan vendor:publish --tag=dispatch-views
+
+# Compiled front-end assets used by the Livewire components
+php artisan vendor:publish --tag=dispatch-assets
+```
+
+---
+
+## 2. Point Dispatch at your User model
+
+`config/dispatch.php` resolves every model through a map so the package never
+hard-references a concrete class. Set the one that matters for a fresh
+install — your app's User:
+
+```php
+// config/dispatch.php
+'models' => [
+    'user' => env('DISPATCH_USER_MODEL', App\Models\User::class),
+    // task / task_comment / label / task_attachment default to the
+    // package's own models — leave these unless you're subclassing one
+    // (e.g. to add a tenant column) to teach Dispatch about it.
+],
+```
+
+or in `.env`:
+
+```
+DISPATCH_USER_MODEL=App\Models\User
+```
+
+---
+
+## 3. The three contract bindings
+
+Dispatch has exactly three seams a consuming app can (and usually should)
+override. All three are bound in `config/dispatch.php` under `contracts`:
+
+```php
+'contracts' => [
+    'gate' => Sgrjr\Dispatch\Support\DefaultGate::class,
+    'tenant' => Sgrjr\Dispatch\Support\NullTenantResolver::class,
+    'submitter' => Sgrjr\Dispatch\Support\AuthSubmitterResolver::class,
+],
+```
+
+| Contract | Interface | Shipped default | What it decides |
+|---|---|---|---|
+| **DispatchGate** | `Sgrjr\Dispatch\Contracts\DispatchGate` | `DefaultGate` — any authenticated user is staff and sees everything; guests see only `is_public` tasks | Who may use the staff board/list/CLI (`isStaff`), who's a superuser (`canSeeAll`), and — critically — the **one** query scope (`scopeVisible`) every task query in the package is passed through |
+| **TenantResolver** | `Sgrjr\Dispatch\Contracts\TenantResolver` | `NullTenantResolver` — no-op | Stamps your app's tenant column(s) onto a task at creation time (it never filters queries — your `DispatchGate` does that, using this resolver internally if it needs to) |
+| **SubmitterResolver** | `Sgrjr\Dispatch\Contracts\SubmitterResolver` | `AuthSubmitterResolver` — current auth id, or the lowest-id user for system/CLI captures | Who a task is attributed to when there's no clear actor |
+
+The shipped `DefaultGate` is fine for a small single-team app where "logged
+in" == "staff". Most real installs split staff from submitters — bind your
+own.
+
+### Example: a custom DispatchGate
+
+```php
+// app/Support/Dispatch/AppDispatchGate.php
+namespace App\Support\Dispatch;
+
+use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Database\Eloquent\Builder;
+use Sgrjr\Dispatch\Contracts\DispatchGate;
+
+class AppDispatchGate implements DispatchGate
+{
+    public function isStaff(?Authenticatable $user): bool
+    {
+        return $user !== null && $user->hasRole('staff');
+    }
+
+    public function canSeeAll(?Authenticatable $user): bool
+    {
+        return $user !== null && $user->hasRole('admin');
+    }
+
+    public function scopeVisible(Builder $query, ?Authenticatable $user): Builder
+    {
+        if ($this->canSeeAll($user)) {
+            return $query; // superuser: unconstrained
+        }
+
+        if ($this->isStaff($user)) {
+            return $query; // staff: sees every task (add tenant limits here if needed)
+        }
+
+        if ($user === null) {
+            return $query->where('is_public', true); // guest
+        }
+
+        // Ordinary submitter: their own tasks, plus anything public.
+        return $query->where(function (Builder $q) use ($user) {
+            $q->where('is_public', true)
+                ->orWhere('submitter_user_id', $user->getAuthIdentifier());
+        });
+    }
+}
+```
+
+```php
+// config/dispatch.php
+'contracts' => [
+    'gate' => App\Support\Dispatch\AppDispatchGate::class,
+    // ...
+],
+```
+
+Never write a second, ad-hoc `where()` for visibility anywhere in your app —
+route every task query through `scopeVisible()` (or `Gate::authorize(...,
+$task)`, which delegates to it via `TaskPolicy`).
+
+---
+
+## 4. From-any-page capture widget
+
+Drop the capture widget into your app's main layout once, and every
+authenticated page gets a floating "report a bug / suggest a feature" affordance:
+
+```blade
+{{-- resources/views/layouts/app.blade.php --}}
+<body>
+    @yield('content')
+
+    <livewire:dispatch-widget />
+</body>
+```
+
+It's on by default; disable it globally without touching the layout via:
+
+```php
+// config/dispatch.php
+'widget' => ['enabled' => env('DISPATCH_WIDGET', true)],
+```
+
+---
+
+## 5. Staff board / list / portal routes
+
+The service provider registers these routes automatically once the Livewire
+UI classes exist in the package (`dispatch.routes.enabled`, default `true`):
+
+| Route name | Path (default prefix `dispatch`) | Component | Middleware |
+|---|---|---|---|
+| `dispatch.index` | `/dispatch` | `TaskList` | `dispatch.routes.middleware` (`web`, `auth`) |
+| `dispatch.board` | `/dispatch/board` | `TaskBoard` (kanban) | same |
+| `dispatch.create` | `/dispatch/new` | `TaskCreate` | same |
+| `dispatch.show` | `/dispatch/{task:code}` | `TaskShow` | same |
+| `dispatch.portal` | `/dispatch/mine` | `MySubmissions` | `dispatch.routes.portal_middleware` |
+| `dispatch.attachments.store` | `POST /dispatch/attachments` | `AttachmentController@store` | same |
+| `dispatch.attachments.download` | `GET /dispatch/attachments/{attachment}/download` | `AttachmentController@download` | same |
+| `dispatch.attachments.destroy` | `DELETE /dispatch/attachments/{attachment}` | `AttachmentController@destroy` | same |
+| `dispatch.api.sync.snapshot` | `GET /api/dispatch/snapshot` | `SyncController@snapshot` | `dispatch.routes.api_middleware` |
+| `dispatch.api.sync.apply` | `POST /api/dispatch/apply` | `SyncController@apply` | same |
+
+Change the URL prefix, name prefix, or middleware stacks entirely in
+`config/dispatch.php` under `routes`. Set `routes.enabled` to `false` and
+wire your own routes to the same Livewire component classes if you need a
+non-default mount point.
+
+---
+
+## 6. The CLI verb loop
+
+Dispatch ships a small set of `dispatch:*` Artisan commands designed for both
+a human and an AI agent to drive the same task lifecycle from the terminal.
+Every command that emits data supports `--json` for machine consumption.
+
+```
+dispatch:add    <title> [--type=] [--priority=] [--status=] [--description=]
+                [--public] [--label=]*  [--submitter=]
+                → create a task (goes through DispatchTaskService — never a bare Task::create)
+
+dispatch:next   [--type=] [--label=] [--json]
+                → the single highest-priority open task, ordered
+                  in_progress > open > triage, then blocker > high > medium > low
+
+dispatch:queue  [--n=10] [--type=] [--priority=] [--label=] [--status=]*
+                → the next N tasks in the same priority order, as a table
+
+dispatch:show   <code> [--no-internal] [--json]
+                → full detail for one task: fields, labels, submitter/assignee, full thread
+
+dispatch:note   <code> <body> [--public] [--author=]
+                → append a comment; internal by default, --public makes it customer-visible
+
+dispatch:done   <code> [--status=done|declined|verifying] [--ref=] [--note=] [--author=]
+                → close out a task with an optional commit/PR ref and closing note
+
+dispatch:pull   [--path=] [--dry-run]
+                → fetch canonical task state from a remote Dispatch install
+                  (dispatch.sync.remote_url / dispatch.sync.token) and import it locally
+
+dispatch:push   [--path=] [--skip-export]
+                → export local task state and push it to the remote install
+```
+
+A typical agent session:
+
+```bash
+php artisan dispatch:pull                     # sync canonical state down first
+php artisan dispatch:next --json              # pick up the next task
+# ... do the work described in the task ...
+php artisan dispatch:note TASK-042 "Root cause: X. Fix: Y." 
+php artisan dispatch:done TASK-042 --ref=abc1234
+php artisan dispatch:push                     # sync local state back up
+```
+
+`dispatch:add`/`dispatch:next`/`dispatch:show` are the ones most worth
+scripting against — their `--json` output is stable, pretty-printed JSON
+(`code`, `title`, `type`, `priority`, `status`, `is_public`, `labels`,
+`description`, and — for `show` — the full comment thread).
+
+`dispatch:pull` / `dispatch:push` are for syncing two installs of *this
+package* (e.g. local dev ↔ production) over `dispatch.sync.remote_url` +
+`dispatch.sync.token`. Leave those unset and the two commands no-op with an
+instructive error instead of failing silently — the rest of the verb loop
+works fine without them.
+
+---
+
+## 7. Attachments
+
+Screenshots and files on tasks/comments always go through
+`Sgrjr\Dispatch\Services\AttachmentService` — never write to a disk directly.
+
+- **Private disk only.** `config('dispatch.attachments.disk')` defaults to
+  `local`, an app-private disk. Files are stored under a hashed filename, so
+  the *only* way to read one back is the authorized
+  `dispatch.attachments.download` route — never construct a public URL for
+  an attachment, even if you point the disk at S3 or similar.
+- Validation (size via `attachments.max_size_kb`, mime via
+  `attachments.allowed_mimes`, and a content-sniff for anything claiming to
+  be an image) happens in `AttachmentService::validate()`, called
+  automatically by `store()`. A disallowed upload throws
+  `Illuminate\Validation\ValidationException` — it is never silently stored.
+- `AttachmentService::canAccess()` gates a download by the *same*
+  `DispatchGate::scopeVisible()` scope as every other task query — an
+  attachment is only as visible as the task (or comment) that owns it.
+
+If you swap `attachments.disk` to a cloud disk, keep it off any disk
+configured with a public URL — Dispatch never generates one, but a
+misconfigured disk driver could still make files guessable.
+
+---
+
+## Next steps
+
+- Read `config/dispatch.php` top to bottom — every option has a comment
+  explaining what it's for and what the default means.
+- If you have more than one class of user (staff vs. customers/submitters),
+  bind a real `DispatchGate` on day one (see §3) — the shipped `DefaultGate`
+  is a single-team convenience, not a security model for a multi-role app.
+- See `.claude/skills/dispatch-track/SKILL.md` for wiring an AI coding agent
+  to capture and drive tasks automatically via the CLI verb loop.
