@@ -95,3 +95,20 @@ test('the reporter never throws — a failure returns null', function () {
 
     expect(DispatchTask::report('Boom'))->toBeNull();
 });
+
+test('capture_request => false suppresses the auto server/console context', function () {
+    config(['dispatch.reporter.throttle_seconds' => 0]);
+
+    $auto = DispatchTask::report('with auto context');
+    $suppressed = DispatchTask::report('own context only', [
+        'capture_request' => false,
+        'context' => ['url' => 'https://spa.test/orders/42'],
+    ]);
+
+    // Default run captures the (console) context in the test runner...
+    expect($auto->context['source'] ?? null)->toBe('console');
+    // ...suppressed run keeps only the caller's context plus captured_at.
+    expect($suppressed->context)->not->toHaveKey('source');
+    expect($suppressed->context['url'])->toBe('https://spa.test/orders/42');
+    expect($suppressed->context)->toHaveKey('captured_at');
+});

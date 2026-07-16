@@ -78,6 +78,12 @@ class DispatchManager
                 return null;
             }
 
+            // Per-call override of the auto server/console context capture, so a
+            // caller supplying its own context (e.g. a frontend-error endpoint
+            // forwarding the real page's context) can suppress this request's noise.
+            $captureRequest = (bool) ($options['capture_request']
+                ?? config('dispatch.reporter.capture_request', true));
+
             $attributes = [
                 'title' => $title,
                 'type' => $options['type'] ?? 'bug',
@@ -87,7 +93,7 @@ class DispatchManager
                 'is_public' => (bool) ($options['public'] ?? false),
                 // Capture the submitter NOW — a queued job has no auth context.
                 'submitter_user_id' => $options['submitter'] ?? $this->submitters->currentUserId(),
-                'context' => array_merge($this->baseContext(), $options['context'] ?? []),
+                'context' => array_merge($this->baseContext($captureRequest), $options['context'] ?? []),
             ];
 
             $labels = (array) ($options['labels'] ?? []);
@@ -162,9 +168,14 @@ class DispatchManager
     /**
      * @return array<string,mixed>
      */
-    protected function baseContext(): array
+    protected function baseContext(bool $captureRequest = true): array
     {
         $ctx = ['captured_at' => now()->toIso8601String()];
+
+        // Caller opted out (it's supplying its own context) — no server noise.
+        if (! $captureRequest) {
+            return $ctx;
+        }
 
         if (app()->runningInConsole()) {
             $ctx['source'] = 'console';
@@ -174,17 +185,15 @@ class DispatchManager
             return $ctx;
         }
 
-        if (config('dispatch.reporter.capture_request', true)) {
-            $request = request();
-            if ($request !== null && $request->method()) {
-                $ctx['source'] = 'http';
-                $ctx['url'] = $request->fullUrl();
-                $ctx['method'] = $request->method();
-                $ctx['route'] = optional($request->route())->getName();
-                $ctx['ip'] = $request->ip();
-                $ctx['user_id'] = Auth::id();
-                $ctx['input'] = $this->redact($request->all());
-            }
+        $request = request();
+        if ($request !== null && $request->method()) {
+            $ctx['source'] = 'http';
+            $ctx['url'] = $request->fullUrl();
+            $ctx['method'] = $request->method();
+            $ctx['route'] = optional($request->route())->getName();
+            $ctx['ip'] = $request->ip();
+            $ctx['user_id'] = Auth::id();
+            $ctx['input'] = $this->redact($request->all());
         }
 
         return $ctx;
