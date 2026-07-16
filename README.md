@@ -45,9 +45,12 @@ php artisan vendor:publish --tag=dispatch-migrations
 php artisan migrate
 ```
 
-This creates `config/dispatch.php` and copies the package's migrations
-(`tasks`, `labels`, `task_label`, `task_comments`, `task_attachments`) into
-your app's `database/migrations/`.
+This creates `config/dispatch.php`. The package's migrations are namespaced
+(`dispatch_tasks`, `dispatch_labels`, `dispatch_task_label`,
+`dispatch_task_comments`, `dispatch_task_attachments`) so they never collide with
+a table your app already owns, and they load automatically — `php artisan migrate`
+runs them without publishing. (Publish them with `--tag=dispatch-migrations` only
+if you want to edit them in your own `database/migrations/`.)
 
 Optional publish tags:
 
@@ -169,19 +172,44 @@ $task)`, which delegates to it via `TaskPolicy`).
 
 ## 4. From-any-page capture widget
 
-Drop the capture widget into your app's main layout once, and every
-authenticated page gets a floating "report a bug / suggest a feature" affordance:
+Dispatch ships two interchangeable widgets — pick the one that matches your host's
+front end. Both open the same modal (title / type / description, **paste a
+screenshot**, and built-in links to the board / your submissions) and POST to the
+headless `POST /dispatch/capture` endpoint. Every submission auto-captures the
+current page URL plus structured diagnostics (recent console errors, user agent,
+viewport).
+
+**Blade / Livewire hosts** — drop the Livewire component into your layout:
 
 ```blade
 {{-- resources/views/layouts/app.blade.php --}}
 <body>
     @yield('content')
-
     <livewire:dispatch-widget />
 </body>
 ```
 
-It's on by default; disable it globally without touching the layout via:
+**Inertia / Vue (or any JS) hosts** — publish the Vue component and place it
+yourself (e.g. inline in a footer):
+
+```bash
+php artisan vendor:publish --tag=dispatch-vue
+```
+```vue
+<script setup>
+import DispatchWidget from '@/vendor/dispatch/DispatchWidget.vue';
+</script>
+<template>
+  <footer>
+    <!-- variant="float" (default floating button) or "inline" for a footer trigger -->
+    <DispatchWidget variant="inline" label="Send Feedback" />
+  </footer>
+</template>
+```
+
+The Vue widget is dependency-free and talks to `/dispatch/capture` directly (CSRF
+via the `<meta name="csrf-token">` tag). Disable the shipped widgets globally
+without touching your layout:
 
 ```php
 // config/dispatch.php
