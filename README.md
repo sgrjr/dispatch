@@ -34,7 +34,13 @@ repository entry.
 ```
 
 ```bash
-composer require sgrjr/dispatch:dev-master
+# Recommended: a tagged release (stable; picks up 0.2.x patches)
+composer require sgrjr/dispatch:^0.2
+
+# Or track the latest unreleased tip of the master branch (bleeding edge).
+# NOTE: "dev-master" is Composer's alias for the `master` branch — not a branch
+# literally named dev-master — and pulls unreleased code.
+# composer require sgrjr/dispatch:dev-master
 ```
 
 Publish the config and migrations, then migrate:
