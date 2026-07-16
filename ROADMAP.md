@@ -493,6 +493,14 @@ Single at-a-glance list of everything open. Details live in §14 / §16 / §17. 
 - [ ] **C5** Stable `--json` contract + a `dispatch:schema` dump (agents parse a fixed shape).
 - [ ] **C6** Reactive orchestration via notifier events (auto-spawn an agent on `taskCreated`) — free once §17B lands.
 
+### 🌐 Remote agent seam — working the production backlog from elsewhere (§19)
+- [ ] **Dedicated agent API** (`/api/dispatch/agent/*`) — a SEPARATE endpoint group from the human/sync surface so it carries its own security posture; NOT bolted onto `SyncController`.
+- [ ] **Agent-token guard** — a distinct least-privilege credential (dispatch-only), issued per agent, revocable independently of human creds; `DISPATCH_AGENT_TOKEN` on the agent machine.
+- [ ] **Remote CLI mode** — `dispatch:* --remote` routes reads/acts to the agent API (next/queue/show/add/note/done/claim) instead of the local DB.
+- [ ] **Forced agent attribution** — the token identifies the agent; every remote action stamps agent id / run into the timeline as a structured event (non-optional).
+- [ ] **Per-agent rate limiting + restricted verb set** (no delete/bulk); optional IP allowlist / signed requests on the agent group only.
+- [ ] Update the `dispatch-track` skill + CLAUDE snippet to target production via the agent API (`--remote` / MCP), never the local dev DB.
+
 ### 🔵 Deferred / bigger phases
 - [ ] **C7** Task dependencies (`blocks` / `blocked_by`) for agent sequencing.
 - [ ] **C8** **MCP server** exposing the verbs as native tools — the eventual crown jewel for Claude-Code-centric workflows (v0.4).
@@ -505,3 +513,38 @@ Single at-a-glance list of everything open. Details live in §14 / §16 / §17. 
 
 ### ✅ Shipped (reference — tags through v0.2.1)
 Foundation (contracts · models · services · policy · migrations) · CLI verb loop + `--json` · Livewire board / list / show / thread / create + submitter portal · Livewire **and** publishable Vue capture widgets + headless capture API · attachments (private disk, authorized downloads) · **paste-a-screenshot** · structured **diagnostics capture** (console errors + request/console context) · **`DispatchTask` facade** + exception auto-capture (`report()` + 5xx `render()`) with dedupe / throttle / never-throws · per-call `capture_request`. Consumed by centerpoint (bound contracts, footer widget, exception handler; legacy `assignDeveloperTask` retired).
+
+---
+
+## 19. Data authority & how agents work the production backlog (remote seam)
+
+**Doctrine — decided (model A).** The **production database is the single authoritative home** for dispatch task data: real user feedback and the live backlog exist only there. A dev environment builds the *feature* (code) against throwaway local tasks — it is **not** a copy of the real backlog. Code flows dev→prod (git/composer); task **data never leaves production** except by a deliberate, temporary snapshot. The package is DB-agnostic — "authoritative" is a *deployment* fact, not something the package tracks.
+
+**The seam.** Agents (and developers) run **remotely** — laptop, dev box, CI — but real work must **read and act on production's data, not a local copy**. *The agent goes to the data; the data does not come to the agent.* Running `dispatch:*` against a local dev DB only touches throwaway tasks and does nothing to the real backlog — so a remote agent needs an authenticated channel to production.
+
+**Transport — three tiers:**
+
+| Tier | Mechanism | Status |
+|---|---|---|
+| 1 | **Remote CLI mode** over a **dedicated agent API** (below) — `dispatch:* --remote` acts on production | ⚠️ to build |
+| 2 | **Snapshot sync** — `dispatch:pull` prod → work locally → `dispatch:push` | ✅ built (bulk snapshot/apply), not wired; offline fallback, needs a conflict story |
+| 3 | **MCP server** — verbs as native tools executed against prod; the local agent just calls tools | 🔵 deferred (C8) |
+
+**Dedicated agent endpoints with their own security posture — the core of Tier 1.**
+Agents get a **separate API surface** (e.g. `/api/dispatch/agent/*`, its own route group + controller) — **not** the human super-user `SyncController` endpoints. Separating them is the point: the agent surface can be strict/paranoid (automated, high-volume, credential-bearing, acting on many real tasks) without constraining the human UI, and each surface carries its own protocol stack:
+- **Agent-token guard** — a dedicated, least-privilege credential (dispatch actions only), issued per agent, **revocable independently** of human credentials. Not a human session, not a full app API token. Stored as `DISPATCH_AGENT_TOKEN` on the agent's machine.
+- **Tighter, per-token rate limiting** — agents throttled harder and separately from humans (ties to §17A).
+- **Forced attribution** — the token *is* the agent identity; every action stamps which agent / run into the task timeline as a structured event. Non-optional, so a reviewer can always tell agent actions from human ones.
+- **Restricted verb set** — curated (`next` / `queue` / `show` / `claim` / `note` / `done` / `add`); destructive or bulk ops (delete, bulk `apply`, full snapshot) excluded or separately gated.
+- **Independent audit** — agent actions are separately observable and killable without touching human access.
+- **Optional hardening the separate group makes cheap:** IP allowlist, per-agent scopes, signed requests / mTLS — layered on the agent surface only.
+
+**Atomic claim is a prerequisite here (C1).** A remote agent must **claim** a production task (atomic `in_progress` + assign) before working it, so parallel agents/humans never grab the same one. Across a network seam this isn't optional.
+
+**Anti-patterns:**
+- ❌ Point a dev app's DB connection at production to "just see the tasks" — live operation from a dev box, no audit boundary, easy to corrupt real data.
+- ❌ Work a stale local snapshot and treat it as current — live work must hit the authoritative agent API.
+- ❌ Let an agent run the loop locally thinking it affects production — it doesn't; it edits throwaway dev tasks.
+- ❌ Reuse the human super-user token for agents — defeats independent revocation, attribution, and rate policy.
+
+**Also update:** the `dispatch-track` skill + any CLAUDE.md snippet must drive the verbs against the **agent API** (`--remote` / MCP), never the local dev DB, when working the real backlog.
