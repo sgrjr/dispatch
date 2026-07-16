@@ -9,7 +9,7 @@
 **What this is.** The living roadmap, design reference, and backlog for **`sgrjr/dispatch`** — a standalone Laravel package: task / bug / feature dispatch with capture widgets, a Kanban board + list + submitter portal, a CLI verb-loop, attachments, client diagnostics capture, and a programmatic `DispatchTask` facade. This file lives in the package repo and travels with the code. **§18 is the actionable backlog; §1–§17 are design decisions and build history.**
 
 **Where the pieces live** (paths are from the machine this was built on — confirm they exist):
-- **This package:** `C:\Users\steph\Documents\laravel-dispatch` — git repo, GitHub `sgrjr/dispatch`, released via tags (`git tag`; was through **v0.2.1** at last write). PHP 8.2, Laravel 11/12, Livewire 3, Testbench + Pest. Its DB tables are **`dispatch_*`-prefixed**.
+- **This package:** GitHub `sgrjr/dispatch`, released via tags (`git tag`). *(Path drifted across machines — was `C:\Users\steph\Documents\laravel-dispatch`; on the current machine it's `C:\Users\sreynoldsjr\Documents\GitHub\dispatch`. Confirm before relying on any absolute path in this doc.)* Last tag **v0.2.2**; a large non-AI feature batch (workflow config, notifier seam, watchers, merge, markdown, bulk ops, staleness, editable body, throttle, widget a11y) is committed on `master` but **NOT yet tagged** — verify the §18 🔴 browser smoke test, then tag (~`v0.3.0`). PHP 8.2, Laravel 11/12, Livewire 3, Testbench + Pest. DB tables are **`dispatch_*`-prefixed**.
 - **First consumer:** `C:\Users\steph\Documents\centerpoint\staff` — a Laravel 12 app that installs this package via a Composer **path repository** (symlinked — so package source edits are live in centerpoint immediately) with a GitHub VCS fallback. It binds the contract seams to its own auth under `App\Dispatch\*`, hosts the Vue widget in its footer, and calls the facade from its exception handler.
 - **Frozen reference — do NOT edit:** `C:\Users\steph\Documents\rupkeep-app` — the original inline implementation this package was distilled from. Read-only source of patterns.
 
@@ -163,7 +163,9 @@ laravel-dispatch/
 
 **Tenant columns are NOT in the package migration.** A consuming app adds its own column via its own migration and a `Task` subclass (see §6/§8). The package never assumes what a tenant is.
 
-> ✏️ Extra core fields wanted in v0.1 (`due_at`, `estimate`, external link)? → __________
+**Shipped additions (this session):** `due_at` (dateTime, nullable, indexed) and `duplicate_of` (unsignedBigInteger, nullable, indexed — winner's id on a merged loser) on `dispatch_tasks`; new `dispatch_task_watchers` pivot (`task_id` FK cascade + `user_id`, unique `[task_id,user_id]`). New `TaskComment` event types `description_edited` (internal memorial of a prior body) and `merged`. `recordEvent()` gained a trailing `bool $isInternal` param.
+
+> ✏️ Extra core fields wanted (`estimate`, external link)? → __________  *(`due_at` shipped.)*
 
 ---
 
@@ -211,6 +213,7 @@ interface SubmitterResolver {
 - `notifications.enabled`, `notifications.channels`
 - `sync.remote_url`, `sync.token`, `sync.timeout`, `sync.verify_ssl` (**optional**; verbs no-op gracefully when unset)
 - `jsonld.vocab` (default `https://sgrjr.dev/schema/dispatch/v1#` or similar — not rupkeep's)
+- **Shipped this session:** `contracts.notifier` (default `MailNotifier`) · `workflow.{types,priorities,statuses,type_labels,priority_labels,status_labels}` (empty vocab keys fall back to the `Task::*` consts; empty label maps auto-humanize) · `capture.throttle` (default `'60,1'`, `null`=off) · `board.{done_limit,manual_order}` · `staleness.{enabled,threshold_days}` · `markdown.enabled`
 
 ⚠️ **In-code defaults are the real defaults.** Hosts publish `dispatch-config` once and never re-publish (doctrine — re-publishing would clobber hand-edited contract bindings). So every config key added after a host installs is **absent from that host's published file**: the package MUST read it with a safe in-code fallback (`config('dispatch.x', $default)`). The published file's defaults are documentation for new installs, nothing more.
 
@@ -326,12 +329,12 @@ Not an AI SDK — a **CLI protocol** an external Claude Code agent drives:
 Every genuinely open decision lives here; other sections link in. **If a pending decision isn't on this list, treat it as decided (or dead) and check its home section.**
 
 **Open:**
-1. **`DispatchNotifier` default binding** (§17B): `NullNotifier` (host opts in to any delivery) vs `MailNotifier` (existing `TaskUpdate`, gated by `notifications.enabled`)? → __________
-2. **Capture-throttle default when unset** (§17A): none, or a sane `'60,1'`? → __________
-3. **§20 design forks 1, 2, 4, 5** (agent sessions — decide before §20 Phase 1): token mechanism · agent principal/attribution · approval-UI home · **how the Gate authorizes a session principal** (fork 5, added by adversarial review). Details + recommendations live in §20. Fork 3 (request-endpoint protection) is **DECIDED** — see §20.
-4. **Attachment storage disk for centerpoint**: private local (current driver default) vs S3-compatible → revisit if volume grows; confirm the config at the §18 🔴 smoke test (was D7).
+1. **§20 design forks 1, 2, 4, 5** (agent sessions — decide before §20 Phase 1): token mechanism · agent principal/attribution · approval-UI home · **how the Gate authorizes a session principal** (fork 5, added by adversarial review). Details + recommendations live in §20. Fork 3 (request-endpoint protection) is **DECIDED** — see §20.
+2. **Attachment storage disk for centerpoint**: private local (current driver default) vs S3-compatible → revisit if volume grows; confirm the config at the §18 🔴 smoke test (was D7).
 
 **Resolved (record):**
+- **`DispatchNotifier` default binding** (§17B) → **`MailNotifier`** (the existing `TaskUpdate`, gated by `notifications.enabled`) — preserves today's status-change emails; a host binds `NullNotifier` or its own to change delivery. *(built; MailNotifier fans out to submitter + watchers + assignee, excludes the actor, never throws.)*
+- **Capture-throttle default when unset** (§17A) → **`'60,1'`** (60/min per user, IP fallback) via the named `dispatch-capture` limiter; a host sets `capture.throttle` to `null` to disable. *(built.)*
 - Repo folder + GitHub → `laravel-dispatch` dir, GitHub `sgrjr/dispatch`.
 - Extra v0.1 core `tasks` fields → none; add later, non-breaking (`due_at` now appears in §18 🧩 staleness item).
 - centerpoint tenancy → stamp `account_key` on every create; scope visibility by ROLE only in v0.1 (per-account filtering can turn on later, no backfill). `TenantResolver.stamp()` active; Gate scopes by role.
@@ -485,17 +488,17 @@ Single at-a-glance list of everything open. Details live in §14 / §16 / §17. 
 
 > **GATE (decided — was §17 Q3): nothing in the sections below starts until 🔴 is empty.** Every later phase (🟡 🤖 🌐 🧩) builds on surfaces the smoke test has never exercised; closing 🔴 first is the cheapest de-risk on the list.
 
-- [ ] **Browser smoke test** of the full UI under real centerpoint auth — board render + drag-drop, widget submit + paste screenshot, diagnostics panel, submitter portal, `/dispatch/board` as a staff user. The biggest unknown; can't be automated from here.
-- [ ] **Client-configurable capture throttle** (§17A) — `config('dispatch.capture.throttle')`; provider conditionally applies `throttle:` middleware to `/dispatch/capture` (+ upload). Guards abuse/flood.
-- [ ] **Agnostic notifications via a `DispatchNotifier` seam** (§17B) — 4th config-bound contract, fire-and-forget at every mutation point. Also **fixes the board-drag-doesn't-notify gap** and keeps the package from duplicating a host's notification stack.
-- [ ] **Verify notification delivery** in centerpoint (mail driver + running queue worker), or consciously accept portal-only status tracking.
+- [ ] **Browser smoke test** of the full UI under real centerpoint auth — board render + drag-drop, widget submit + paste screenshot + **visible "Go to" links** + keyboard/SR nav, diagnostics panel, submitter portal, `/dispatch/board` as a staff user. The biggest unknown; can't be automated from here. **Still the human gate — the core build below landed AHEAD of it by explicit direction; run this next.**
+- [x] **Client-configurable capture throttle** (§17A) — `config('dispatch.capture.throttle')` (default `'60,1'`, `null`=off) via a named `dispatch-capture` RateLimiter that reads config at request time; `throttle:dispatch-capture` on `/capture` + `/attachments` POST. *(shipped; ThrottleTest.)*
+- [x] **Agnostic notifications via a `DispatchNotifier` seam** (§17B) — 4th config-bound contract (`NullNotifier`/`MailNotifier`, default Mail), fire-and-forget at every mutation point (create/status/comment/assign, board + meta + CLI). **Fixes the board-drag-doesn't-notify gap.** *(shipped; NotifierTest.)*
+- [ ] **Verify notification delivery** in centerpoint (mail driver + running queue worker) — package-side seam + fan-out are unit-tested; live delivery under a real queue worker is a centerpoint runtime check (do it with the smoke test), or consciously accept portal-only status tracking.
 
 ### 🟡 Soon after launch
-- [ ] Cap / paginate / archive the board **"done" column** (currently unbounded load — slows as it grows).
-- [ ] **Submission acknowledgement** to the submitter (a receipt beyond the code shown in the modal).
-- [ ] **Assignee notification** on assignment.
-- [ ] **Image thumbnails / resizing** (v0.1 stores + streams full-size originals; heavy with many/large screenshots).
-- [ ] Board **within-column manual ordering that sticks** (currently priority-primary sort; drag-reorder across tiers doesn't hold).
+- [x] Cap / paginate / archive the board **"done" column** — capped to `config('dispatch.board.done_limit', 50)` most-recent, with a "load all" toggle; other columns unbounded. *(shipped; BoardFeaturesTest.)*
+- [x] **Submission acknowledgement** to the submitter — `MailNotifier::taskCreated` notifies the submitter on create (a receipt beyond the modal code). *(shipped.)*
+- [x] **Assignee notification** on assignment — `MailNotifier::taskAssigned` fired from `TaskShow::saveMeta`. *(shipped.)*
+- [ ] **Image thumbnails / resizing** (v0.1 stores + streams full-size originals; heavy with many/large screenshots). **Deferred by decision** — the one confirmed item needing image processing; revisit in a follow-up.
+- [x] Board **within-column manual ordering that sticks** — `config('dispatch.board.manual_order', false)`; when true, order is position-primary so a drag holds (default keeps priority-primary). *(shipped.)*
 
 ### 🤖 AI-agent iteration (target v0.3 — §17C)
 
@@ -519,14 +522,14 @@ Single at-a-glance list of everything open. Details live in §14 / §16 / §17. 
 - [ ] Update the `dispatch-track` skill + CLAUDE snippet to target production via the agent API (`--remote` / MCP), never the local dev DB.
 
 ### 🧩 Product-completeness gaps (confirmed — fill over time)
-From a completeness review, verified against code. Committed to address, not yet built.
-- [ ] **Configurable workflow** — make `Task::TYPES` / `PRIORITIES` / `STATUSES` config-driven (today hardcoded consts) so a host defines its own states/types. Load-bearing for the multi-project reuse thesis — everything else is a config seam, this isn't yet. Board columns + list filters read from config.
-- [ ] **Markdown rendering** — render task bodies + comments as **sanitized** markdown (today escaped plain-text `{{ }}`; the CLI already calls `--description` "markdown"). Needs a safe renderer (CommonMark + sanitizer). Pairs with §21 editable body.
-- [ ] **Bulk operations** — bulk status / label / assign / decline on board + list (today one task at a time; triage doesn't scale with real inbound volume).
-- [ ] **Watchers / subscribers** — let staff follow a task they didn't submit; notifications flow beyond the submitter (the *who*; the *how* is the §17B notifier seam).
-- [ ] **Merge duplicate tasks** — human merge of two tasks (consolidate thread + attachments + labels; close/redirect the loser), distinct from the automatic exception/`key` dedupe.
-- [ ] **Age / staleness surfacing** — optional `due_at` + task-age visibility + a "stale" filter/view, so feedback doesn't rot silently (a 6-week-old triage item looks identical to today's).
-- [ ] **Capture-widget accessibility** — keyboard + screen-reader support for the capture widget specifically (promoted from §22: the widget fronts ALL authenticated users, not just staff; board-DnD a11y stays deferred in §22).
+From a completeness review, verified against code. **The core batch below shipped this session** (Wave 0 foundation + Wave 1 surfaces).
+- [x] **Configurable workflow** — `Task::types()/priorities()/statuses()` + `*Labels()` read `config('dispatch.workflow.*')` (consts stay as fallback); `prioritySql()/statusSql()` generate sort SQL from config; board columns + list/show/create selects + filters all read it. *(shipped; WorkflowConfigTest.)*
+- [x] **Markdown rendering** — `Support\Markdown::render()` (CommonMark, `html_input=escape` + unsafe links off — no separate purifier); renders task description + comment bodies; gated by `config('dispatch.markdown.enabled')`. *(shipped.)*
+- [x] **Bulk operations** — full on the list (status/label/assign/decline, scope- + policy-gated, labels attach); minimal on the board (status + decline, drag disabled in select-mode). *(shipped; ListFeaturesTest / BoardFeaturesTest.)* — *board bulk label-add + assign deferred to a follow-up (list has the full set).*
+- [x] **Watchers / subscribers** — `dispatch_task_watchers` + `Task::watch()/unwatch()/isWatchedBy()`; watch toggle on TaskShow; staff auto-watch on comment; `MailNotifier` fans notifications to watchers. *(shipped; WatchersTest.)*
+- [x] **Merge duplicate tasks** — `DispatchTaskService::merge()` reparents comments/attachments, unions labels, memorializes both sides, soft-deletes the loser (`duplicate_of`); "merge into" UI on TaskShow + `dispatch:merge` CLI. *(shipped; MergeTest / CliMergeEditTest.)*
+- [x] **Age / staleness surfacing** — `due_at` column + editor; "stale" filter + age badges on list/board via `config('dispatch.staleness.*')`. *(shipped.)*
+- [x] **Capture-widget accessibility** — dialog roles, associated labels, Esc-to-close, focus-in/restore + Tab trap, `aria-live` status — on BOTH the Vue and Livewire widgets. Also fixed the invisible "Go to" links (dedicated `--dw-link` token off body color, hover recolor, dark-mode value). *(shipped; board-DnD a11y stays deferred in §22.)*
 
 ### 🔵 Deferred / bigger phases
 - [ ] **C7** Task dependencies (`blocks` / `blocked_by`) for agent sequencing.
@@ -539,7 +542,7 @@ From a completeness review, verified against code. Committed to address, not yet
 - [ ] **Server-side** `DispatchTask` integration into centerpoint's frontend error-ping endpoint (tracked in centerpoint `todo.md`).
 - [ ] **Packagist** publish (currently GitHub VCS only).
 
-### ✅ Shipped (reference — tags through v0.2.1)
+### ✅ Shipped (reference — tags through v0.2.2; core non-AI batch on `master`, untagged)
 Foundation (contracts · models · services · policy · migrations) · CLI verb loop + `--json` · Livewire board / list / show / thread / create + submitter portal · Livewire **and** publishable Vue capture widgets + headless capture API · attachments (private disk, authorized downloads) · **paste-a-screenshot** · structured **diagnostics capture** (console errors + request/console context) · **`DispatchTask` facade** + exception auto-capture (`report()` + 5xx `render()`) with dedupe / throttle / never-throws · per-call `capture_request`. Consumed by centerpoint (bound contracts, footer widget, exception handler; legacy `assignDeveloperTask` retired).
 
 ---
@@ -650,7 +653,9 @@ Package: the Testbench suite above + `php -l`. Live: on a dev box, `dispatch:ses
 
 Small, settled design decisions that aren't full build plans. Capture the doctrine so a future session builds them consistently.
 
-### 21.1 Editable task body — history *is* the comment stream (no separate mechanism)
+### 21.1 Editable task body — history *is* the comment stream (no separate mechanism)  ✅ BUILT (this session)
+Built exactly as designed below: TaskShow's meta editor (gated by `canEdit()`) and the `dispatch:edit` CLI both write an `is_internal=true` `description_edited` memorial holding the full prior body before overwriting; `recordEvent()` now takes an `$isInternal` flag so the memorial is hidden from the portal. Covered by TaskShowFeaturesTest / CliMergeEditTest.
+
 A task's `description` (body) is editable after creation — the natural home for a living "Done / Remaining" checklist on a multi-step task, distinct from the append-only comment log. The edit **is** the history mechanism:
 
 1. Capture the **current (pre-edit) description**.
@@ -700,6 +705,7 @@ Speculative ideas from the completeness review, kept **distinct from the confirm
 - ⏭️ **Remaining:** YOU visually verify under a real staff login (`composer dev` → floating "Feedback" button on any page, "Dispatch" in the user menu, `/dispatch/board`). Optionally pin centerpoint to `^0.1.0` instead of `@dev` once stable. *[still open — now the §18 🔴 browser smoke test, which gates all new build phases]*
 - ⚠️ The path-repo entry in centerpoint `composer.json` is **dev-only** (breaks a fresh prod `composer install`). Dispatch isn't production-deployable until `sgrjr/dispatch` is pushed to GitHub and the entry becomes a VCS repo — a one-line cutover. *[resolved — package is on GitHub; centerpoint declares path-first + VCS fallback]*
 - 🛠️ **Post-v0.2.1 (2026-07-16):** `d98729d` fixed table-name stragglers — `Label::$table` was still unprefixed `labels` and the pivot `task_label` (now `dispatch_labels` / `dispatch_task_label`; migrations + models + tests swept). Tagged **v0.2.2** (with the roadmap sweep) — v0.2.1 ships the bug, so consumers should update to the new tag.
+- 🌊 **Core feature batch (2026-07-16) — waves orchestration, driver = Opus, workers = Sonnet.** Landed the confirmed non-AI backlog (🔴 buildable + 🟡 + 🧩 + §21.1 + the invisible-"Go to"-links bug) ahead of the 🔴 browser smoke test by explicit direction. **Wave 0 (foundation, 1 agent + driver audit, `df3bf11` + rate-limiter `96d9ccb`):** `DispatchNotifier` seam (Null/Mail), config-driven workflow accessors + sort-SQL, watchers table, `merge()`, `due_at`/`duplicate_of`, `Markdown::render()`, `recordEvent()` `$isInternal`. **Wave 1 (5 parallel Sonnet agents, disjoint file sets, zero collisions, `907353c`):** board/list/show/create/thread/portal made config-driven; bulk ops (full on list, status+decline on board); watch toggle + auto-watch; merge UI + `dispatch:merge`; editable body + `dispatch:edit`; markdown render; done-column cap; manual-order toggle; stale filter/badges; notifier routing (drops the two private `notifySubmitterOfUpdate` copies, fixes the board-drag-notify gap); capture throttle; widget accessibility + the "Go to" `--dw-link` fix. Suite grew 39→**75 green (257 assertions)**. Deferred to a follow-up: image thumbnails (image-processing dep), board bulk label/assign, and the whole 🤖/🌐/🔵 AI-agent layer. NOT tagged yet — verify the 🔴 smoke test first. **Two package-side driver fixes during audit:** ambiguous `id` in `merge()`'s label pluck (→ `allRelatedIds()`), and a Testbench notifiable-user fixture (`tests/Fixtures/User.php` + `dispatchMakeUser()`).
 
 **v3 change (DECIDED):** image/file attachments are a **core v0.1 feature** and an explicit improvement over the rupkeep PoC — polymorphic `task_attachments` (on tasks *and* comments), paste-a-screenshot in the widget and thread, storage-disk config, strict validation.
 
