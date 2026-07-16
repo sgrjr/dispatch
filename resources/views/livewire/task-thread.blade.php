@@ -33,7 +33,10 @@
                     <span style="color: var(--dispatch-text-faint); text-transform:none;">{{ $c->created_at?->diffForHumans() }}</span>
                 </div>
                 @if ($c->body !== '')
-                    <div class="dispatch-thread-body">{{ $c->body }}</div>
+                    {{-- Markdown::render() safely falls back to nl2br(e($text)) for
+                         plain strings, so this covers both real comments and the
+                         short plain-text bodies system/event rows carry. --}}
+                    <div class="dispatch-thread-body">{!! \Sgrjr\Dispatch\Support\Markdown::render($c->body) !!}</div>
                 @endif
                 @if ($c->attachments->isNotEmpty())
                     <div class="dispatch-thread-attachments">

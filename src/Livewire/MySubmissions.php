@@ -40,7 +40,7 @@ class MySubmissions extends Component
 
         app(DispatchGate::class)->scopeVisible($query, Auth::user());
 
-        if (in_array($this->statusFilter, $taskClass::STATUSES, true)) {
+        if (in_array($this->statusFilter, $taskClass::statuses(), true)) {
             $query->where('status', $this->statusFilter);
         }
 
@@ -48,7 +48,7 @@ class MySubmissions extends Component
 
         return view('dispatch::livewire.my-submissions', [
             'tasks' => $tasks,
-            'statuses' => $taskClass::STATUSES,
+            'statusLabels' => $taskClass::statusLabels(),
         ])->layout('dispatch::components.layout');
     }
 }

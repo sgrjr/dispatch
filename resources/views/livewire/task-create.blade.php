@@ -39,13 +39,13 @@
                 <div>
                     <label class="dispatch-label">Type</label>
                     <select wire:model="type" class="dispatch-select">
-                        @foreach ($types as $t) <option value="{{ $t }}">{{ $t }}</option> @endforeach
+                        @foreach ($typeLabels as $code => $label) <option value="{{ $code }}">{{ $label }}</option> @endforeach
                     </select>
                 </div>
                 <div>
                     <label class="dispatch-label">Priority</label>
                     <select wire:model="priority" class="dispatch-select">
-                        @foreach ($priorities as $p) <option value="{{ $p }}">{{ $p }}</option> @endforeach
+                        @foreach ($priorityLabels as $code => $label) <option value="{{ $code }}">{{ $label }}</option> @endforeach
                     </select>
                 </div>
             </div>

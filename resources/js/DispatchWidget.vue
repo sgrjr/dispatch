@@ -19,7 +19,7 @@ installConsoleCapture()
  *   <DispatchWidget />                       // defaults to POST /dispatch/capture
  *   <DispatchWidget endpoint="/dispatch/capture" />
  */
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { getDispatchContext } from './dispatchConsole'
 
 const props = defineProps({
@@ -46,6 +46,13 @@ const files = ref([])
 const submitting = ref(false)
 const result = ref(null)
 const error = ref('')
+
+// Accessibility: the dialog element (focus-trap boundary), the title field
+// (preferred initial focus target, matching its pre-existing `autofocus`),
+// and the element that had focus before the dialog opened (restored on close).
+const modalRef = ref(null)
+const titleFieldRef = ref(null)
+let lastFocusedElement = null
 
 const canSubmit = computed(() => title.value.trim().length > 0 && !submitting.value)
 
@@ -112,7 +119,68 @@ function close() {
   open.value = false
   // keep result briefly? just reset for next time
   if (result.value) reset()
+
+  // Accessibility: return focus to whatever triggered the dialog (the FAB or
+  // the host's inline trigger) rather than dropping it back to <body>.
+  if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
+    lastFocusedElement.focus()
+  }
+  lastFocusedElement = null
 }
+
+function openWidget() {
+  lastFocusedElement = document.activeElement
+  open.value = true
+  nextTick(() => focusFirstFocusable())
+}
+
+function focusableElements() {
+  if (!modalRef.value) return []
+  const nodes = modalRef.value.querySelectorAll(
+    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+  )
+  return Array.prototype.filter.call(nodes, (el) => !el.disabled && el.offsetParent !== null)
+}
+
+function focusFirstFocusable() {
+  if (titleFieldRef.value) {
+    titleFieldRef.value.focus()
+    return
+  }
+  const [first] = focusableElements()
+  if (first) first.focus()
+  else if (modalRef.value) modalRef.value.focus()
+}
+
+// Minimal focus trap: Escape closes the dialog; Tab/Shift+Tab wrap within it
+// rather than escaping to the host page behind the overlay. Kept deliberately
+// small (no external dependency) — see handoff notes for what this omits.
+function onWindowKeydown(e) {
+  if (!open.value) return
+
+  if (e.key === 'Escape') {
+    close()
+    return
+  }
+
+  if (e.key === 'Tab') {
+    const list = focusableElements()
+    if (!list.length) return
+    const first = list[0]
+    const last = list[list.length - 1]
+
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault()
+      last.focus()
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault()
+      first.focus()
+    }
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', onWindowKeydown))
+onBeforeUnmount(() => window.removeEventListener('keydown', onWindowKeydown))
 
 async function submit() {
   if (!canSubmit.value) return
@@ -164,7 +232,8 @@ function previewUrl(file) {
       type="button"
       class="dw-fab"
       title="Report a bug or suggest a feature"
-      @click="open = true"
+      aria-label="Report a bug or suggest a feature"
+      @click="openWidget"
     >
       <span aria-hidden="true">✎</span>
       <span class="dw-fab-label">{{ label }}</span>
@@ -174,15 +243,24 @@ function previewUrl(file) {
       type="button"
       class="dw-trigger"
       title="Report a bug or suggest a feature"
-      @click="open = true"
+      :aria-label="label || 'Report a bug or suggest a feature'"
+      @click="openWidget"
     >
       {{ label }}
     </button>
 
     <div v-if="open" class="dw-overlay" @click.self="close">
-      <div class="dw-modal" role="dialog" aria-modal="true" @paste="onPaste">
+      <div
+        ref="modalRef"
+        class="dw-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="dw-modal-title"
+        tabindex="-1"
+        @paste="onPaste"
+      >
         <header class="dw-head">
-          <strong>Report a bug / suggest a feature</strong>
+          <strong id="dw-modal-title">Report a bug / suggest a feature</strong>
           <button type="button" class="dw-x" @click="close" aria-label="Close">×</button>
         </header>
 
@@ -191,7 +269,7 @@ function previewUrl(file) {
           <a v-for="l in navLinks" :key="l.href" :href="l.href" class="dw-navlink">{{ l.label }}</a>
         </nav>
 
-        <div v-if="result" class="dw-success">
+        <div v-if="result" class="dw-success" aria-live="polite">
           <p>Thanks — logged as <strong>{{ result.code }}</strong>.</p>
           <a v-if="result.url" :href="result.url" class="dw-link">View it</a>
           <button type="button" class="dw-secondary" @click="reset">Report another</button>
@@ -200,7 +278,7 @@ function previewUrl(file) {
         <form v-else class="dw-body" @submit.prevent="submit" @dragover.prevent @drop="onDrop">
           <label class="dw-field">
             <span>Title</span>
-            <input v-model="title" type="text" maxlength="255" placeholder="Short summary" autofocus />
+            <input ref="titleFieldRef" v-model="title" type="text" maxlength="255" placeholder="Short summary" autofocus />
           </label>
 
           <label class="dw-field">
@@ -230,7 +308,7 @@ function previewUrl(file) {
             </ul>
           </div>
 
-          <p v-if="error" class="dw-error">{{ error }}</p>
+          <p v-if="error" class="dw-error" aria-live="polite">{{ error }}</p>
 
           <footer class="dw-foot">
             <button type="button" class="dw-secondary" @click="close">Cancel</button>
@@ -250,6 +328,10 @@ function previewUrl(file) {
   --dw-fg: var(--dispatch-fg, #1f2933);
   --dw-bg: var(--dispatch-bg, #ffffff);
   --dw-border: var(--dispatch-border, #d7dee5);
+  /* Body-text color, NOT the button-fill accent — a host that themes
+     --dispatch-accent low-contrast (e.g. a pale brand color meant only for
+     filled buttons) must not make the "Go to" nav links unreadable. */
+  --dw-link: var(--dispatch-link, var(--dw-fg));
 }
 .dw-fab {
   position: fixed; right: 1.25rem; bottom: 1.25rem; z-index: 9998;
@@ -299,9 +381,14 @@ function previewUrl(file) {
 .dw-link { color: var(--dw-accent); font-weight: 600; }
 .dw-links { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; padding: 0.55rem 1rem; border-bottom: 1px solid var(--dw-border); font-size: 0.8rem; }
 .dw-links-label { opacity: 0.55; }
-.dw-navlink { color: var(--dw-accent); text-decoration: none; font-weight: 600; }
-.dw-navlink:hover { text-decoration: underline; }
+.dw-navlink { color: var(--dw-link); text-decoration: none; font-weight: 600; }
+.dw-navlink:hover { color: var(--dw-accent); text-decoration: underline; }
 @media (prefers-color-scheme: dark) {
-  .dispatch-widget { --dispatch-fg: #e7edf3; --dispatch-bg: #1b232c; --dispatch-border: #33414f; }
+  .dispatch-widget {
+    --dispatch-fg: #e7edf3;
+    --dispatch-bg: #1b232c;
+    --dispatch-border: #33414f;
+    --dw-link: var(--dispatch-link, #e7edf3);
+  }
 }
 </style>

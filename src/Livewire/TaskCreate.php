@@ -44,8 +44,8 @@ class TaskCreate extends Component
         return [
             'title' => 'required|string|min:3|max:255',
             'description' => 'nullable|string|max:20000',
-            'type' => 'required|in:'.implode(',', $taskClass::TYPES),
-            'priority' => 'required|in:'.implode(',', $taskClass::PRIORITIES),
+            'type' => 'required|in:'.implode(',', $taskClass::types()),
+            'priority' => 'required|in:'.implode(',', $taskClass::priorities()),
             'is_public' => 'boolean',
             'newAttachments.*' => 'nullable|file',
         ];
@@ -122,8 +122,10 @@ class TaskCreate extends Component
         $labelClass = config('dispatch.models.label');
 
         return view('dispatch::livewire.task-create', [
-            'types' => $taskClass::TYPES,
-            'priorities' => $taskClass::PRIORITIES,
+            'types' => $taskClass::types(),
+            'priorities' => $taskClass::priorities(),
+            'typeLabels' => $taskClass::typeLabels(),
+            'priorityLabels' => $taskClass::priorityLabels(),
             'existingLabels' => $labelClass::orderBy('name')->get(),
         ])->layout('dispatch::components.layout');
     }

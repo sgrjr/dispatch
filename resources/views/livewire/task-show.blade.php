@@ -11,8 +11,10 @@
             border: 1px solid var(--dispatch-border);
             border-radius: var(--dispatch-radius-md);
             padding: 0.9rem;
-            white-space: pre-wrap;
+            line-height: 1.55;
         }
+        .dispatch-show-desc :first-child { margin-top: 0; }
+        .dispatch-show-desc :last-child { margin-bottom: 0; }
         .dispatch-section-title { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--dispatch-text-muted); margin: 0 0 0.75rem; }
         .dispatch-meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: 0.9rem; }
         .dispatch-label-picker { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.5rem; }
@@ -44,12 +46,24 @@
             <div class="dispatch-show-side">
                 <p style="margin:0;">Submitted by: <strong>{{ $task->submitter?->name ?? '—' }}</strong></p>
                 <p style="margin:0;">Assignee: <strong>{{ $task->assignee?->name ?? '—' }}</strong></p>
+                @if ($task->due_at)
+                    <p style="margin:0;">Due: <strong>{{ $task->due_at->toFormattedDateString() }}</strong> ({{ $task->due_at->diffForHumans() }})</p>
+                @endif
                 <p style="margin:0;">{{ $task->updated_at?->diffForHumans() }}</p>
+                @can('watch', $task)
+                    <div style="margin-top:0.5rem;">
+                        @if ($task->isWatchedBy(auth()->id()))
+                            <button type="button" wire:click="unwatch" wire:loading.attr="disabled" wire:target="unwatch" class="dispatch-btn is-secondary">Unwatch</button>
+                        @else
+                            <button type="button" wire:click="watch" wire:loading.attr="disabled" wire:target="watch" class="dispatch-btn is-secondary">Watch</button>
+                        @endif
+                    </div>
+                @endcan
             </div>
         </div>
 
         @if ($task->description)
-            <div class="dispatch-show-desc">{{ $task->description }}</div>
+            <div class="dispatch-show-desc">{!! \Sgrjr\Dispatch\Support\Markdown::render($task->description) !!}</div>
         @endif
 
         {{--
@@ -137,19 +151,19 @@
                 <div>
                     <label class="dispatch-label">Status</label>
                     <select wire:model="status" class="dispatch-select">
-                        @foreach ($statuses as $s) <option value="{{ $s }}">{{ str_replace('_', ' ', $s) }}</option> @endforeach
+                        @foreach ($statusLabels as $code => $label) <option value="{{ $code }}">{{ $label }}</option> @endforeach
                     </select>
                 </div>
                 <div>
                     <label class="dispatch-label">Type</label>
                     <select wire:model="type" class="dispatch-select">
-                        @foreach ($types as $t) <option value="{{ $t }}">{{ $t }}</option> @endforeach
+                        @foreach ($typeLabels as $code => $label) <option value="{{ $code }}">{{ $label }}</option> @endforeach
                     </select>
                 </div>
                 <div>
                     <label class="dispatch-label">Priority</label>
                     <select wire:model="priority" class="dispatch-select">
-                        @foreach ($priorities as $p) <option value="{{ $p }}">{{ $p }}</option> @endforeach
+                        @foreach ($priorityLabels as $code => $label) <option value="{{ $code }}">{{ $label }}</option> @endforeach
                     </select>
                 </div>
                 <div>
@@ -161,10 +175,21 @@
                         @endforeach
                     </select>
                 </div>
+                <div>
+                    <label class="dispatch-label">Due date</label>
+                    <input type="date" wire:model="due_at" class="dispatch-input">
+                    @error('due_at') <p class="dispatch-error">{{ $message }}</p> @enderror
+                </div>
                 <div style="display:flex; align-items:center; gap:0.5rem;">
                     <input type="checkbox" id="is_public" wire:model="is_public">
                     <label for="is_public" class="dispatch-label" style="margin:0; cursor:pointer;">Visible to submitter/customer</label>
                 </div>
+            </div>
+
+            <div style="margin-top: 0.9rem;">
+                <label class="dispatch-label">Description</label>
+                <textarea wire:model="editDescription" rows="6" class="dispatch-textarea" placeholder="Details, steps to reproduce, links…"></textarea>
+                @error('editDescription') <p class="dispatch-error">{{ $message }}</p> @enderror
             </div>
 
             <div style="margin-top: 0.9rem;">
@@ -186,6 +211,22 @@
             </div>
         </section>
     @endif
+
+    {{-- Mark-as-duplicate / merge control (staff `delete` ability — distinct
+         from canEdit()'s `update` ability, so it's gated independently). --}}
+    @can('delete', $task)
+        <section class="dispatch-card" style="margin-top: 1rem;">
+            <h2 class="dispatch-section-title">Mark as duplicate</h2>
+            <p style="font-size:0.78rem; color: var(--dispatch-text-muted); margin: 0 0 0.6rem;">
+                Merge this task into another as its duplicate. Comments and attachments move to the target task; this task is closed and redirected there.
+            </p>
+            <div style="display:flex; gap:0.5rem; max-width:22rem;">
+                <input type="text" wire:model="mergeTargetCode" class="dispatch-input" placeholder="Target task code, e.g. TASK-004">
+                <button type="button" wire:click="mergeInto" wire:loading.attr="disabled" wire:target="mergeInto" class="dispatch-btn is-secondary">Merge</button>
+            </div>
+            @error('mergeTargetCode') <p class="dispatch-error">{{ $message }}</p> @enderror
+        </section>
+    @endcan
 
     {{-- Comment thread --}}
     <div style="margin-top: 1rem;">

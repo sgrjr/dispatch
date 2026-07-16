@@ -6,14 +6,18 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
 use Livewire\Component;
 use Livewire\WithFileUploads;
+use Sgrjr\Dispatch\Contracts\DispatchGate;
+use Sgrjr\Dispatch\Contracts\DispatchNotifier;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Services\AttachmentService;
 
 /**
  * Comment thread embedded in TaskShow (`<livewire:dispatch-thread :task="$task" .../>`).
- * Staff may post internal notes (hidden from non-staff); a non-internal
- * ("public") comment is a customer-facing update and triggers TaskUpdate.
+ * Staff may post internal notes (hidden from non-staff); every saved comment
+ * (internal or public) is handed to DispatchNotifier::taskCommented(), which
+ * decides recipients off $comment->is_internal. A staff commenter is also
+ * auto-added as a watcher (see DispatchGate::isStaff()).
  */
 class TaskThread extends Component
 {
@@ -76,48 +80,22 @@ class TaskThread extends Component
             $attachmentService->store($file, $comment, Auth::id());
         }
 
-        if (! $internal) {
-            $this->notifySubmitterOfUpdate($this->task, $comment);
+        // DispatchNotifier is the single notification seam (see the contract's
+        // docblock) — call it directly, no try/catch, for every saved comment
+        // (internal or public). The bound implementation decides recipients
+        // off $comment->is_internal (e.g. MailNotifier routes an internal note
+        // to watchers only, a public comment to submitter + watchers).
+        app(DispatchNotifier::class)->taskCommented($this->task, $comment);
+
+        // A staff member who engages with a task is implicitly invested in its
+        // outcome — auto-add them as a watcher so future updates reach them
+        // without a separate opt-in action.
+        if (app(DispatchGate::class)->isStaff(Auth::user())) {
+            $this->task->watch(Auth::id());
         }
 
         $this->reset('body', 'is_internal', 'newAttachments');
         $this->dispatch('commentAdded');
-    }
-
-    /**
-     * DECISION: the contract assigns "on a customer-facing update (public
-     * comment or status change) send TaskUpdate" to this component's bullet,
-     * but status changes are made in TaskShow/TaskBoard, not here. I
-     * interpreted "customer-facing" as is_internal === false (not gated by
-     * task->is_public — the submitter should hear about their own task
-     * regardless of whether OTHER customers can see it), and duplicated this
-     * small guarded helper in TaskShow for the status-change case rather than
-     * inventing a shared trait/file outside my assigned list.
-     *
-     * DECISION: src/Notifications/ is an empty directory in this checkout —
-     * Sgrjr\Dispatch\Notifications\TaskUpdate does not exist yet (presumably
-     * another wave's file). `::class` on a non-existent class is safe (it's
-     * just a string), and the class_exists guard means this component works
-     * correctly whether or not that class has landed by the time the full
-     * suite runs.
-     */
-    protected function notifySubmitterOfUpdate(Task $task, TaskComment $comment): void
-    {
-        if (! config('dispatch.notifications.enabled', true)) {
-            return;
-        }
-
-        $notificationClass = \Sgrjr\Dispatch\Notifications\TaskUpdate::class;
-        if (! class_exists($notificationClass)) {
-            return;
-        }
-
-        $submitter = $task->submitter;
-        if (! $submitter || $submitter->getKey() === Auth::id()) {
-            return;
-        }
-
-        $submitter->notify(new $notificationClass($task, $comment));
     }
 
     public function render()

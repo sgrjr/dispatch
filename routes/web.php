@@ -20,10 +20,12 @@ Route::get('/board', TaskBoard::class)->name('board');
 Route::get('/new', TaskCreate::class)->name('create');
 
 // Headless JSON capture — the frontend-agnostic report entry point (Vue/any JS host).
-Route::post('/capture', [CaptureController::class, 'store'])->name('capture');
+// Rate-limited by the named 'dispatch-capture' limiter (see DispatchServiceProvider),
+// which reads dispatch.capture.throttle at request time (null/false = unlimited).
+Route::post('/capture', [CaptureController::class, 'store'])->middleware('throttle:dispatch-capture')->name('capture');
 
 // Attachments — authorized upload/stream/delete via the shared AttachmentService.
-Route::post('/attachments', [AttachmentController::class, 'store'])->name('attachments.store');
+Route::post('/attachments', [AttachmentController::class, 'store'])->middleware('throttle:dispatch-capture')->name('attachments.store');
 Route::get('/attachments/{attachment}/download', [AttachmentController::class, 'download'])->name('attachments.download');
 Route::delete('/attachments/{attachment}', [AttachmentController::class, 'destroy'])->name('attachments.destroy');
 
