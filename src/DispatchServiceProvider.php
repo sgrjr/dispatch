@@ -2,8 +2,10 @@
 
 namespace Sgrjr\Dispatch;
 
+use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Sgrjr\Dispatch\Contracts\DispatchGate;
 use Sgrjr\Dispatch\Contracts\DispatchNotifier;
@@ -44,10 +46,42 @@ class DispatchServiceProvider extends ServiceProvider
         $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
         $this->loadViewsFrom(__DIR__.'/../resources/views', 'dispatch');
 
+        $this->registerRateLimiters();
         $this->registerRoutes();
         $this->registerLivewireComponents();
         $this->registerCommands();
         $this->registerPublishing();
+    }
+
+    /**
+     * A named 'dispatch-capture' rate limiter for the capture + attachment-upload
+     * endpoints. Reads `dispatch.capture.throttle` at REQUEST time (not route-
+     * registration time) so a host — or a test — can flip it without re-booting
+     * routes: null/false/'' = unlimited; a limiter string like '60,1' (60/min)
+     * or ['max'=>60,'per'=>1]. Keyed per authenticated user, falling back to IP.
+     */
+    protected function registerRateLimiters(): void
+    {
+        RateLimiter::for('dispatch-capture', function ($request) {
+            $cfg = config('dispatch.capture.throttle', '60,1');
+
+            if ($cfg === null || $cfg === false || $cfg === '') {
+                return Limit::none();
+            }
+
+            if (is_array($cfg)) {
+                $max = (int) ($cfg['max'] ?? 60);
+                $per = (int) ($cfg['per'] ?? 1);
+            } else {
+                $parts = explode(',', (string) $cfg);
+                $max = (int) ($parts[0] ?? 60);
+                $per = (int) ($parts[1] ?? 1);
+            }
+
+            $key = optional($request->user())->getAuthIdentifier() ?: $request->ip();
+
+            return Limit::perMinutes(max(1, $per), max(1, $max))->by('dispatch-capture:'.$key);
+        });
     }
 
     protected function registerRoutes(): void
