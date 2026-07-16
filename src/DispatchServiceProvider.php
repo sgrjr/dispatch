@@ -26,8 +26,10 @@ class DispatchServiceProvider extends ServiceProvider
     {
         // Stable morph aliases so polymorphic attachments survive an app
         // subclassing Task/TaskComment (the config points the alias at whatever
-        // concrete class the app uses).
-        Relation::enforceMorphMap([
+        // concrete class the app uses). Use morphMap (merge, non-enforcing) NOT
+        // enforceMorphMap — a package must never flip requireMorphMap on for its
+        // host app, which would break the host's own unmapped polymorphic models.
+        Relation::morphMap([
             'dispatch_task' => config('dispatch.models.task'),
             'dispatch_comment' => config('dispatch.models.task_comment'),
         ]);
