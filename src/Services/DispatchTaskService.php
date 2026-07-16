@@ -3,11 +3,13 @@
 namespace Sgrjr\Dispatch\Services;
 
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Sgrjr\Dispatch\Contracts\SubmitterResolver;
 use Sgrjr\Dispatch\Contracts\TenantResolver;
+use Sgrjr\Dispatch\Models\AgentSession;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
 
@@ -42,7 +44,14 @@ class DispatchTaskService
         $attributes['priority'] ??= 'medium';
         $attributes['status'] ??= 'triage';
         $attributes['is_public'] = (bool) ($attributes['is_public'] ?? false);
-        $attributes['submitter_user_id'] ??= $this->submitters->currentUserId() ?? $this->submitters->defaultUserId();
+
+        // Default the submitter only when the caller OMITS the key. An explicit
+        // value — including a deliberate null — is honored, so an agent task can
+        // carry a null submitter (its identity lives in the timeline event meta)
+        // instead of being silently stamped with the fallback default user.
+        if (! array_key_exists('submitter_user_id', $attributes)) {
+            $attributes['submitter_user_id'] = $this->submitters->currentUserId() ?? $this->submitters->defaultUserId();
+        }
 
         /** @var class-string<Task> $taskModel */
         $taskModel = config('dispatch.models.task');
@@ -184,5 +193,116 @@ class DispatchTaskService
 
             return $winner->refresh();
         });
+    }
+
+    /**
+     * Atomically claim the next actionable task for an agent (C1). Picks only
+     * UNSTARTED work (never `in_progress`, so two agents can't grab the same
+     * in-flight task), mirroring dispatch:next's ordering so an agent claims
+     * exactly what `next` would surface. Row-locked inside a transaction; on
+     * MySQL/Postgres SKIP LOCKED hands each concurrent agent a distinct task.
+     *
+     * @param  array{type?:string,label?:string|array<int,string>}  $filters
+     */
+    public function claim(?AgentSession $session = null, array $filters = [], ?int $assigneeUserId = null): ?Task
+    {
+        /** @var class-string<Task> $taskModel */
+        $taskModel = config('dispatch.models.task');
+
+        return DB::transaction(function () use ($taskModel, $session, $filters, $assigneeUserId) {
+            $query = $taskModel::query()
+                ->whereIn('status', ['open', 'triage'])
+                ->when($filters['type'] ?? null, fn ($q, $type) => $q->where('type', $type))
+                ->when($filters['label'] ?? null, fn ($q, $label) => $q->whereHas(
+                    'labels',
+                    fn ($lq) => $lq->whereIn('name', (array) $label)
+                ))
+                ->orderByRaw("CASE WHEN status IN ('open', 'in_progress') THEN 0 ELSE 1 END")
+                ->orderByRaw("CASE priority WHEN 'blocker' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 99 END")
+                ->orderBy('position')
+                ->orderBy('id');
+
+            // Row-lock the candidate. MySQL/Postgres get SKIP LOCKED so parallel
+            // claimers each grab the NEXT free row; SQLite compiles lockForUpdate
+            // to a no-op (single-connection test env — atomicity is asserted by
+            // sequential distinctness, see ClaimTest).
+            $driver = DB::connection()->getDriverName();
+            if (in_array($driver, ['mysql', 'mariadb', 'pgsql'], true)) {
+                $query->lock('for update skip locked');
+            } else {
+                $query->lockForUpdate();
+            }
+
+            /** @var Task|null $task */
+            $task = $query->first();
+            if ($task === null) {
+                return null;
+            }
+
+            $task->status = 'in_progress';
+            $task->assignee_user_id = $assigneeUserId;
+            $task->save();
+
+            $task->recordEvent(
+                TaskComment::EVENT_CLAIMED,
+                null,
+                array_filter([
+                    'agent_session_id' => $session?->public_id,
+                    'agent_name' => $session?->agent_name,
+                ], fn ($v) => $v !== null),
+                'Claimed by '.($session?->agent_name ?? 'agent').'.',
+            );
+
+            return $task;
+        });
+    }
+
+    /**
+     * Idempotent create keyed on a general-purpose dedupe key (C2). Returns the
+     * existing task with that key, or creates one. The DB's UNIQUE index on
+     * `dedupe_key` arbitrates a two-callers-same-key race — the loser's insert is
+     * rejected and we return the winner.
+     *
+     * @param  array<string,mixed>  $attributes
+     * @param  array<int,string>    $labelNames
+     */
+    public function firstOrCreateByKey(string $key, array $attributes, array $labelNames = []): Task
+    {
+        /** @var class-string<Task> $taskModel */
+        $taskModel = config('dispatch.models.task');
+
+        if ($existing = $taskModel::query()->where('dedupe_key', $key)->first()) {
+            return $existing;
+        }
+
+        try {
+            return $this->create($attributes + ['dedupe_key' => $key], $labelNames);
+        } catch (QueryException $e) {
+            if ($taskModel::isDuplicateCodeError($e)
+                && ($winner = $taskModel::query()->where('dedupe_key', $key)->first())) {
+                return $winner;
+            }
+
+            throw $e;
+        }
+    }
+
+    /**
+     * Record a structured completion result on a task (C4): the agent's
+     * `--result` JSON plus the code `--commit` it produced, stored under
+     * `context.result` so human review and audit tie a task to its change.
+     *
+     * @param  array<string,mixed>  $result
+     */
+    public function recordResult(Task $task, array $result, ?string $commit = null): void
+    {
+        if ($commit !== null && $commit !== '') {
+            $result['commit'] = $commit;
+        }
+
+        $ctx = $task->context ?? [];
+        $ctx['result'] = $result;
+        $task->context = $ctx;
+        $task->save();
     }
 }

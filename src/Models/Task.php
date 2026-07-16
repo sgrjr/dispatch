@@ -31,6 +31,7 @@ class Task extends Model
         'submitter_user_id',
         'assignee_user_id',
         'exception_signature',
+        'dedupe_key',
         'position',
         'context',
         'due_at',
@@ -279,7 +280,11 @@ class Task extends Model
         }
     }
 
-    protected static function isDuplicateCodeError(QueryException $e): bool
+    /**
+     * Whether a QueryException is a unique-constraint violation. Public so the
+     * service layer can detect a lost `dedupe_key` race (firstOrCreateByKey).
+     */
+    public static function isDuplicateCodeError(QueryException $e): bool
     {
         $sqlState = (string) ($e->errorInfo[0] ?? '');
 

@@ -53,6 +53,7 @@ class DispatchServiceProvider extends ServiceProvider
         $this->loadViewsFrom(__DIR__.'/../resources/views', 'dispatch');
 
         $this->registerRateLimiters();
+        $this->registerAgentMiddleware();
         $this->registerRoutes();
         $this->registerLivewireComponents();
         $this->registerCommands();
@@ -88,6 +89,55 @@ class DispatchServiceProvider extends ServiceProvider
 
             return Limit::perMinutes(max(1, $per), max(1, $max))->by('dispatch-capture:'.$key);
         });
+
+        // Agent API limiters (§20). Config read at request time (same as above).
+        // The unauthenticated request endpoint is keyed by IP; the verb endpoints
+        // by the session's public_id (agents may share an IP), falling back to IP
+        // before the session is bound.
+        RateLimiter::for('dispatch-agent-request', function ($request) {
+            return $this->configuredLimit(config('dispatch.agent.request_throttle', '10,1'), 'dispatch-agent-request:'.$request->ip());
+        });
+
+        RateLimiter::for('dispatch-agent-verb', function ($request) {
+            $session = $request->attributes->get(\Sgrjr\Dispatch\Http\Middleware\AuthenticateAgentSession::ATTRIBUTE);
+            $key = ($session?->public_id) ?: $request->ip();
+
+            return $this->configuredLimit(config('dispatch.agent.verb_throttle', '120,1'), 'dispatch-agent-verb:'.$key);
+        });
+    }
+
+    /**
+     * Parse a limiter config value (null/false/'' = unlimited; 'max,per' string;
+     * or ['max'=>, 'per'=>]) into a Limit keyed by $key.
+     */
+    protected function configuredLimit(mixed $cfg, string $key): Limit
+    {
+        if ($cfg === null || $cfg === false || $cfg === '') {
+            return Limit::none();
+        }
+
+        if (is_array($cfg)) {
+            $max = (int) ($cfg['max'] ?? 60);
+            $per = (int) ($cfg['per'] ?? 1);
+        } else {
+            $parts = explode(',', (string) $cfg);
+            $max = (int) ($parts[0] ?? 60);
+            $per = (int) ($parts[1] ?? 1);
+        }
+
+        return Limit::perMinutes(max(1, $per), max(1, $max))->by($key);
+    }
+
+    /**
+     * Alias the agent-surface middleware BEFORE routes are registered so
+     * routes/agent.php can reference them by name.
+     */
+    protected function registerAgentMiddleware(): void
+    {
+        $router = $this->app['router'];
+        $router->aliasMiddleware('dispatch.agent', \Sgrjr\Dispatch\Http\Middleware\AuthenticateAgentSession::class);
+        $router->aliasMiddleware('dispatch.agent.scope', \Sgrjr\Dispatch\Http\Middleware\EnsureAgentScope::class);
+        $router->aliasMiddleware('dispatch.agent.bootstrap', \Sgrjr\Dispatch\Http\Middleware\VerifyBootstrapSecret::class);
     }
 
     protected function registerRoutes(): void
@@ -116,6 +166,20 @@ class DispatchServiceProvider extends ServiceProvider
                 ->name(config('dispatch.routes.name_prefix', 'dispatch.').'api.')
                 ->group($api);
         }
+
+        // Dedicated agent API (§20) — a SEPARATE group with its own posture.
+        // Off unless explicitly enabled AND its controllers exist (they land in
+        // Wave 1); per-route security middleware is declared in routes/agent.php.
+        $agent = __DIR__.'/../routes/agent.php';
+        if (config('dispatch.agent.enabled', false)
+            && file_exists($agent)
+            && class_exists(\Sgrjr\Dispatch\Http\Controllers\AgentSessionController::class)) {
+            $this->app['router']
+                ->prefix('api/'.config('dispatch.routes.prefix', 'dispatch').'/agent')
+                ->middleware(config('dispatch.agent.middleware', ['api']))
+                ->name(config('dispatch.routes.name_prefix', 'dispatch.').'api.agent.')
+                ->group($agent);
+        }
     }
 
     /**
@@ -136,6 +200,8 @@ class DispatchServiceProvider extends ServiceProvider
             'dispatch-thread' => \Sgrjr\Dispatch\Livewire\TaskThread::class,
             'dispatch-widget' => \Sgrjr\Dispatch\Livewire\DispatchWidget::class,
             'dispatch-my-submissions' => \Sgrjr\Dispatch\Livewire\MySubmissions::class,
+            // §20 Phase 3 — the staff "Agent Sessions" approval queue (Wave 1).
+            'dispatch-agent-sessions' => \Sgrjr\Dispatch\Livewire\AgentSessions::class,
         ];
 
         foreach ($components as $alias => $class) {
@@ -168,6 +234,12 @@ class DispatchServiceProvider extends ServiceProvider
             \Sgrjr\Dispatch\Console\Commands\DispatchImport::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchEdit::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchMerge::class,
+            // Agent layer (Wave 1) — auto-register once the classes land.
+            \Sgrjr\Dispatch\Console\Commands\DispatchClaim::class,
+            \Sgrjr\Dispatch\Console\Commands\DispatchSchema::class,
+            \Sgrjr\Dispatch\Console\Commands\DispatchSessionRequest::class,
+            \Sgrjr\Dispatch\Console\Commands\DispatchSessionStatus::class,
+            \Sgrjr\Dispatch\Console\Commands\DispatchSessionsPrune::class,
         ];
 
         $this->commands(array_filter($commands, 'class_exists'));

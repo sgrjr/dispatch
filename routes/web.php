@@ -34,4 +34,12 @@ Route::middleware(config('dispatch.routes.portal_middleware', ['web', 'auth']))
     ->get('/mine', MySubmissions::class)
     ->name('portal');
 
+// Staff "Agent Sessions" approval queue (§20 Phase 3). Registered only once the
+// Wave-1 component exists — a route action is eagerly validated at registration
+// (unlike the provider's class_exists-guarded class-strings), so it can't be a
+// bare forward reference to a class that doesn't exist yet.
+if (class_exists(\Sgrjr\Dispatch\Livewire\AgentSessions::class)) {
+    Route::get('/agent-sessions', \Sgrjr\Dispatch\Livewire\AgentSessions::class)->name('agent-sessions');
+}
+
 Route::get('/{task:code}', TaskShow::class)->name('show');

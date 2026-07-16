@@ -275,4 +275,37 @@ return [
     'jsonld' => [
         'vocab' => env('DISPATCH_JSONLD_VOCAB', 'https://sgrjr.dev/schema/dispatch/v1#'),
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Remote agent seam (§19/§20)
+    |--------------------------------------------------------------------------
+    |
+    | A dedicated, human-commissioned agent API so a remote Claude agent can work
+    | the PRODUCTION backlog without a standing credential. OFF by default —
+    | enable deliberately on the authoritative (production) instance. An agent
+    | REQUESTS a session, a human approves it in the "Agent Sessions" UI, and a
+    | short-TTL bearer token is issued for the verb loop.
+    |
+    | `bootstrap_secret` gates the unauthenticated request endpoint (send it as
+    | the X-Dispatch-Bootstrap header). Required in production; leave unset only
+    | on a trusted/local network (see VerifyBootstrapSecret). `verbs` is the
+    | global allowlist a session's scopes are bounded by — no delete/bulk.
+    | `remote.*` is the CLIENT side (a dev box driving `dispatch:* --remote`).
+    */
+    'agent' => [
+        'enabled' => env('DISPATCH_AGENT', false),
+        'middleware' => ['api'],
+        'bootstrap_secret' => env('DISPATCH_AGENT_BOOTSTRAP_SECRET'),
+        'session_ttl' => (int) env('DISPATCH_AGENT_SESSION_TTL', 3600),  // approved token TTL (s)
+        'request_ttl' => (int) env('DISPATCH_AGENT_REQUEST_TTL', 900),   // pending-approval window (s)
+        'poll_interval' => (int) env('DISPATCH_AGENT_POLL_INTERVAL', 5),
+        'request_throttle' => env('DISPATCH_AGENT_REQUEST_THROTTLE', '10,1'),
+        'verb_throttle' => env('DISPATCH_AGENT_VERB_THROTTLE', '120,1'),
+        'verbs' => ['next', 'queue', 'show', 'add', 'note', 'done', 'claim'],
+        'remote' => [
+            'url' => env('DISPATCH_AGENT_REMOTE_URL'),
+            'token_path' => env('DISPATCH_AGENT_TOKEN_PATH'),
+        ],
+    ],
 ];
