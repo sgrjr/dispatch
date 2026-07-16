@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use Sgrjr\Dispatch\Http\Controllers\AttachmentController;
+use Sgrjr\Dispatch\Http\Controllers\CaptureController;
 use Sgrjr\Dispatch\Livewire\DispatchWidget;
 use Sgrjr\Dispatch\Livewire\MySubmissions;
 use Sgrjr\Dispatch\Livewire\TaskBoard;
@@ -17,6 +18,9 @@ use Sgrjr\Dispatch\Livewire\TaskShow;
 Route::get('/', TaskList::class)->name('index');
 Route::get('/board', TaskBoard::class)->name('board');
 Route::get('/new', TaskCreate::class)->name('create');
+
+// Headless JSON capture — the frontend-agnostic report entry point (Vue/any JS host).
+Route::post('/capture', [CaptureController::class, 'store'])->name('capture');
 
 // Attachments — authorized upload/stream/delete via the shared AttachmentService.
 Route::post('/attachments', [AttachmentController::class, 'store'])->name('attachments.store');

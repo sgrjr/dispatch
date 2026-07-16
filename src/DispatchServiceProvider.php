@@ -145,5 +145,11 @@ class DispatchServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__.'/../resources/dist' => public_path('vendor/dispatch'),
         ], 'dispatch-assets');
+
+        // The publishable Vue capture widget for Inertia/Vue (or any JS) hosts.
+        // The app copies it and places it in a layout present on every page.
+        $this->publishes([
+            __DIR__.'/../resources/js' => resource_path('js/vendor/dispatch'),
+        ], 'dispatch-vue');
     }
 }
