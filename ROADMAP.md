@@ -27,32 +27,16 @@
 - Verify the package: `cd laravel-dispatch && ./vendor/bin/pest` (Testbench + sqlite) and `php -l` per file. There is no `composer verify` in this repo (that's a centerpoint thing).
 - Package edits are **live in centerpoint via the symlink** — EXCEPT the **published** Vue widget and config, which are **copies** in centerpoint. After editing the widget source, re-publish with `php artisan vendor:publish --tag=dispatch-vue --force`. **Never re-publish the config** (`dispatch-config`) into centerpoint — it would clobber the hand-edited contract bindings.
 - Commits: package → `master`, tag on release, push to GitHub (`GIT_TERMINAL_PROMPT=0 git push`); centerpoint → `master` directly (sole dev, no feature branches); multi-line messages via `git commit -F`.
+- **Release ritual (doc-sync):** when tagging a release, sweep this roadmap in the same commit — check/annotate shipped items, sync the §4/§5/§7 reference sections against the code, and update the consolidated open-decisions list (§13). Reference-section drift is this file's chronic failure mode; tying the sweep to tagging is the fix.
 - The **config-bound seams are the extension model**: `DispatchGate`, `TenantResolver`, `SubmitterResolver` (and the planned `DispatchNotifier`). A host customizes behavior by binding these in `config/dispatch.php` — never by editing package internals.
 
 **Biggest caveat before real users:** the **entire UI has never been verified in a live browser** — everything is unit/feature-tested only. A human browser smoke test under real centerpoint auth is the gate. Treat the UI as "compiles + tested, not yet seen."
 
-**Decisions still pending** (see §17 open questions): the `DispatchNotifier` default (null vs mail), the capture-throttle default, and whether to build the v0.3 AI-agent set now or after the browser smoke test.
+**Decisions still pending:** see **§13 — the single consolidated open-decisions list** (notifier default, throttle default, §20 design forks). The v0.3-timing question is **DECIDED**: the browser smoke test gates all new build phases (§18 🔴).
 
 ---
 
-> **v4 change:** added **§15 Build orchestration (waves)** — how the build is executed with the `waves` conductor pattern (driver-owned contract + Sonnet workstream agents in dependency-ordered waves), including the repo-specific adaptation (the skill is `staff/`-tuned; the package repo has different verify/cwd/test rules).
->
-> **BUILD LOG:**
-> - ✅ **Wave 0 (foundation) shipped & committed** (`laravel-dispatch` @ `e48841a`). Testbench+Pest green (5 tests): migrations, race-safe sequential/reminted codes, contract-driven service defaults+labels, capture dedupe. 25 PHP files `php -l` clean.
-> - ✅ **Wave 1 (surfaces) shipped & committed** (`bf7dcd9`) — 4 parallel Sonnet agents, disjoint file sets, zero collisions. 10 CLI verbs + `--json`; AttachmentController/SyncController/TaskUpdate; 7 Livewire components + Blade + native DnD + paste-upload; README/skill/tests. **Full suite green: 14 tests, 60 assertions** (incl. attachment authz-outside-scope, mime/size rejection, scope matrix). Package = 62 files, PHP 8.2, Laravel 11/12 + Livewire 3.
-> - ✏️ Refinement: dropped the SortableJS CDN dep entirely — the board uses **dependency-free native HTML5 drag-and-drop** (`resources/dist/dispatch.js`), which also carries the paste-a-screenshot glue.
-> - 📌 Known v0.1 behavior: board within-column ordering is priority-primary (a within-column drag across priority tiers won't visually stick; cross-column status moves work). Revisit if manual ordering is wanted.
-> - 🔨 **Phase D (centerpoint) — backend integration PROVEN (D1–D3 + migration).** Package installed via local Composer **path repo** (`../../laravel-dispatch`, symlinked) + auto-discovered; all 10 verbs & routes register. Bound `CenterpointDispatchGate` (staff = `isAdminOrStaff`) + `AccountKeyTenantResolver` (stamps `account_key`) + `App\Dispatch\Task` subclass via published config. Migrations ran (5 `dispatch_*` tables + `account_key`). **CLI end-to-end works: `dispatch:add` → `TASK-001` on `dispatch_tasks` as the subclass, `dispatch:next --json` reads it.**
-> - 🛠️ Two integration fixes to the package (committed): `enforceMorphMap`→`morphMap` (never flip `requireMorphMap` on the host); **prefixed all tables `dispatch_*`** after discovering centerpoint already has a `tasks` table (the earlier single-quote grep gave a false clear; `migrate:status` caught it).
-> - ✅ **Phase D frontend wired (verified compiling):** Vue capture widget mounted on ALL authenticated pages via centerpoint's own `#chat-portal-root` sibling-app pattern (new `@auth #dispatch-widget-root` + mount block in `app.js`); staff "Dispatch" link added to `UserDrawer` (static `/dispatch/board` href, no Ziggy config); board JS published to `public/vendor/dispatch`. check-sfc + `node --check` + `php -l` all clean.
-> - ✅ **Centerpoint integration committed to `master`** (`307ac32c4`). composer.json declares BOTH repos (path first for this machine, GitHub VCS fallback for others).
-> - ✅ **Package pushed to GitHub** `sgrjr/dispatch` (`master` + tag **`v0.1.0`**). Other machines resolve it via the VCS repo automatically (`composer update` → `php artisan migrate`).
-> - ⏭️ **Remaining:** YOU visually verify under a real staff login (`composer dev` → floating "Feedback" button on any page, "Dispatch" in the user menu, `/dispatch/board`). Optionally pin centerpoint to `^0.1.0` instead of `@dev` once stable.
-> - ⚠️ The path-repo entry in centerpoint `composer.json` is **dev-only** (breaks a fresh prod `composer install`). Dispatch isn't production-deployable until `sgrjr/dispatch` is pushed to GitHub and the entry becomes a VCS repo — a one-line cutover.
->
-> **v3 change (DECIDED):** image/file attachments are a **core v0.1 feature** and an explicit improvement over the rupkeep PoC — polymorphic `task_attachments` (on tasks *and* comments), paste-a-screenshot in the widget and thread, storage-disk config, strict validation.
->
-> **v2 changes** (adversarial pass): added the from-any-page dispatch widget + submitter portal (v1 omitted the core product UX); collapsed the two overlapping query-scope seams into one; added model-override config; race-safe configurable task codes; theming instead of wholesale view publishing (drift risk); bundled SortableJS (no CDN); exception capture moved into the package (off by default — Sentry overlap); cross-app sync deferred; Testbench for package tests; Ziggy step; acceptance criteria.
+> **Build history & doc changelog** — the v2–v4 change notes and the wave-by-wave build log moved to the **Appendix** at the end of this file (they were 60 lines of history before §1).
 
 ---
 
@@ -100,19 +84,22 @@ Extract the proven **Dispatch** task-tracking pattern from `rupkeep-app` into a 
 | 5 | `FeedbackForm` + `ExceptionCaptureService` are app code | **Both ship IN the package**: drop-in `<livewire:dispatch-widget />` + generic signature-dedupe exception capture (config-gated, off by default) |
 | 6 | `nextCode()` can double-mint under concurrency | **Race-safe**: unique index on `code` + retry-on-collision in a transaction |
 | 7 | Fixed `Task` model classes | **Model overrides** via `config('dispatch.models.*')` (Sanctum/Passport pattern) — apps extend to add columns/relations |
-| 8 | SortableJS from CDN | **Bundled publishable asset** — no external runtime dependency, CSP/intranet-safe |
+| 8 | SortableJS from CDN | **No DnD library at all** — dependency-free native HTML5 drag-and-drop (`resources/dist/dispatch.js`, published asset); CSP/intranet-safe |
 | 9 | **No attachments at all** (old centerpoint Tickets proved the need; rupkeep Dispatch lacks them) | **First-class images/files**: polymorphic attachments on tasks & comments, **paste-a-screenshot** in widget/thread, disk-configurable storage, authorized downloads |
 | — | CLI verb-loop, `--json` agent interface, skill, JSON-LD snapshot format | **Kept as-is** — port faithfully |
 
 ---
 
-## 4. Package repo layout
+## 4. Package repo layout (as shipped — re-sync at each release per the release ritual)
 
 ```
 laravel-dispatch/
   composer.json                  # sgrjr/dispatch; requires laravel ^11||^12, livewire ^3.0
   src/
     DispatchServiceProvider.php  # config, migrations, views, commands, Livewire, policy, routes (opt-in)
+    DispatchManager.php          # facade target: report/bug/feature/fromException + gate/throttle/redact/context
+    Facades/DispatchTask.php     # the static entry point (§16)
+    Jobs/CreateDispatchTask.php  # queueable create (reporter.queue → dispatch() vs dispatchSync())
     Contracts/
       DispatchGate.php           # authorization + THE visibility scope
       TenantResolver.php         # stamp/read tenant (no query filtering — see §6)
@@ -123,21 +110,24 @@ laravel-dispatch/
       Task.php  TaskComment.php  Label.php  TaskAttachment.php   # resolved via config('dispatch.models.*')
     Livewire/
       TaskBoard.php  TaskList.php  TaskShow.php  TaskCreate.php  TaskThread.php
-      DispatchWidget.php          # from-any-page capture (floating button + modal form)
+      DispatchWidget.php          # Livewire capture (floating button + modal form)
       MySubmissions.php           # submitter portal: status of "my" dispatched tasks
-    Console/Commands/             # add pull next queue show note done push export import
+    Console/Commands/             # Dispatch{Add,Pull,Next,Queue,Show,Note,Done,Push,Export,Import}
     Http/Controllers/
       SyncController.php          # JSON-LD snapshot/apply (only meaningful package↔package)
       AttachmentController.php    # authorized upload/download/delete (streams via Storage, gated by DispatchGate)
+      CaptureController.php       # headless capture API (Vue widget + client diagnostics post here)
     Services/
       DispatchTaskService.php     # create + capture() single entry
-      ExceptionCapture.php        # signature-dedupe 500s → bug task (config-gated, OFF by default)
+      AttachmentService.php       # store/validate/authorize (shared by controller + Livewire)
     Policies/TaskPolicy.php       # delegates to DispatchGate
     Notifications/TaskUpdate.php  # brand/route from config
-  database/migrations/
+  database/migrations/            # 6 files; ALL tables dispatch_*-prefixed (§5)
   resources/
-    views/                        # layout-agnostic Blade; theme via CSS variables
-    dist/sortable.min.js          # bundled, published via vendor:publish --tag=dispatch-assets
+    views/                        # layout-agnostic Blade (components/ + livewire/); theme via CSS variables
+    js/DispatchWidget.vue         # publishable Vue capture widget (vendor:publish --tag=dispatch-vue)
+    js/dispatchConsole.js         # client diagnostics capture (console errors → CaptureController)
+    dist/dispatch.js              # native HTML5 drag-and-drop + paste-a-screenshot glue (NO SortableJS)
   config/dispatch.php
   routes/web.php  routes/api.php  # registered only if config('dispatch.routes.enabled')
   .claude/skills/dispatch-track/SKILL.md
@@ -145,23 +135,26 @@ laravel-dispatch/
   README.md
 ```
 
+> Note: exception capture lives in `DispatchManager` (the §16 reporter), not a standalone `ExceptionCapture` service as originally planned.
+
 ---
 
-## 5. Core schema (generic — no tenant FK)
+## 5. Core schema (generic — no tenant FK; **all tables `dispatch_*`-prefixed** — centerpoint already had a bare `tasks` table)
 
-`tasks`
+`dispatch_tasks`
 - `id`, `code` (unique index; prefix from config — `TASK-`, `CP-`, …; minted in a transaction with retry-on-collision), `title`, `description` (longText)
 - `type` (bug/feature/chore/debt/verify), `priority` (blocker/high/medium/low), `status` (triage/open/in_progress/verifying/done/declined)
 - `is_public` (bool), `position` (int, board ordering)
 - `submitter_user_id`, `assignee_user_id` (unsignedBigInteger, nullable; relation via `config('dispatch.models.user')`) ⚠ assumes integer user PKs — fine for both your apps; UUID-key apps would subclass (documented limitation, not solved in v0.1)
 - `exception_signature` (nullable, indexed — dedupe auto-captured errors)
+- `context` (json, nullable — request/console context, reporter occurrence data, structured results; added by migration `000006`)
 - timestamps + softDeletes; indexes on `status`, `priority`, `type`, `position`
 
-`task_comments` — event-typed timeline (comment / status_change / assignee_change / label_added|removed / is_public_toggle / promoted / exception_occurrence); `body`, `is_internal`, `notified_submitter` *(rupkeep's `sent_to_customer`, de-branded)*, `event_type`, `meta` (json)
+`dispatch_task_comments` — event-typed timeline (comment / status_change / assignee_change / label_added|removed / is_public_toggle / promoted / exception_occurrence); `body`, `is_internal`, `notified_submitter` *(rupkeep's `sent_to_customer`, de-branded)*, `event_type`, `meta` (json)
 
-`labels` — `name`, `color`, `description` (epics = `epic:*` naming convention) · `task_label` pivot
+`dispatch_labels` — `name`, `color`, `description` (epics = `epic:*` naming convention) · `dispatch_task_label` pivot
 
-`task_attachments` **(core v0.1 — the headline improvement over rupkeep)**
+`dispatch_task_attachments` **(core v0.1 — the headline improvement over rupkeep)**
 - `id`, `attachable_type` + `attachable_id` (morph: Task or TaskComment), `uploaded_by_user_id` (nullable)
 - `disk`, `path`, `original_name`, `mime_type`, `size_bytes`, `is_image` (bool), `meta` (json — dimensions, etc.)
 - timestamps; index on morph pair
@@ -204,24 +197,29 @@ interface SubmitterResolver {
 
 ## 7. Config surface (`config/dispatch.php`)
 
+> **The shipped file is the reference** — this list captures intent and grows stale; re-sync at each release (release ritual, RESUME-HERE).
+
 - `models.user`, `models.task`, `models.task_comment`, `models.label`, `models.task_attachment`
 - `attachments.disk` (default `local`), `attachments.path_prefix`, `attachments.max_size_kb`, `attachments.allowed_mimes`, `attachments.max_per_batch`
 - `contracts.gate`, `contracts.tenant`, `contracts.submitter`
-- `code_prefix` (default `TASK`)
-- `routes.enabled`, `routes.prefix`, `routes.name_prefix`, `routes.middleware`, `routes.portal_middleware`
+- `code_prefix` (default `TASK`), `connection` (DB connection override)
+- `routes.enabled`, `routes.prefix`, `routes.name_prefix`, `routes.middleware`, `routes.portal_middleware`, `routes.api_middleware`
 - `brand.name`, `brand.task_url` (closure/route-name for notification links)
 - `widget.enabled` (drop-in capture widget)
 - `capture.exceptions` (**default false** — see Sentry note §8), `capture.dedupe_window`
+- `reporter.*` (the §16 facade): `queue`, `environments` (default `['production']`), `redact`, `throttle_seconds`, `trace_frames`, `exception_label`, `capture_request`
 - `notifications.enabled`, `notifications.channels`
-- `sync.remote_url`, `sync.token` (**optional**; verbs no-op gracefully when unset)
+- `sync.remote_url`, `sync.token`, `sync.timeout`, `sync.verify_ssl` (**optional**; verbs no-op gracefully when unset)
 - `jsonld.vocab` (default `https://sgrjr.dev/schema/dispatch/v1#` or similar — not rupkeep's)
+
+⚠️ **In-code defaults are the real defaults.** Hosts publish `dispatch-config` once and never re-publish (doctrine — re-publishing would clobber hand-edited contract bindings). So every config key added after a host installs is **absent from that host's published file**: the package MUST read it with a safe in-code fallback (`config('dispatch.x', $default)`). The published file's defaults are documentation for new installs, nothing more.
 
 ---
 
 ## 8. centerpoint integration specifics
 
 1. Composer VCS repo entry → `composer require sgrjr/dispatch:dev-master` (pin a tag before any second consumer relies on it).
-2. **Tenant:** app migration adds `account_key` (string, nullable, indexed) to `tasks`; `App\Dispatch\Task extends Sgrjr\Dispatch\Models\Task` adds it to `$fillable` + an `account()` relation; set `dispatch.models.task`.
+2. **Tenant:** app migration adds `account_key` (string, nullable, indexed) to `dispatch_tasks`; `App\Dispatch\Task extends Sgrjr\Dispatch\Models\Task` adds it to `$fillable` + an `account()` relation; set `dispatch.models.task`.
 3. **Bindings** (a small `DispatchServiceProvider` in centerpoint):
    - `DispatchGate` → `HasPermissionsTrait`/`HasRolesTrait` (`isStaff` = employee/admin/manager; `canSeeAll` = super/admin; `scopeVisible` = staff→all, others→own submissions + public-in-account).
    - `TenantResolver` → stamps `account_key` from `currentAccountInfo()`.
@@ -249,47 +247,49 @@ Not an AI SDK — a **CLI protocol** an external Claude Code agent drives:
 
 ---
 
-## 10. Phased build plan
+## 10. Phased build plan (v0.1 — COMPLETED; historical)
+
+> **Shipped through v0.2.1 — this is build history, not the backlog (that's §18).** Boxes reflect final status; the two still-open boxes (D7, D8) are tracked live in §18 🔴.
 
 ### Phase A — Package foundation
-- [ ] A1. Scaffold: composer.json, PSR-4, provider, Testbench + Pest wiring, `.gitignore`, README, `git init`, GitHub remote
-- [ ] A2. `config/dispatch.php` (full surface, §7)
-- [ ] A3. Contracts + shipped defaults (`DefaultGate`, `NullTenantResolver`, `AuthSubmitterResolver`)
-- [ ] A4. Core migrations (§5, indexes + unique `code`)
-- [ ] A5. Models via `models.*` config; race-safe `mintCode()`; `recordEvent()`
-- [ ] A6. `TaskPolicy` delegating to `DispatchGate` (no second scope anywhere)
-- [ ] A7. `DispatchTaskService` (create/capture) + `ExceptionCapture` (signature dedupe, off by default)
-- [ ] A8. `TaskAttachment` model + `AttachmentController` (upload/stream/delete; authz via parent-task visibility; validation per §5)
-- [ ] A9. Pest+Testbench tests: minting race, scope visibility matrix (staff/submitter/anon), capture dedupe, **attachment authz (non-visible task → 403 on download) + mime/size rejection**
+- [x] A1. Scaffold: composer.json, PSR-4, provider, Testbench + Pest wiring, `.gitignore`, README, `git init`, GitHub remote
+- [x] A2. `config/dispatch.php` (full surface, §7)
+- [x] A3. Contracts + shipped defaults (`DefaultGate`, `NullTenantResolver`, `AuthSubmitterResolver`)
+- [x] A4. Core migrations (§5, indexes + unique `code`)
+- [x] A5. Models via `models.*` config; race-safe `mintCode()`; `recordEvent()`
+- [x] A6. `TaskPolicy` delegating to `DispatchGate` (no second scope anywhere)
+- [x] A7. `DispatchTaskService` (create/capture) — exception capture later landed in `DispatchManager` (§16), not a standalone `ExceptionCapture`
+- [x] A8. `TaskAttachment` model + `AttachmentController` (upload/stream/delete; authz via parent-task visibility; validation per §5)
+- [x] A9. Pest+Testbench tests: minting race, scope visibility matrix (staff/submitter/anon), capture dedupe, **attachment authz (non-visible task → 403 on download) + mime/size rejection**
 
 ### Phase B — CLI + skill
-- [ ] B1. The verb commands (add/pull/next/queue/show/note/done/push + export/import), `--json`, graceful no-remote
-- [ ] B2. `.claude/skills/dispatch-track/SKILL.md` + CLAUDE.md snippet
-- [ ] B3. Pest tests for commands (incl. `--json` shape — that's the agent contract)
+- [x] B1. The verb commands (add/pull/next/queue/show/note/done/push + export/import), `--json`, graceful no-remote
+- [x] B2. `.claude/skills/dispatch-track/SKILL.md` + CLAUDE.md snippet
+- [x] B3. Pest tests for commands (incl. `--json` shape — that's the agent contract)
 
 ### Phase C — UI (Livewire + Blade, layout-agnostic + CSS-var theme)
-- [ ] C1. TaskBoard (Kanban, drag-drop → position + status_change event; bundled SortableJS asset)
-- [ ] C2. TaskList (filters/search/sort/paginate)
-- [ ] C3. TaskShow / TaskCreate / TaskThread
-- [ ] C4. **DispatchWidget** (from-any-page floating capture: title, type, description, current-URL auto-attached, **paste/drag screenshot → attachment**)
-- [ ] C5. **MySubmissions** portal view (submitter sees own tasks' status/progress)
-- [ ] C6. **Attachment UI**: paste/drag upload in TaskCreate + TaskThread; inline image thumbnails/lightbox on TaskShow; file rows with size + download
-- [ ] C7. Theme file (CSS variables) + configurable layout component
+- [x] C1. TaskBoard (Kanban, drag-drop → position + status_change event) — *shipped with dependency-free native HTML5 DnD (`resources/dist/dispatch.js`), not SortableJS*
+- [x] C2. TaskList (filters/search/sort/paginate)
+- [x] C3. TaskShow / TaskCreate / TaskThread
+- [x] C4. **DispatchWidget** (from-any-page floating capture: title, type, description, current-URL auto-attached, **paste/drag screenshot → attachment**)
+- [x] C5. **MySubmissions** portal view (submitter sees own tasks' status/progress)
+- [x] C6. **Attachment UI**: paste/drag upload in TaskCreate + TaskThread; inline image thumbnails/lightbox on TaskShow; file rows with size + download
+- [x] C7. Theme file (CSS variables) + configurable layout component
 
 ### Phase D — centerpoint adoption (first consumer)
-- [ ] D1. VCS repo entry + require; publish config + migrations; run
-- [ ] D2. `account_key` column migration + `Task` subclass + `models.task` config
-- [ ] D3. Implement + bind the three contracts against centerpoint auth — **checkpoint: prove board/widget under real centerpoint login before any polish**
-- [ ] D4. Layout + theme integration (no wholesale view publishing); nav entry; widget in app layout
-- [ ] D5. Ziggy whitelist + `ziggy:discover --audit` green
-- [ ] D6. Skill + CLAUDE.md snippet in centerpoint
-- [ ] D7. Configure `attachments.disk` for centerpoint (private local disk or S3-compatible; NOT `public`)
-- [ ] D8. End-to-end: user dispatches from a page **with a pasted screenshot** → appears in triage with image → staff drags on board → submitter sees status in MySubmissions → dev drives `dispatch:*` loop
+- [x] D1. VCS repo entry + require; publish config + migrations; run *(landed as path repo + VCS fallback)*
+- [x] D2. `account_key` column migration + `Task` subclass + `models.task` config
+- [x] D3. Implement + bind the three contracts against centerpoint auth — *backend proven via CLI end-to-end; the browser half of this checkpoint is D8/§18 🔴*
+- [x] D4. Layout + theme integration (no wholesale view publishing); nav entry; widget in app layout *(verified compiling, not yet in-browser)*
+- [x] D5. Ziggy whitelist + `ziggy:discover --audit` green — *sidestepped: nav uses a static `/dispatch/board` href, no Ziggy names in play; re-run the audit if package route names ever enter Ziggy*
+- [x] D6. Skill + CLAUDE.md snippet in centerpoint
+- [ ] D7. Configure `attachments.disk` for centerpoint (private local disk or S3-compatible; NOT `public`) — **unverified; confirm alongside the §18 🔴 smoke test**
+- [ ] D8. End-to-end: user dispatches from a page **with a pasted screenshot** → appears in triage with image → staff drags on board → submitter sees status in MySubmissions → dev drives `dispatch:*` loop — **this IS the §18 🔴 browser smoke test; still open**
 
 ### Phase E — Prove & document
-- [ ] E1. `composer verify` green in centerpoint; package test suite green
-- [ ] E2. README install guide written *as if for a 3rd project* (the reuse test)
-- [ ] E3. Tag `v0.1.0`; pin centerpoint to the tag; note in centerpoint memory/docs
+- [x] E1. `composer verify` green in centerpoint; package test suite green
+- [x] E2. README install guide written *as if for a 3rd project* (the reuse test)
+- [x] E3. Tag `v0.1.0`; pin centerpoint to the tag; note in centerpoint memory/docs
 
 **Checkpoints for your review: after Phase A** (foundation shape) **and after D3** (auth binding proven).
 
@@ -317,17 +317,28 @@ Not an AI SDK — a **CLI protocol** an external Claude Code agent drives:
 - Sentry overlap: keep `capture.exceptions=false` in centerpoint until deliberately decided.
 - **Attachments = the package's first real security surface.** Mitigations baked in (§5): private disk, hashed paths, streamed downloads authorized via the ONE scope, mime allowlist + content sniffing, size caps. Tests §10-A9 / criteria §11.8 enforce it. Also: Livewire temporary uploads land on the default disk (`livewire-tmp/`) before storage — verify centerpoint's default disk is private, and paste-to-upload needs a small JS glue layer (clipboard → Livewire `upload()`), plan for that in C4/C6.
 - Integer-user-PK assumption: acceptable for your apps; documented, revisit only if a UUID-keyed project appears.
+- **Growing config × never-re-publish doctrine:** every config key added after a host installs is absent from that host's published file — in-code fallbacks are mandatory (§7). A `config('dispatch.x')` read without a default silently breaks the oldest consumer first.
 
 ---
 
-## 13. Open questions (edit inline)
+## 13. Open decisions — THE single consolidated list (edit inline)
 
-1. ~~Repo folder name + GitHub~~ **DECIDED: `laravel-dispatch` dir, GitHub `sgrjr/dispatch`.**
-2. Extra core `tasks` fields for v0.1 (due date, estimate, external link)? → *(none specified — omitting; add later, non-breaking)*
-3. ~~centerpoint tenancy~~ **DECIDED: stamp `account_key` on every task on create; scope visibility by ROLE only in v0.1** (per-account filtering can be turned on later with no backfill). `TenantResolver.stamp()` active; Gate scopes by role.
-4. ~~Attachments/images in v0.1?~~ **DECIDED: YES — core v0.1 feature.** Folded into §3/§5/§7/§10/§11.
-5. ~~Widget placement~~ **DECIDED: floating capture widget on ALL authenticated pages** in centerpoint.
-6. Attachment storage disk for centerpoint: private local disk (simplest) or S3-compatible? → *(driver default: private `local` disk for v0.1; revisit at D7)*
+Every genuinely open decision lives here; other sections link in. **If a pending decision isn't on this list, treat it as decided (or dead) and check its home section.**
+
+**Open:**
+1. **`DispatchNotifier` default binding** (§17B): `NullNotifier` (host opts in to any delivery) vs `MailNotifier` (existing `TaskUpdate`, gated by `notifications.enabled`)? → __________
+2. **Capture-throttle default when unset** (§17A): none, or a sane `'60,1'`? → __________
+3. **§20 design forks 1, 2, 4, 5** (agent sessions — decide before §20 Phase 1): token mechanism · agent principal/attribution · approval-UI home · **how the Gate authorizes a session principal** (fork 5, added by adversarial review). Details + recommendations live in §20. Fork 3 (request-endpoint protection) is **DECIDED** — see §20.
+4. **Attachment storage disk for centerpoint**: private local (current driver default) vs S3-compatible → revisit if volume grows; confirm the config at the §18 🔴 smoke test (was D7).
+
+**Resolved (record):**
+- Repo folder + GitHub → `laravel-dispatch` dir, GitHub `sgrjr/dispatch`.
+- Extra v0.1 core `tasks` fields → none; add later, non-breaking (`due_at` now appears in §18 🧩 staleness item).
+- centerpoint tenancy → stamp `account_key` on every create; scope visibility by ROLE only in v0.1 (per-account filtering can turn on later, no backfill). `TenantResolver.stamp()` active; Gate scopes by role.
+- Attachments in v0.1 → YES, core feature.
+- Widget placement → floating capture widget on ALL authenticated pages.
+- Facade name / mode / hook (§16 Q1–Q3) → `DispatchTask`; sync default, configurable via `reporter.queue`; manual one-liner hook (no auto-register).
+- v0.3 timing (was §17 Q3) → **browser smoke test first; §18 🔴 gates all new build phases.**
 
 ---
 
@@ -362,7 +373,7 @@ Execute with the **`waves` conductor pattern** (`staff/.claude/skills/waves`): t
 - **Wave 1 — surfaces (parallel Sonnet, disjoint file sets):**
   - *WS-Console* → `src/Console/Commands/*` (the 10 verbs, `--json`)
   - *WS-Http* → `src/Http/Controllers/{SyncController,AttachmentController}.php`, `src/Notifications/TaskUpdate.php`
-  - *WS-UI* → `src/Livewire/*`, `resources/views/**`, `resources/dist/sortable.min.js`, theme + paste-upload JS glue
+  - *WS-UI* → `src/Livewire/*`, `resources/views/**`, the published board asset *(planned as `sortable.min.js`; shipped as native-DnD `resources/dist/dispatch.js`)*, theme + paste-upload JS glue
   - *WS-Docs+Tests* → `.claude/skills/dispatch-track/SKILL.md`, `README.md`, `tests/**` (Pest+Testbench)
   - → **driver audits the combined tree, runs the full suite, one commit.**
 
@@ -372,9 +383,9 @@ Execute with the **`waves` conductor pattern** (`staff/.claude/skills/waves`): t
 
 ---
 
-## 16. Programmatic API — the `Dispatch` facade (planned, editable)
+## 16. Programmatic API — the `DispatchTask` facade (SHIPPED — v0.2.x)
 
-> Edit freely; mark features in/out. Approve and I build it as **v0.2.0**.
+> **SHIPPED in v0.2.x** — kept as the facade's design reference. Feature-menu status: everything below landed **except the fluent builder** (not built; revive via §18 🔵 if ever wanted). Landed: `report/bug/feature/fromException` · never-throw + never-recurse · signature/`key` dedupe · env gating (`reporter.environments`) · request/console context + redaction (`reporter.redact`) · per-signature throttle (`reporter.throttle_seconds`) · rich exception parse (`reporter.trace_frames` / `exception_label`) · queued mode (`reporter.queue` → `Jobs\CreateDispatchTask`) · per-call `capture_request`.
 >
 > **DECIDED:** facade = **`DispatchTask`** (`DispatchTask::report/bug/feature/fromException`). Mode = **sync by default, configurable** (`reporter.queue`): the create logic lives in a **`Dispatchable` + `ShouldQueue` job** run via **`dispatchSync()`** (immediate, returns the Task) or **`dispatch()`** (queued, returns null) — canonical Laravel "always queueable, not always queued." Env-gate + throttle + context-gathering happen in the manager *before* dispatch (so a storm never enqueues, and request context is captured while it exists); dedupe + create happen in the job. Hook = **manual one-liner** in `bootstrap/app.php`.
 
@@ -426,10 +437,7 @@ Zero-code (opt-in): `config('dispatch.reporter.auto_capture')=true` → the pack
 
 **Safety invariants:** never throw; never recurse; cheap when gated/throttled (no DB hit); no hard dependency on an HTTP request (works in console/queue).
 
-**Open questions:**
-1. **Facade name** — `Dispatch` / `Feedback` / `Ticket` / other?
-2. **Default dispatch mode** — sync (simplest) or queued (safer under load)?
-3. **Auto-register** the exception hook via config in v1, or manual snippet only?
+**Open questions — all RESOLVED** (record in §13): facade = `DispatchTask` · mode = sync default, configurable via `reporter.queue` · hook = manual one-liner, no auto-register.
 
 **Out of scope for facade v1:** editing/transitioning tasks via the facade (creation only); non-Laravel transport; the fluent builder + queued mode (v1.1 unless Q2 pulls queue in).
 
@@ -446,6 +454,7 @@ Distilled from the pre-rollout gap review. Approve items and I build them (likel
 - **Problem today:** direct `$submitter->notify(TaskUpdate)` calls are scattered in `TaskShow`/`TaskThread` and **missing from `TaskBoard::moveCard`** (dragging a card doesn't notify). And the built-in mail duplicates what a host like centerpoint already has.
 - **Design:** add `Sgrjr\Dispatch\Contracts\DispatchNotifier` — the 4th seam alongside Gate/Tenant/Submitter — with fire-and-forget methods: `taskCreated(Task)`, `taskStatusChanged(Task, from, to, actor)`, `taskCommented(Task, comment)`, `taskAssigned(Task, from, to)`. The package **calls the notifier at every mutation point** (create, board move, meta edit, thread comment, CLI/facade) — which also *centralizes* the trigger and **fixes the board-notify gap**.
 - **Shipped defaults (lean):** `NullNotifier` (does nothing) or `MailNotifier` (the existing `TaskUpdate`, gated by `notifications.enabled`) — bound via `config('dispatch.contracts.notifier')`. Never throws.
+- **Latency rule:** the package calls the notifier **synchronously, in-request**, at each mutation point — a slow implementation (inline SMTP) would visibly lag Livewire actions like a board drag. Notifier implementations SHOULD queue their own delivery (or fire queued events); state this in the contract's PHPDoc.
 - **Host interop:** centerpoint binds `CenterpointDispatchNotifier` that routes into its **own** notification system — the package stays agnostic and lean, the host owns delivery. (The default impl may also fire Laravel events so event-listener hosts work too.)
 
 ### C. AI-agent iteration enhancements (the interesting layer)
@@ -453,7 +462,7 @@ The feature already ships the `dispatch:*` verbs + `--json` + the `dispatch-trac
 
 | # | Enhancement | Why it helps an agent | Cost |
 |---|---|---|---|
-| C1 | **Atomic claim** — `dispatch:next --claim` marks the task `in_progress` + assigns it in one transaction and returns it | Two agents (or agent + human) in a parallel loop never grab the same task — the #1 multi-agent hazard | low ⭐ |
+| C1 | **Atomic claim** — a dedicated `dispatch:claim` verb marks the task `in_progress` + assigns it in one transaction and returns it *(dedicated verb, not a `--claim` flag on `next` — §19/§20 expose claim as its own API endpoint, so the CLI matches)* | Two agents (or agent + human) in a parallel loop never grab the same task — the #1 multi-agent hazard | low ⭐ |
 | C2 | **Idempotent create** — `dispatch:add --key=…` (CLI parity with the facade's `key`) | A re-running agent doesn't spawn duplicate tasks | low ⭐ |
 | C3 | **Agent-scoping** — `dispatch:next/queue --label=… --type=…` filters | Agents pick up only work flagged automatable (e.g. label `agent:ok`); humans keep the rest | low ⭐ |
 | C4 | **Structured completion result** — `dispatch:done --commit=SHA --result='{…}'` stored in `context.result` | Ties each task to the code change + verification an agent produced; makes human review + audit trivial | low ⭐ |
@@ -464,7 +473,7 @@ The feature already ships the `dispatch:*` verbs + `--json` + the `dispatch-trac
 
 **Recommended v0.3 set:** A + B + **C1–C5** (all low-cost, high-leverage, and C4/C5 directly improve the `--json` agent contract). Defer C7 (dependencies) and C8 (MCP) to their own phase.
 
-**Open questions:** (1) Notifier default — `NullNotifier` or `MailNotifier`? (2) Throttle default when unset — none, or a sane `'60,1'`? (3) Build the recommended v0.3 set now, or stage it after the browser smoke test?
+**Open decisions** → consolidated in §13 (notifier default; throttle default). Timing is **DECIDED**: the §18 🔴 browser smoke test gates this v0.3 set — build nothing here until 🔴 is empty.
 
 ---
 
@@ -473,6 +482,9 @@ The feature already ships the `dispatch:*` verbs + `--json` + the `dispatch-trac
 Single at-a-glance list of everything open. Details live in §14 / §16 / §17. Check items as they ship; add freely. Priority buckets, not a strict order.
 
 ### 🔴 Pre-rollout hardening (before real users)
+
+> **GATE (decided — was §17 Q3): nothing in the sections below starts until 🔴 is empty.** Every later phase (🟡 🤖 🌐 🧩) builds on surfaces the smoke test has never exercised; closing 🔴 first is the cheapest de-risk on the list.
+
 - [ ] **Browser smoke test** of the full UI under real centerpoint auth — board render + drag-drop, widget submit + paste screenshot, diagnostics panel, submitter portal, `/dispatch/board` as a staff user. The biggest unknown; can't be automated from here.
 - [ ] **Client-configurable capture throttle** (§17A) — `config('dispatch.capture.throttle')`; provider conditionally applies `throttle:` middleware to `/dispatch/capture` (+ upload). Guards abuse/flood.
 - [ ] **Agnostic notifications via a `DispatchNotifier` seam** (§17B) — 4th config-bound contract, fire-and-forget at every mutation point. Also **fixes the board-drag-doesn't-notify gap** and keeps the package from duplicating a host's notification stack.
@@ -486,7 +498,10 @@ Single at-a-glance list of everything open. Details live in §14 / §16 / §17. 
 - [ ] Board **within-column manual ordering that sticks** (currently priority-primary sort; drag-reorder across tiers doesn't hold).
 
 ### 🤖 AI-agent iteration (target v0.3 — §17C)
-- [ ] **C1** Atomic claim — `dispatch:next --claim` (marks in_progress + assigns in one txn; parallel-agent safety).
+
+> Ordering: **C1–C5 land before §20 Phase 2 (remote CLI)** — the remote mode and the agent skill parse verb output, so the stable `--json` contract (C5) must exist first or the remote surface freezes an accidental schema.
+
+- [ ] **C1** Atomic claim — dedicated `dispatch:claim` verb (marks in_progress + assigns in one txn; parallel-agent safety; the same verb the §20 agent API exposes remotely).
 - [ ] **C2** Idempotent create — `dispatch:add --key` (CLI parity with the facade dedupe key).
 - [ ] **C3** Agent-scoping — `--label` / `--type` filters on `next`/`queue` (agents pick only `agent:ok` work).
 - [ ] **C4** Structured completion result — `dispatch:done --commit=SHA --result='{…}'` → `context.result` (ties tasks to code + verification).
@@ -511,11 +526,13 @@ From a completeness review, verified against code. Committed to address, not yet
 - [ ] **Watchers / subscribers** — let staff follow a task they didn't submit; notifications flow beyond the submitter (the *who*; the *how* is the §17B notifier seam).
 - [ ] **Merge duplicate tasks** — human merge of two tasks (consolidate thread + attachments + labels; close/redirect the loser), distinct from the automatic exception/`key` dedupe.
 - [ ] **Age / staleness surfacing** — optional `due_at` + task-age visibility + a "stale" filter/view, so feedback doesn't rot silently (a 6-week-old triage item looks identical to today's).
+- [ ] **Capture-widget accessibility** — keyboard + screen-reader support for the capture widget specifically (promoted from §22: the widget fronts ALL authenticated users, not just staff; board-DnD a11y stays deferred in §22).
 
 ### 🔵 Deferred / bigger phases
 - [ ] **C7** Task dependencies (`blocks` / `blocked_by`) for agent sequencing.
 - [ ] **C8** **MCP server** exposing the verbs as native tools — the eventual crown jewel for Claude-Code-centric workflows (v0.4).
 - [ ] Cross-instance JSON-LD **sync** wired between environments (built, not yet used).
+- [ ] **Snapshot-sync conflict story** (§19 Tier 2) — define what happens when local and prod copies diverge: document last-write-wins, or detect-and-refuse. Currently an acknowledged gap with no owner.
 - [ ] Attachments on the **Vue widget** beyond paste; comment-attachment UI polish.
 - [ ] Migrate **rupkeep-app** onto the package (retire its inline copy).
 - [ ] Retire centerpoint's legacy `App\Models\Task` + old `tasks` table (tracked in centerpoint `todo.md`).
@@ -540,6 +557,10 @@ Foundation (contracts · models · services · policy · migrations) · CLI verb
 | 1 | **Remote CLI mode** over a **dedicated agent API** (below) — `dispatch:* --remote` acts on production | ⚠️ to build |
 | 2 | **Snapshot sync** — `dispatch:pull` prod → work locally → `dispatch:push` | ✅ built (bulk snapshot/apply), not wired; offline fallback, needs a conflict story |
 | 3 | **MCP server** — verbs as native tools executed against prod; the local agent just calls tools | 🔵 deferred (C8) |
+
+⚠️ **Snapshot privacy (Tier 2):** `dispatch:pull` copies real production task data — user feedback plus diagnostics `context` (URLs, sanitized-but-real input, headers) — onto a dev machine. Redaction happens at capture time, but a pulled snapshot is still real-user data at rest on a laptop: treat it as sensitive, never commit it, delete it when done.
+
+⚠️ **Transport rule (Tiers 1 & 3):** the agent API is HTTPS-only; the remote client refuses `verify_ssl=false` outside a local environment. A bearer token over plaintext HTTP would undo the whole commissioning model.
 
 **Dedicated agent endpoints with their own security posture — the core of Tier 1.**
 Agents get a **separate API surface** (e.g. `/api/dispatch/agent/*`, its own route group + controller) — **not** the human super-user `SyncController` endpoints. Separating them is the point: the agent surface can be strict/paranoid (automated, high-volume, credential-bearing, acting on many real tasks) without constraining the human UI, and each surface carries its own protocol stack:
@@ -586,16 +607,20 @@ Keep the token **self-contained in the package** — host-agnostic. The package 
 - **Model** `src/Models/AgentSession.php` — `mintToken()` (random + hash, plaintext returned once), `approve($userId,$ttl)`, `deny()`, `revoke()`, `isUsable()` (approved && !expired && !revoked), `touch()`.
 - **Service** `src/Services/AgentSessionService.php` — `request(name,purpose,meta)`, `approve/deny/revoke`, `resolveToken($bearer): ?AgentSession` (hash lookup + usability), `prune()`.
 - **Dedicated agent API** — new `routes/agent.php`, added as a **separate group** in `DispatchServiceProvider::registerRoutes()`: prefix `api/{prefix}/agent`, name `dispatch.api.agent.`, its own middleware:
-  - *Unauthenticated (throttled, optional bootstrap gate):* `POST session` → `{session_id, poll_interval, expires_at}`; `GET session/{id}` → status; returns the **token once** on first approved poll.
+  - *Unauthenticated (throttled, gated by `bootstrap_secret` — fork 3, DECIDED):* `POST session` → `{session_id, user_code, poll_interval, expires_at}` — `user_code` is a short display code (RFC 8628's binding element) the agent shows its operator, and the approver must match it in the UI; `GET session/{id}` → status; returns the **token once** on first approved poll.
   - *Behind `src/Http/Middleware/AuthenticateAgentSession.php`* (bearer → `resolveToken` → 401 if unusable → bind session + `touch()`): the verb endpoints `next / queue / show / add / note / done / claim` in `src/Http/Controllers/AgentController.php` — thin, reuse `DispatchTaskService` + models + `DispatchGate::scopeVisible`.
-- **Config** new `agent` block in `config/dispatch.php`: `enabled`, `session_ttl` (~3600s), `poll_interval` (5s), `request_throttle`, `verb_throttle`, `verbs` allowlist (no delete/bulk), optional `bootstrap_secret`.
+- **Config** new `agent` block in `config/dispatch.php`: `enabled`, `session_ttl` (~3600s), `poll_interval` (5s), `request_throttle`, `verb_throttle`, `verbs` allowlist (no delete/bulk), `bootstrap_secret` (**required by default** — fork 3, DECIDED; may be explicitly set `null` to opt out on a trusted network).
+- **Scope vocabulary (defined):** `scopes` = the per-session **verb allowlist** (a subset of `agent.verbs`), nothing else in Phase 1. The middleware/controller checks each request's verb against the session's scopes. No broader scope concepts until a real need appears — an undefined-but-present security column is how "enforce later" ships.
 - **Command** `dispatch:sessions:prune` (`src/Console/Commands/DispatchSessionsPrune.php`).
 - **Atomic claim (C1):** `claim` = `DB::transaction` → pick next actionable → set `status=in_progress` + assignee/meta to the session → return; concurrent sessions never collide.
 - **Attribution:** agent writes stamp `TaskComment.meta = {agent_session_id, agent_name}` (+ a new event convention); pass an agent-aware `$actor` to `DispatchTaskService::create()` (param already exists).
 - **Tests (Testbench):** request→pending; approve→token; token→verb authorized + `last_used_at` bumped; denied/expired/revoked→401; claim atomic (two sessions, one task); prune expires.
 
 ### Phase 2 — Package: remote CLI mode + agent session commands
-- **Agent-side flow** `src/Console/Commands/DispatchSession*.php`: `dispatch:session:request` (POST, store `session_id`), `dispatch:session:status` (poll; on approved store the token in a local dotfile) — the **async, human-gated** wait.
+> **Prerequisite: §18 🤖 C1–C5 land before this phase** — the remote mode and agent skill parse verb output, so the stable `--json` contract (C5) must exist first.
+
+- **Agent-side flow** `src/Console/Commands/DispatchSession*.php`: `dispatch:session:request` (POST, store `session_id`, display the `user_code` for the approver), `dispatch:session:status` (poll; on approved store the token in a local dotfile) — the **async, human-gated** wait.
+- **Token-file handling** (the token is a live credential for its TTL — this is where "no standing credential" quietly erodes if sloppy): the dotfile lives **outside the repo** (or the package scaffolds a `.gitignore` entry), is created with owner-only permissions (`0600`-equivalent), and is **deleted on `401`, expiry, deny, or revoke** — never left behind.
 - **`--remote` on the verbs** — branch in `DispatchNext/Queue/Show/Note/Done/Add` (sites in §19's map) that, when `--remote` (or `DISPATCH_TARGET=remote`), routes through the agent API with the stored session token instead of the local DB. **Reuse the `client()` `Http` helper shape** from `DispatchPull`/`DispatchPush`.
 - **Config** `agent.remote`: `url`, stored-token path — distinct from `sync.*` (which stays package↔package snapshot).
 
@@ -612,8 +637,9 @@ Keep the token **self-contained in the package** — host-agnostic. The package 
 ### Open design forks (decide before Phase 1)
 1. **Token mechanism** — self-contained package token *(recommended: lean, portable)* vs bind centerpoint's Sanctum via an `AgentTokenIssuer` seam (unified audit, host-coupled).
 2. **Agent principal / attribution** — null `user_id` + `meta{agent_session_id, agent_name}` *(recommended)* vs a configured "agent system user" id.
-3. **Request-endpoint protection** — throttle-only (humans gate at approval) vs also require a coarse `bootstrap_secret` / IP allowlist to even request.
+3. ~~**Request-endpoint protection**~~ **DECIDED: `bootstrap_secret` required by default + `user_code` binding.** An open `POST agent/session` on production is both a spam vector and a social-engineering vector — the approval queue is itself an attack surface (an attacker files a plausible "Steve's laptop / resume backlog work" row and waits for a tired approve-click). Mitigations: the request endpoint requires the coarse `bootstrap_secret`; the approval UI displays the session's `user_code` and the approver confirms it matches what the requesting agent displayed (the RFC 8628 element the earlier draft dropped), alongside IP + machine info framed as "did you initiate this?".
 4. **Approval UI home** — package-shipped Livewire component the host links *(recommended, consistent)* vs host-built under `/it/*`.
+5. **How the Gate authorizes a session principal** *(added by adversarial review — decide before Phase 1; it shapes the middleware).* `DispatchGate::scopeVisible(Builder, ?Authenticatable)` takes a *user*, and an `AgentSession` isn't `Authenticatable`. Passing `null` yields anonymous visibility (wrong); a synthetic user contradicts fork 2's null-`user_id` recommendation. Options: **(a)** the agent surface bypasses `scopeVisible` and is policy-gated as staff-equivalent — a human approved the session, so it sees the staff scope *(leading candidate: simple, and honest about what approval means)*; **(b)** extend the contract with a session-aware method (e.g. `scopeVisibleForSession()`) whose default returns the staff scope. Either way, write the decision into the Gate PHPDoc.
 
 ### Verification (end-to-end)
 Package: the Testbench suite above + `php -l`. Live: on a dev box, `dispatch:session:request` → approve in the centerpoint UI → `dispatch:next --remote` returns a **production** task, `dispatch:claim --remote` locks it, `dispatch:note/done --remote` write to prod with agent attribution in the timeline; revoke mid-session → the next `--remote` call `401`s and the agent stops.
@@ -631,7 +657,7 @@ A task's `description` (body) is editable after creation — the natural home fo
 2. Write it into the **timeline as a comment** (the memorial): `event_type: 'description_edited'`, `meta: { edited_by, at }`, and the comment **body = the full previous description**.
 3. Overwrite `description` with the new value.
 
-The task always shows the *current* body; scrolling the comment stream reconstructs the full change log. **Reuses the existing `task_comments` timeline — no diff table, no revision model, no second mechanism.** Implementation is essentially a memorial comment written immediately before `$task->description = $new; save()`.
+The task always shows the *current* body; scrolling the comment stream reconstructs the full change log. **Reuses the existing `dispatch_task_comments` timeline — no diff table, no revision model, no second mechanism.** Implementation is essentially a memorial comment written immediately before `$task->description = $new; save()`.
 
 **Decisions (locked):**
 - **Full body, not a marker (doctrine).** The memorial stores the **entire previous body**, not a bare "description updated" note — storing the full prior version is what makes the stream a true change log. A marker-only approach is rejected.
@@ -650,5 +676,31 @@ Speculative ideas from the completeness review, kept **distinct from the confirm
 
 - **Inbound email → task** — an email-to-dispatch capture channel; today all capture is in-app widget / CLI / API / facade.
 - **Reporting & metrics** — cycle time, throughput, aging, backlog trend; today only per-column counts on the board.
-- **Board / widget accessibility** — native drag-drop is keyboard/screen-reader hostile; an a11y pass (keyboard reorder, ARIA) if the audience needs it.
+- **Board accessibility** — native drag-drop is keyboard/screen-reader hostile; an a11y pass (keyboard reorder, ARIA) if the staff audience needs it. *(Capture-widget a11y was promoted to §18 🧩 — the widget fronts all authenticated users, not just staff.)*
 - **(Clarification — not a gap)** External integrations / webhooks / Slack are the intended job of the **`DispatchNotifier` seam (§17B)**: a host binds a notifier that posts anywhere. Do **not** build a parallel webhook system.
+
+---
+
+## Appendix — build history & doc changelog
+
+> Moved here from the doc header. Narrative record of how the build actually ran — **not runnable instructions** (per the trust/verify doctrine). Annotations in *[brackets]* mark what has changed since a line was written.
+
+**v4 change:** added **§15 Build orchestration (waves)** — how the build is executed with the `waves` conductor pattern (driver-owned contract + Sonnet workstream agents in dependency-ordered waves), including the repo-specific adaptation (the skill is `staff/`-tuned; the package repo has different verify/cwd/test rules).
+
+**BUILD LOG:**
+- ✅ **Wave 0 (foundation) shipped & committed** (`laravel-dispatch` @ `e48841a`). Testbench+Pest green (5 tests): migrations, race-safe sequential/reminted codes, contract-driven service defaults+labels, capture dedupe. 25 PHP files `php -l` clean.
+- ✅ **Wave 1 (surfaces) shipped & committed** (`bf7dcd9`) — 4 parallel Sonnet agents, disjoint file sets, zero collisions. 10 CLI verbs + `--json`; AttachmentController/SyncController/TaskUpdate; 7 Livewire components + Blade + native DnD + paste-upload; README/skill/tests. **Full suite green: 14 tests, 60 assertions** (incl. attachment authz-outside-scope, mime/size rejection, scope matrix). Package = 62 files, PHP 8.2, Laravel 11/12 + Livewire 3.
+- ✏️ Refinement: dropped the SortableJS CDN dep entirely — the board uses **dependency-free native HTML5 drag-and-drop** (`resources/dist/dispatch.js`), which also carries the paste-a-screenshot glue.
+- 📌 Known v0.1 behavior: board within-column ordering is priority-primary (a within-column drag across priority tiers won't visually stick; cross-column status moves work). Revisit if manual ordering is wanted. *[tracked in §18 🟡]*
+- 🔨 **Phase D (centerpoint) — backend integration PROVEN (D1–D3 + migration).** Package installed via local Composer **path repo** (`../../laravel-dispatch`, symlinked) + auto-discovered; all 10 verbs & routes register. Bound `CenterpointDispatchGate` (staff = `isAdminOrStaff`) + `AccountKeyTenantResolver` (stamps `account_key`) + `App\Dispatch\Task` subclass via published config. Migrations ran (5 `dispatch_*` tables + `account_key`). **CLI end-to-end works: `dispatch:add` → `TASK-001` on `dispatch_tasks` as the subclass, `dispatch:next --json` reads it.**
+- 🛠️ Two integration fixes to the package (committed): `enforceMorphMap`→`morphMap` (never flip `requireMorphMap` on the host); **prefixed all tables `dispatch_*`** after discovering centerpoint already has a `tasks` table (the earlier single-quote grep gave a false clear; `migrate:status` caught it).
+- ✅ **Phase D frontend wired (verified compiling):** Vue capture widget mounted on ALL authenticated pages via centerpoint's own `#chat-portal-root` sibling-app pattern (new `@auth #dispatch-widget-root` + mount block in `app.js`); staff "Dispatch" link added to `UserDrawer` (static `/dispatch/board` href, no Ziggy config); board JS published to `public/vendor/dispatch`. check-sfc + `node --check` + `php -l` all clean.
+- ✅ **Centerpoint integration committed to `master`** (`307ac32c4`). composer.json declares BOTH repos (path first for this machine, GitHub VCS fallback for others).
+- ✅ **Package pushed to GitHub** `sgrjr/dispatch` (`master` + tag **`v0.1.0`**). Other machines resolve it via the VCS repo automatically (`composer update` → `php artisan migrate`).
+- ⏭️ **Remaining:** YOU visually verify under a real staff login (`composer dev` → floating "Feedback" button on any page, "Dispatch" in the user menu, `/dispatch/board`). Optionally pin centerpoint to `^0.1.0` instead of `@dev` once stable. *[still open — now the §18 🔴 browser smoke test, which gates all new build phases]*
+- ⚠️ The path-repo entry in centerpoint `composer.json` is **dev-only** (breaks a fresh prod `composer install`). Dispatch isn't production-deployable until `sgrjr/dispatch` is pushed to GitHub and the entry becomes a VCS repo — a one-line cutover. *[resolved — package is on GitHub; centerpoint declares path-first + VCS fallback]*
+- 🛠️ **Post-v0.2.1 (2026-07-16):** `d98729d` fixed table-name stragglers — `Label::$table` was still unprefixed `labels` and the pivot `task_label` (now `dispatch_labels` / `dispatch_task_label`; migrations + models + tests swept). **Untagged at write time — tag v0.2.2 before any consumer updates**, since v0.2.1 ships the bug.
+
+**v3 change (DECIDED):** image/file attachments are a **core v0.1 feature** and an explicit improvement over the rupkeep PoC — polymorphic `task_attachments` (on tasks *and* comments), paste-a-screenshot in the widget and thread, storage-disk config, strict validation.
+
+**v2 changes** (adversarial pass): added the from-any-page dispatch widget + submitter portal (v1 omitted the core product UX); collapsed the two overlapping query-scope seams into one; added model-override config; race-safe configurable task codes; theming instead of wholesale view publishing (drift risk); bundled SortableJS (no CDN) *[later dropped for native DnD]*; exception capture moved into the package (off by default — Sentry overlap); cross-app sync deferred; Testbench for package tests; Ziggy step; acceptance criteria.
