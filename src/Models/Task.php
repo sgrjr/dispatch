@@ -1,0 +1,159 @@
+<?php
+
+namespace Sgrjr\Dispatch\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\QueryException;
+
+class Task extends Model
+{
+    use SoftDeletes;
+
+    public const TYPES = ['bug', 'feature', 'chore', 'debt', 'verify'];
+    public const PRIORITIES = ['blocker', 'high', 'medium', 'low'];
+    public const STATUSES = ['triage', 'open', 'in_progress', 'verifying', 'done', 'declined'];
+
+    protected $table = 'tasks';
+
+    protected $fillable = [
+        'code',
+        'title',
+        'description',
+        'type',
+        'priority',
+        'status',
+        'is_public',
+        'submitter_user_id',
+        'assignee_user_id',
+        'exception_signature',
+        'position',
+    ];
+
+    protected $casts = [
+        'is_public' => 'boolean',
+        'position' => 'integer',
+    ];
+
+    /**
+     * Stable morph alias so polymorphic attachments keep working even when a
+     * consuming app subclasses this model (config('dispatch.models.task')).
+     */
+    public function getMorphClass(): string
+    {
+        return 'dispatch_task';
+    }
+
+    public function submitter(): BelongsTo
+    {
+        return $this->belongsTo(config('dispatch.models.user'), 'submitter_user_id');
+    }
+
+    public function assignee(): BelongsTo
+    {
+        return $this->belongsTo(config('dispatch.models.user'), 'assignee_user_id');
+    }
+
+    public function comments(): HasMany
+    {
+        return $this->hasMany(config('dispatch.models.task_comment'), 'task_id')->orderBy('created_at');
+    }
+
+    public function labels(): BelongsToMany
+    {
+        return $this->belongsToMany(config('dispatch.models.label'), 'task_label')->withTimestamps();
+    }
+
+    public function attachments(): MorphMany
+    {
+        return $this->morphMany(config('dispatch.models.task_attachment'), 'attachable');
+    }
+
+    /**
+     * The next unused task code (e.g. TASK-004). Prefix is configurable.
+     *
+     * Portable across MySQL and SQLite: scans existing codes and finds the
+     * highest in PHP. NOT collision-proof on its own — {@see createWithCode()}
+     * pairs it with the unique index + retry to be race-safe.
+     */
+    public static function mintCode(): string
+    {
+        $prefix = (string) config('dispatch.code_prefix', 'TASK');
+        $offset = strlen($prefix) + 1; // prefix + '-'
+
+        $max = 0;
+        foreach (static::withTrashed()->where('code', 'like', $prefix.'-%')->pluck('code') as $code) {
+            $n = (int) substr((string) $code, $offset);
+            if ($n > $max) {
+                $max = $n;
+            }
+        }
+
+        return $prefix.'-'.str_pad((string) ($max + 1), 3, '0', STR_PAD_LEFT);
+    }
+
+    /**
+     * Create a task with a race-safe minted code. If two requests mint the same
+     * code concurrently, the unique index rejects the loser and we remint and
+     * retry. An explicit `code` in $attributes is honored and never reminted.
+     *
+     * $beforeSave runs on the filled-but-unsaved model (e.g. so a TenantResolver
+     * can stamp an app-specific column that isn't in the base $fillable).
+     */
+    public static function createWithCode(array $attributes, ?callable $beforeSave = null): static
+    {
+        $explicit = array_key_exists('code', $attributes) && $attributes['code'] !== null && $attributes['code'] !== '';
+
+        /** @var static $model */
+        $model = new static();
+        $model->fill($attributes);
+
+        if ($beforeSave !== null) {
+            $beforeSave($model);
+        }
+
+        for ($attempt = 1; ; $attempt++) {
+            if (! $explicit) {
+                $model->code = static::mintCode();
+            }
+
+            try {
+                $model->save();
+
+                return $model;
+            } catch (QueryException $e) {
+                if (! $explicit && $attempt < 5 && static::isDuplicateCodeError($e)) {
+                    continue;
+                }
+                throw $e;
+            }
+        }
+    }
+
+    protected static function isDuplicateCodeError(QueryException $e): bool
+    {
+        $sqlState = (string) ($e->errorInfo[0] ?? '');
+
+        return $sqlState === '23000'
+            || str_contains(strtolower($e->getMessage()), 'unique')
+            || str_contains(strtolower($e->getMessage()), 'duplicate');
+    }
+
+    /**
+     * Record a system event on the timeline (no human body by default).
+     */
+    public function recordEvent(string $eventType, ?int $userId = null, array $meta = [], ?string $body = null): Model
+    {
+        return $this->comments()->create([
+            'user_id' => $userId,
+            'body' => $body ?? '',
+            'event_type' => $eventType,
+            'meta' => $meta ?: null,
+            'is_internal' => false,
+        ]);
+    }
+}
