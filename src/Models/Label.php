@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Label extends Model
 {
-    protected $table = 'labels';
+    protected $table = 'dispatch_labels';
 
     protected $fillable = [
         'name',
@@ -17,7 +17,7 @@ class Label extends Model
 
     public function tasks(): BelongsToMany
     {
-        return $this->belongsToMany(config('dispatch.models.task'), 'task_label')->withTimestamps();
+        return $this->belongsToMany(config('dispatch.models.task'), 'dispatch_task_label')->withTimestamps();
     }
 
     /**

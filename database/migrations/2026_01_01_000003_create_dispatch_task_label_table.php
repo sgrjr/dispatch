@@ -8,10 +8,10 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('task_label', function (Blueprint $table) {
+        Schema::create('dispatch_task_label', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('task_id')->constrained('tasks')->cascadeOnDelete();
-            $table->foreignId('label_id')->constrained('labels')->cascadeOnDelete();
+            $table->foreignId('task_id')->constrained('dispatch_tasks')->cascadeOnDelete();
+            $table->foreignId('label_id')->constrained('dispatch_labels')->cascadeOnDelete();
             $table->timestamps();
 
             $table->unique(['task_id', 'label_id']);
@@ -20,6 +20,6 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::dropIfExists('task_label');
+        Schema::dropIfExists('dispatch_task_label');
     }
 };

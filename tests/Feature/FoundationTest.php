@@ -5,11 +5,11 @@ use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
 
 test('migrations create the core tables', function () {
-    expect(Schema::hasTable('tasks'))->toBeTrue();
-    expect(Schema::hasTable('labels'))->toBeTrue();
-    expect(Schema::hasTable('task_label'))->toBeTrue();
-    expect(Schema::hasTable('task_comments'))->toBeTrue();
-    expect(Schema::hasTable('task_attachments'))->toBeTrue();
+    expect(Schema::hasTable('dispatch_tasks'))->toBeTrue();
+    expect(Schema::hasTable('dispatch_labels'))->toBeTrue();
+    expect(Schema::hasTable('dispatch_task_label'))->toBeTrue();
+    expect(Schema::hasTable('dispatch_task_comments'))->toBeTrue();
+    expect(Schema::hasTable('dispatch_task_attachments'))->toBeTrue();
 });
 
 test('mintCode produces sequential prefixed codes', function () {

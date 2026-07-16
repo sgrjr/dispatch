@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\MorphTo;
 
 class TaskAttachment extends Model
 {
-    protected $table = 'task_attachments';
+    protected $table = 'dispatch_task_attachments';
 
     protected $fillable = [
         'uploaded_by_user_id',

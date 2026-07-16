@@ -8,7 +8,7 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('task_attachments', function (Blueprint $table) {
+        Schema::create('dispatch_task_attachments', function (Blueprint $table) {
             $table->id();
 
             // Polymorphic: an attachment hangs off a Task OR a TaskComment.
@@ -33,6 +33,6 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::dropIfExists('task_attachments');
+        Schema::dropIfExists('dispatch_task_attachments');
     }
 };

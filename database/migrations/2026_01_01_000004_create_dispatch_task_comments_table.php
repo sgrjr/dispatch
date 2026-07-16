@@ -8,9 +8,9 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('task_comments', function (Blueprint $table) {
+        Schema::create('dispatch_task_comments', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('task_id')->constrained('tasks')->cascadeOnDelete();
+            $table->foreignId('task_id')->constrained('dispatch_tasks')->cascadeOnDelete();
             $table->unsignedBigInteger('user_id')->nullable(); // no FK: app owns users
             $table->text('body')->nullable();
 
@@ -31,6 +31,6 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::dropIfExists('task_comments');
+        Schema::dropIfExists('dispatch_task_comments');
     }
 };

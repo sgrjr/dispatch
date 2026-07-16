@@ -8,7 +8,7 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('tasks', function (Blueprint $table) {
+        Schema::create('dispatch_tasks', function (Blueprint $table) {
             $table->id();
             $table->string('code')->unique();          // e.g. TASK-001 — race-safe minting
             $table->string('title');
@@ -43,6 +43,6 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::dropIfExists('tasks');
+        Schema::dropIfExists('dispatch_tasks');
     }
 };
