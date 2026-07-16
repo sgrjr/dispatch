@@ -6,6 +6,7 @@ use Sgrjr\Dispatch\Models\TaskAttachment;
 use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Support\AuthSubmitterResolver;
 use Sgrjr\Dispatch\Support\DefaultGate;
+use Sgrjr\Dispatch\Support\MailNotifier;
 use Sgrjr\Dispatch\Support\NullTenantResolver;
 
 return [
@@ -32,15 +33,16 @@ return [
     | Contract bindings
     |--------------------------------------------------------------------------
     |
-    | The three seams that make the package portable. Bind your own classes to
-    | teach Dispatch about your app's authorization and tenancy. The shipped
-    | defaults treat any authenticated user as staff (fine for a single team)
-    | and apply no tenant scoping.
+    | The four seams that make the package portable. Bind your own classes to
+    | teach Dispatch about your app's authorization, tenancy, and notification
+    | delivery. The shipped defaults treat any authenticated user as staff
+    | (fine for a single team), apply no tenant scoping, and mail updates.
     */
     'contracts' => [
         'gate' => DefaultGate::class,
         'tenant' => NullTenantResolver::class,
         'submitter' => AuthSubmitterResolver::class,
+        'notifier' => MailNotifier::class,
     ],
 
     /*
@@ -53,6 +55,29 @@ return [
     | cosmetic — set it per project (e.g. `CP`, `RUK`).
     */
     'code_prefix' => env('DISPATCH_CODE_PREFIX', 'TASK'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Workflow vocabulary
+    |--------------------------------------------------------------------------
+    |
+    | The type/priority/status vocab a task can take, seeded here with the
+    | package's built-in defaults (Task::TYPES/PRIORITIES/STATUSES) so the
+    | published config documents them and can be edited to add/rename/reorder
+    | values (priority/status rank — used by Task::prioritySql()/statusSql()
+    | for board/list ordering — follows list order). `*_labels` optionally
+    | maps a raw value to its display label; leave a map empty ([]) to
+    | auto-humanize instead (`in_progress` -> `In Progress`).
+    */
+    'workflow' => [
+        'types' => ['bug', 'feature', 'chore', 'debt', 'verify'],
+        'priorities' => ['blocker', 'high', 'medium', 'low'],
+        'statuses' => ['triage', 'open', 'in_progress', 'verifying', 'done', 'declined'],
+
+        'type_labels' => [],
+        'priority_labels' => [],
+        'status_labels' => [],
+    ],
 
     /*
     |--------------------------------------------------------------------------
@@ -133,6 +158,11 @@ return [
         'exceptions' => env('DISPATCH_CAPTURE_EXCEPTIONS', false),
         'environments' => ['production'],
         'label' => 'source:exception',
+
+        // Rate limiter applied to POST /capture + the attachment upload route
+        // by the routes file (a later wave). null/false = no throttle; a
+        // limiter string like '30,1' (30/min), or ['max' => 30, 'per' => 1].
+        'throttle' => '60,1',
     ],
 
     /*
@@ -181,6 +211,49 @@ return [
     'notifications' => [
         'enabled' => env('DISPATCH_NOTIFICATIONS', true),
         'channels' => ['mail'],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Board
+    |--------------------------------------------------------------------------
+    |
+    | Kanban board tuning. `done_limit` caps how many cards load into the Done
+    | column so a long-lived board doesn't drag in years of history (0/null =
+    | unbounded). `manual_order` false keeps today's priority-primary sort;
+    | true lets a manual drag position stick instead of being resorted by
+    | priority on every render.
+    */
+    'board' => [
+        'done_limit' => 50,
+        'manual_order' => false,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Staleness
+    |--------------------------------------------------------------------------
+    |
+    | Flags a task as stale once it hasn't moved in `threshold_days` (~6 weeks
+    | by default). Purely a display/reporting signal — set `enabled` false to
+    | turn it off entirely.
+    */
+    'staleness' => [
+        'enabled' => true,
+        'threshold_days' => 42,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Markdown
+    |--------------------------------------------------------------------------
+    |
+    | Renders task/comment bodies with league/commonmark when enabled (HTML
+    | input escaped, unsafe links disallowed — see Support\Markdown). false
+    | falls back to a plain nl2br(e($text)) render with no markdown parsing.
+    */
+    'markdown' => [
+        'enabled' => true,
     ],
 
     /*

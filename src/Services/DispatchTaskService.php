@@ -4,6 +4,7 @@ namespace Sgrjr\Dispatch\Services;
 
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Sgrjr\Dispatch\Contracts\SubmitterResolver;
 use Sgrjr\Dispatch\Contracts\TenantResolver;
@@ -52,6 +53,15 @@ class DispatchTaskService
         );
 
         $this->attachLabels($task, $labelNames);
+
+        // Submission-acknowledgement receipt (N2). The DispatchNotifier
+        // contract guarantees implementations never throw, but this is a
+        // critical path — don't trust that promise, catch here too.
+        try {
+            app(\Sgrjr\Dispatch\Contracts\DispatchNotifier::class)->taskCreated($task);
+        } catch (\Throwable) {
+            // never break task creation over a notification failure
+        }
 
         return $task;
     }
@@ -122,5 +132,57 @@ class DispatchTaskService
         if (! empty($labelIds)) {
             $task->labels()->syncWithoutDetaching($labelIds);
         }
+    }
+
+    /**
+     * Merge $loser into $winner: reparent the loser's comments and
+     * attachments onto the winner, union labels, memorialize the merge on
+     * both tasks, then soft-delete the loser (marked `duplicate_of` the
+     * winner, status `declined`).
+     *
+     * Wrapped in a transaction — a merge touches four tables and must not
+     * partially apply.
+     */
+    public function merge(Task $loser, Task $winner, ?int $actorId = null): Task
+    {
+        return DB::transaction(function () use ($loser, $winner, $actorId) {
+            /** @var class-string $commentModel */
+            $commentModel = config('dispatch.models.task_comment');
+            $commentModel::where('task_id', $loser->id)->update(['task_id' => $winner->id]);
+
+            /** @var class-string $attachmentModel */
+            $attachmentModel = config('dispatch.models.task_attachment');
+            $attachmentModel::where('attachable_type', $loser->getMorphClass())
+                ->where('attachable_id', $loser->id)
+                ->update(['attachable_id' => $winner->id, 'attachable_type' => $winner->getMorphClass()]);
+
+            // allRelatedIds() reads the related keys straight off the pivot —
+            // avoids an ambiguous unqualified `id` in the labels join (the
+            // pivot also has an `id`).
+            $labelIds = $loser->labels()->allRelatedIds()->all();
+            $winner->labels()->syncWithoutDetaching($labelIds);
+
+            $winner->recordEvent(
+                TaskComment::EVENT_MERGED,
+                $actorId,
+                ['from' => $loser->code],
+                "Merged {$loser->code} into this task.",
+            );
+
+            $loser->duplicate_of = $winner->id;
+            $loser->status = 'declined';
+            $loser->save();
+
+            $loser->recordEvent(
+                TaskComment::EVENT_MERGED,
+                $actorId,
+                ['into' => $winner->code],
+                "Merged into {$winner->code}.",
+            );
+
+            $loser->delete();
+
+            return $winner->refresh();
+        });
     }
 }

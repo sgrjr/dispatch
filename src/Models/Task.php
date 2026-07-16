@@ -33,12 +33,15 @@ class Task extends Model
         'exception_signature',
         'position',
         'context',
+        'due_at',
+        'duplicate_of',
     ];
 
     protected $casts = [
         'is_public' => 'boolean',
         'position' => 'integer',
         'context' => 'array',
+        'due_at' => 'datetime',
     ];
 
     /**
@@ -73,6 +76,146 @@ class Task extends Model
     public function attachments(): MorphMany
     {
         return $this->morphMany(config('dispatch.models.task_attachment'), 'attachable');
+    }
+
+    /**
+     * Users watching this task for updates (in addition to the submitter and
+     * assignee, who are always notified — see DispatchNotifier).
+     */
+    public function watchers(): BelongsToMany
+    {
+        return $this->belongsToMany(config('dispatch.models.user'), 'dispatch_task_watchers', 'task_id', 'user_id')->withTimestamps();
+    }
+
+    public function watch(int $userId): void
+    {
+        $this->watchers()->syncWithoutDetaching([$userId]);
+    }
+
+    public function unwatch(int $userId): void
+    {
+        $this->watchers()->detach($userId);
+    }
+
+    public function isWatchedBy(int $userId): bool
+    {
+        return $this->watchers()->where('user_id', $userId)->exists();
+    }
+
+    /**
+     * The winning task, if this one was merged away as a duplicate.
+     */
+    public function duplicateOf(): BelongsTo
+    {
+        return $this->belongsTo(config('dispatch.models.task'), 'duplicate_of');
+    }
+
+    /**
+     * The configured type/priority/status vocab, falling back to the package's
+     * built-in defaults. A consuming app overrides `dispatch.workflow.*` to
+     * add/rename values without subclassing Task.
+     *
+     * @return array<int,string>
+     */
+    public static function types(): array
+    {
+        return (array) config('dispatch.workflow.types', self::TYPES);
+    }
+
+    /**
+     * @return array<int,string>
+     */
+    public static function priorities(): array
+    {
+        return (array) config('dispatch.workflow.priorities', self::PRIORITIES);
+    }
+
+    /**
+     * @return array<int,string>
+     */
+    public static function statuses(): array
+    {
+        return (array) config('dispatch.workflow.statuses', self::STATUSES);
+    }
+
+    /**
+     * Display labels for each type, keyed by raw value. Uses the configured
+     * `dispatch.workflow.type_labels` map if set; otherwise auto-humanizes
+     * (`in_progress` -> `In Progress`) so custom vocab always has labels.
+     *
+     * @return array<string,string>
+     */
+    public static function typeLabels(): array
+    {
+        $configured = (array) config('dispatch.workflow.type_labels', []);
+
+        return $configured !== [] ? $configured : self::humanize(self::types());
+    }
+
+    /**
+     * @return array<string,string>
+     */
+    public static function priorityLabels(): array
+    {
+        $configured = (array) config('dispatch.workflow.priority_labels', []);
+
+        return $configured !== [] ? $configured : self::humanize(self::priorities());
+    }
+
+    /**
+     * @return array<string,string>
+     */
+    public static function statusLabels(): array
+    {
+        $configured = (array) config('dispatch.workflow.status_labels', []);
+
+        return $configured !== [] ? $configured : self::humanize(self::statuses());
+    }
+
+    /**
+     * @param  array<int,string>  $values
+     * @return array<string,string>
+     */
+    private static function humanize(array $values): array
+    {
+        $labels = [];
+        foreach ($values as $value) {
+            $labels[$value] = ucwords(str_replace('_', ' ', (string) $value));
+        }
+
+        return $labels;
+    }
+
+    /**
+     * A `CASE {column} WHEN '<p0>' THEN 0 ... ELSE <count> END` SQL fragment
+     * ranking priorities() in configured order (index = rank), replacing the
+     * hardcoded CASE that used to live inline in the board/list query.
+     */
+    public static function prioritySql(string $column = 'priority'): string
+    {
+        return self::rankSql($column, self::priorities());
+    }
+
+    /**
+     * Same shape as {@see prioritySql()}, ranking statuses() in configured
+     * order.
+     */
+    public static function statusSql(string $column = 'status'): string
+    {
+        return self::rankSql($column, self::statuses());
+    }
+
+    /**
+     * @param  array<int,string>  $values
+     */
+    private static function rankSql(string $column, array $values): string
+    {
+        $whens = [];
+        foreach (array_values($values) as $rank => $value) {
+            $whens[] = "WHEN '".str_replace("'", "''", (string) $value)."' THEN {$rank}";
+        }
+
+        return "CASE {$column} ".implode(' ', $whens).' ELSE '.count($values).' END';
     }
 
     /**
@@ -148,14 +291,14 @@ class Task extends Model
     /**
      * Record a system event on the timeline (no human body by default).
      */
-    public function recordEvent(string $eventType, ?int $userId = null, array $meta = [], ?string $body = null): Model
+    public function recordEvent(string $eventType, ?int $userId = null, array $meta = [], ?string $body = null, bool $isInternal = false): Model
     {
         return $this->comments()->create([
             'user_id' => $userId,
             'body' => $body ?? '',
             'event_type' => $eventType,
             'meta' => $meta ?: null,
-            'is_internal' => false,
+            'is_internal' => $isInternal,
         ]);
     }
 }

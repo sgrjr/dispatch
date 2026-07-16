@@ -66,4 +66,9 @@ class TaskPolicy
     {
         return $this->gate->isStaff($user);
     }
+
+    public function watch(?Authenticatable $user, Task $task): bool
+    {
+        return $this->gate->isStaff($user);
+    }
 }

@@ -16,6 +16,8 @@ class TaskComment extends Model
     public const EVENT_PUBLIC_TOGGLE = 'is_public_toggle';
     public const EVENT_PROMOTED = 'promoted';
     public const EVENT_EXCEPTION = 'exception_occurrence';
+    public const EVENT_DESCRIPTION_EDITED = 'description_edited';
+    public const EVENT_MERGED = 'merged';
 
     protected $table = 'dispatch_task_comments';
 

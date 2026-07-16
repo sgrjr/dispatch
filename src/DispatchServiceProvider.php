@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 use Sgrjr\Dispatch\Contracts\DispatchGate;
+use Sgrjr\Dispatch\Contracts\DispatchNotifier;
 use Sgrjr\Dispatch\Contracts\SubmitterResolver;
 use Sgrjr\Dispatch\Contracts\TenantResolver;
 use Sgrjr\Dispatch\Policies\TaskPolicy;
@@ -16,10 +17,11 @@ class DispatchServiceProvider extends ServiceProvider
     {
         $this->mergeConfigFrom(__DIR__.'/../config/dispatch.php', 'dispatch');
 
-        // Bind the three portability seams to the app-configured implementations.
+        // Bind the four portability seams to the app-configured implementations.
         $this->app->singleton(DispatchGate::class, fn ($app) => $app->make(config('dispatch.contracts.gate')));
         $this->app->singleton(TenantResolver::class, fn ($app) => $app->make(config('dispatch.contracts.tenant')));
         $this->app->singleton(SubmitterResolver::class, fn ($app) => $app->make(config('dispatch.contracts.submitter')));
+        $this->app->singleton(DispatchNotifier::class, fn ($app) => $app->make(config('dispatch.contracts.notifier')));
 
         // Backs the DispatchTask facade (programmatic reporting).
         $this->app->singleton(DispatchManager::class);
@@ -124,6 +126,8 @@ class DispatchServiceProvider extends ServiceProvider
             \Sgrjr\Dispatch\Console\Commands\DispatchPush::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchExport::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchImport::class,
+            \Sgrjr\Dispatch\Console\Commands\DispatchEdit::class,
+            \Sgrjr\Dispatch\Console\Commands\DispatchMerge::class,
         ];
 
         $this->commands(array_filter($commands, 'class_exists'));
