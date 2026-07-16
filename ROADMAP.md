@@ -608,3 +608,27 @@ Keep the token **self-contained in the package** — host-agnostic. The package 
 
 ### Verification (end-to-end)
 Package: the Testbench suite above + `php -l`. Live: on a dev box, `dispatch:session:request` → approve in the centerpoint UI → `dispatch:next --remote` returns a **production** task, `dispatch:claim --remote` locks it, `dispatch:note/done --remote` write to prod with agent attribution in the timeline; revoke mid-session → the next `--remote` call `401`s and the agent stops.
+
+---
+
+## 21. Design notes (decided; not yet built)
+
+Small, settled design decisions that aren't full build plans. Capture the doctrine so a future session builds them consistently.
+
+### 21.1 Editable task body — history *is* the comment stream (no separate mechanism)
+A task's `description` (body) is editable after creation — the natural home for a living "Done / Remaining" checklist on a multi-step task, distinct from the append-only comment log. The edit **is** the history mechanism:
+
+1. Capture the **current (pre-edit) description**.
+2. Write it into the **timeline as a comment** (the memorial): `event_type: 'description_edited'`, `meta: { edited_by, at }`, and the comment **body = the full previous description**.
+3. Overwrite `description` with the new value.
+
+The task always shows the *current* body; scrolling the comment stream reconstructs the full change log. **Reuses the existing `task_comments` timeline — no diff table, no revision model, no second mechanism.** Implementation is essentially a memorial comment written immediately before `$task->description = $new; save()`.
+
+**Decisions (locked):**
+- **Full body, not a marker (doctrine).** The memorial stores the **entire previous body**, not a bare "description updated" note — storing the full prior version is what makes the stream a true change log. A marker-only approach is rejected.
+- **Visibility: internal — hidden from customer-facing, visible everywhere staff see.** The memorial is an internal system event (`is_internal = true`), so the submitter portal / non-staff views (which already filter `is_internal = false` in `TaskThread`) never show stale prior bodies, while it appears in the staff timeline alongside `status_change`-style events.
+
+**Implementation notes:**
+- New `TaskComment` constant, e.g. `EVENT_DESCRIPTION_EDITED = 'description_edited'`.
+- `Task::recordEvent()` currently hardcodes `is_internal = false`, so the memorial must either be written directly via `$task->comments()->create([... 'is_internal' => true ...])`, or `recordEvent()` gains an `is_internal` parameter — the memorial requires `is_internal = true` per the visibility decision.
+- Editable surfaces to add when built: the `TaskShow` meta editor (staff-gated by the existing `canEdit()`) gains a description field, and a `dispatch:edit {code} --description=… [--title=…]` CLI verb (the one an agent calls, `--remote`, to keep its checklist current). Not logged in §18 backlog by request — captured here.
