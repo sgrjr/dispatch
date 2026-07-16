@@ -20,10 +20,16 @@ class DispatchServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(__DIR__.'/../config/dispatch.php', 'dispatch');
 
         // Bind the four portability seams to the app-configured implementations.
-        $this->app->singleton(DispatchGate::class, fn ($app) => $app->make(config('dispatch.contracts.gate')));
-        $this->app->singleton(TenantResolver::class, fn ($app) => $app->make(config('dispatch.contracts.tenant')));
-        $this->app->singleton(SubmitterResolver::class, fn ($app) => $app->make(config('dispatch.contracts.submitter')));
-        $this->app->singleton(DispatchNotifier::class, fn ($app) => $app->make(config('dispatch.contracts.notifier')));
+        // Each read carries its shipped default as an in-code fallback: a host
+        // that published config/dispatch.php BEFORE a seam existed has no key for
+        // it (mergeConfigFrom shallow-merges, so the host's `contracts` array
+        // wins wholesale). Without the fallback, config() returns null and
+        // app->make(null) throws "Target class [] does not exist" — the exact
+        // failure the `notifier` seam hit on hosts predating it.
+        $this->app->singleton(DispatchGate::class, fn ($app) => $app->make(config('dispatch.contracts.gate', \Sgrjr\Dispatch\Support\DefaultGate::class)));
+        $this->app->singleton(TenantResolver::class, fn ($app) => $app->make(config('dispatch.contracts.tenant', \Sgrjr\Dispatch\Support\NullTenantResolver::class)));
+        $this->app->singleton(SubmitterResolver::class, fn ($app) => $app->make(config('dispatch.contracts.submitter', \Sgrjr\Dispatch\Support\AuthSubmitterResolver::class)));
+        $this->app->singleton(DispatchNotifier::class, fn ($app) => $app->make(config('dispatch.contracts.notifier', \Sgrjr\Dispatch\Support\MailNotifier::class)));
 
         // Backs the DispatchTask facade (programmatic reporting).
         $this->app->singleton(DispatchManager::class);

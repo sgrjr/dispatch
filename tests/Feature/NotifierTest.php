@@ -97,3 +97,19 @@ test('MailNotifier fans a status change out to submitter + watchers, excluding t
     Notification::assertSentTo([$submitter, $watcher], TaskUpdate::class);
     Notification::assertNotSentTo([$actor], TaskUpdate::class);
 });
+
+test('the notifier binding falls back to the shipped default when the host config omits contracts.notifier', function () {
+    // Simulate a host that published config/dispatch.php BEFORE the notifier
+    // seam existed: its `contracts` array has gate/tenant/submitter but no
+    // `notifier` key (mergeConfigFrom shallow-merges, so the host array wins
+    // wholesale). The binding MUST fall back in code — otherwise app->make(null)
+    // throws "Target class [] does not exist" (the real /livewire/update 500).
+    config(['dispatch.contracts' => [
+        'gate' => \Sgrjr\Dispatch\Support\DefaultGate::class,
+        'tenant' => \Sgrjr\Dispatch\Support\NullTenantResolver::class,
+        'submitter' => \Sgrjr\Dispatch\Support\AuthSubmitterResolver::class,
+    ]]);
+    app()->forgetInstance(DispatchNotifier::class);
+
+    expect(app(DispatchNotifier::class))->toBeInstanceOf(MailNotifier::class);
+});
