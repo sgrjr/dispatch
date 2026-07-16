@@ -217,6 +217,21 @@ The Vue widget is dependency-free and talks to `/dispatch/capture` directly (CSR
 via the `<meta name="csrf-token">` tag). Disable the shipped widgets globally
 without touching your layout:
 
+> **Keeping the Vue widget up to date.** `vendor:publish` **copies** the file —
+> it does not symlink it. Editing `resources/js/DispatchWidget.vue` in this
+> package has **no effect** on an app that already published it; the app's copy
+> is now stale and `vendor:publish` silently skips files that already exist.
+> Every time the widget changes, refresh it with `--force`:
+>
+> ```bash
+> php artisan vendor:publish --tag=dispatch-vue --force
+> ```
+>
+> Only pass `--force` for `dispatch-vue`. Never re-run
+> `vendor:publish --tag=dispatch-config --force` on an app that has already
+> hand-edited `config/dispatch.php` (e.g. custom contract bindings, §3) —
+> `--force` overwrites the whole file and would clobber those edits.
+
 ```php
 // config/dispatch.php
 'widget' => ['enabled' => env('DISPATCH_WIDGET', true)],
