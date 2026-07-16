@@ -1,3 +1,11 @@
+<script>
+// Self-install diagnostics capture the moment the widget module is evaluated
+// (at app boot, since the host imports the widget). Idempotent; a host can also
+// call installConsoleCapture() earlier in its entry for the earliest capture.
+import { installConsoleCapture } from './dispatchConsole'
+installConsoleCapture()
+</script>
+
 <script setup>
 /**
  * sgrjr/dispatch — from-any-page capture widget (Vue 3, framework-agnostic host).
@@ -12,6 +20,7 @@
  *   <DispatchWidget endpoint="/dispatch/capture" />
  */
 import { ref, computed } from 'vue'
+import { getDispatchContext } from './dispatchConsole'
 
 const props = defineProps({
   endpoint: { type: String, default: '/dispatch/capture' },
@@ -115,6 +124,7 @@ async function submit() {
   body.append('type', type.value)
   body.append('description', description.value)
   body.append('page_url', window.location.href)
+  body.append('context', JSON.stringify(getDispatchContext()))
   files.value.forEach((f) => body.append('files[]', f))
 
   try {

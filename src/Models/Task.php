@@ -18,7 +18,7 @@ class Task extends Model
     public const PRIORITIES = ['blocker', 'high', 'medium', 'low'];
     public const STATUSES = ['triage', 'open', 'in_progress', 'verifying', 'done', 'declined'];
 
-    protected $table = 'tasks';
+    protected $table = 'dispatch_tasks';
 
     protected $fillable = [
         'code',
@@ -32,11 +32,13 @@ class Task extends Model
         'assignee_user_id',
         'exception_signature',
         'position',
+        'context',
     ];
 
     protected $casts = [
         'is_public' => 'boolean',
         'position' => 'integer',
+        'context' => 'array',
     ];
 
     /**
@@ -65,7 +67,7 @@ class Task extends Model
 
     public function labels(): BelongsToMany
     {
-        return $this->belongsToMany(config('dispatch.models.label'), 'task_label')->withTimestamps();
+        return $this->belongsToMany(config('dispatch.models.label'), 'dispatch_task_label')->withTimestamps();
     }
 
     public function attachments(): MorphMany

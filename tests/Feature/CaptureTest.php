@@ -28,6 +28,14 @@ test('the capture endpoint creates a triage task with a pasted screenshot', func
             'title' => 'Button is broken on the dashboard',
             'type' => 'bug',
             'page_url' => 'https://app.test/dashboard',
+            'context' => json_encode([
+                'url' => 'https://app.test/dashboard',
+                'user_agent' => 'PestBrowser/1.0',
+                'viewport' => ['w' => 1280, 'h' => 800, 'dpr' => 2],
+                'console_errors' => [
+                    ['type' => 'console.error', 'message' => 'Cannot read properties of undefined'],
+                ],
+            ]),
             'files' => [UploadedFile::fake()->image('shot.png')],
         ]);
 
@@ -41,6 +49,11 @@ test('the capture endpoint creates a triage task with a pasted screenshot', func
     expect($task->description)->toContain('app.test/dashboard');
     expect($task->attachments()->count())->toBe(1);
     expect($task->labels->pluck('name')->all())->toContain('source:widget');
+
+    // Structured context is captured and stored.
+    expect($task->context)->toBeArray();
+    expect($task->context['user_agent'])->toBe('PestBrowser/1.0');
+    expect($task->context['console_errors'][0]['message'])->toBe('Cannot read properties of undefined');
 });
 
 test('the capture endpoint requires a title', function () {

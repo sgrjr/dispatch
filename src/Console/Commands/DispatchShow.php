@@ -51,6 +51,7 @@ class DispatchShow extends Command
                 'description' => $task->description,
                 'created_at' => optional($task->created_at)->toIso8601String(),
                 'updated_at' => optional($task->updated_at)->toIso8601String(),
+                'context' => $task->context,
                 'comments' => $comments->values()->map(fn ($c) => [
                     'id' => $c->id,
                     'event_type' => $c->event_type,
@@ -82,6 +83,23 @@ class DispatchShow extends Command
             $this->newLine();
             $this->line('<fg=gray># Description</>');
             $this->line($task->description);
+        }
+
+        if (! empty($task->context)) {
+            $ctx = $task->context;
+            $this->newLine();
+            $this->line('<fg=gray># Diagnostics</>');
+            if (! empty($ctx['url'])) {
+                $this->line('  url: '.$ctx['url']);
+            }
+            if (! empty($ctx['user_agent'])) {
+                $this->line('  agent: '.$ctx['user_agent']);
+            }
+            $errs = $ctx['console_errors'] ?? [];
+            $this->line('  console errors: '.count($errs));
+            foreach (array_slice($errs, -5) as $e) {
+                $this->line('    <fg=red>'.($e['type'] ?? 'error').'</>: '.($e['message'] ?? ''));
+            }
         }
 
         $this->newLine();

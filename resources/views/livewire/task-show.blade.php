@@ -87,6 +87,48 @@
         @endif
     </section>
 
+    {{-- Client diagnostics captured with the report (staff-facing). --}}
+    @if ($this->canEdit() && ! empty($task->context))
+        @php($ctx = $task->context)
+        @php($errors = $ctx['console_errors'] ?? [])
+        <section class="dispatch-card" style="margin-top: 1rem;">
+            <h2 class="dispatch-section-title">Diagnostics</h2>
+            <div class="dispatch-meta-grid">
+                @if (! empty($ctx['url']))
+                    <div><label class="dispatch-label">URL</label><div style="font-size:0.78rem; word-break: break-all;">{{ $ctx['url'] }}</div></div>
+                @endif
+                @if (! empty($ctx['viewport']))
+                    <div><label class="dispatch-label">Viewport</label><div style="font-size:0.78rem;">{{ $ctx['viewport']['w'] ?? '?' }}×{{ $ctx['viewport']['h'] ?? '?' }} (dpr {{ $ctx['viewport']['dpr'] ?? 1 }})</div></div>
+                @endif
+                @if (! empty($ctx['user_agent']))
+                    <div style="grid-column: 1 / -1;"><label class="dispatch-label">User agent</label><div style="font-size:0.72rem; color: var(--dispatch-text-muted); word-break: break-all;">{{ $ctx['user_agent'] }}</div></div>
+                @endif
+            </div>
+
+            <div style="margin-top: 0.9rem;">
+                <label class="dispatch-label">Console errors ({{ count($errors) }})</label>
+                @if (empty($errors))
+                    <p style="font-size:0.78rem; color: var(--dispatch-text-muted); margin:0.3rem 0 0;">None captured.</p>
+                @else
+                    <ul style="list-style:none; margin:0.4rem 0 0; padding:0; display:flex; flex-direction:column; gap:0.4rem;">
+                        @foreach (array_slice($errors, -10) as $err)
+                            <li style="border:1px solid var(--dispatch-border); border-radius: var(--dispatch-radius-sm); padding:0.4rem 0.6rem; font-size:0.75rem;">
+                                <strong style="color:#c0392b;">{{ $err['type'] ?? 'error' }}</strong>
+                                <span>{{ $err['message'] ?? '' }}</span>
+                                @if (! empty($err['source']))
+                                    <div style="color: var(--dispatch-text-faint); font-size:0.7rem;">{{ $err['source'] }}</div>
+                                @endif
+                                @if (! empty($err['stack']))
+                                    <pre style="white-space:pre-wrap; margin:0.3rem 0 0; font-size:0.68rem; color: var(--dispatch-text-muted);">{{ $err['stack'] }}</pre>
+                                @endif
+                            </li>
+                        @endforeach
+                    </ul>
+                @endif
+            </div>
+        </section>
+    @endif
+
     {{-- Meta editor (staff only, gated by the `update` policy ability) --}}
     @if ($this->canEdit())
         <section class="dispatch-card" style="margin-top: 1rem;">

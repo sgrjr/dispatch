@@ -27,6 +27,7 @@ class CaptureController extends Controller
             'type' => ['nullable', 'in:bug,feature,chore,debt,verify'],
             'description' => ['nullable', 'string'],
             'page_url' => ['nullable', 'string', 'max:2048'],
+            'context' => ['nullable', 'string'], // JSON blob of client diagnostics
             'files' => ['nullable', 'array', 'max:'.(int) config('dispatch.attachments.max_per_batch', 10)],
             'files.*' => ['file'],
         ]);
@@ -36,11 +37,21 @@ class CaptureController extends Controller
             $description .= ($description !== '' ? "\n\n" : '').'Reported from: '.$data['page_url'];
         }
 
+        // Structured client diagnostics (url, user agent, viewport, console errors).
+        $context = null;
+        if (! empty($data['context'])) {
+            $decoded = json_decode($data['context'], true);
+            if (is_array($decoded)) {
+                $context = $decoded;
+            }
+        }
+
         $task = $tasks->create([
             'title' => $data['title'],
             'type' => $data['type'] ?? 'bug',
             'description' => $description !== '' ? $description : null,
             'status' => 'triage',
+            'context' => $context,
         ], ['source:widget'], Auth::user());
 
         foreach ((array) $request->file('files', []) as $file) {
