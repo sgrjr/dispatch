@@ -176,3 +176,27 @@ test('mergeInto() folds this task (loser) into the resolved target (winner) and 
 
     expect($winner->fresh()->comments()->where('event_type', TaskComment::EVENT_MERGED)->exists())->toBeTrue();
 });
+
+test('the meta editor renders and keeps a working error bag even when the diagnostics panel is shown', function () {
+    // Regression: the diagnostics panel reused a local $errors variable, which
+    // clobbered the shared ViewErrorBag so the later @error(...) directives blew
+    // up with "Call to a member function getBag() on array" — but only for a
+    // task that HAS context (so the panel actually renders). Earlier tests all
+    // used context-free tasks, so it slipped through.
+    $staff = dispatchMakeUser(7);
+    $this->actingAs($staff);
+
+    $task = app(DispatchTaskService::class)->create([
+        'title' => 'Has diagnostics context',
+        'context' => ['console_errors' => [['type' => 'error', 'message' => 'boom', 'source' => 'app.js:1']]],
+    ]);
+
+    // Initial render must not throw on the @error directives after the panel...
+    $component = Livewire::test(TaskShow::class, ['task' => $task])
+        ->assertOk()
+        ->assertSee('Diagnostics')
+        ->assertSee('Console errors');
+
+    // ...and the real validation error bag still flows through a re-render.
+    $component->set('status', 'not-a-real-status')->call('saveMeta')->assertHasErrors('status');
+});

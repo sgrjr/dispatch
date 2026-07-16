@@ -104,7 +104,7 @@
     {{-- Client diagnostics captured with the report (staff-facing). --}}
     @if ($this->canEdit() && ! empty($task->context))
         @php($ctx = $task->context)
-        @php($errors = $ctx['console_errors'] ?? [])
+        @php($consoleErrors = $ctx['console_errors'] ?? [])
         <section class="dispatch-card" style="margin-top: 1rem;">
             <h2 class="dispatch-section-title">Diagnostics</h2>
             <div class="dispatch-meta-grid">
@@ -120,12 +120,12 @@
             </div>
 
             <div style="margin-top: 0.9rem;">
-                <label class="dispatch-label">Console errors ({{ count($errors) }})</label>
-                @if (empty($errors))
+                <label class="dispatch-label">Console errors ({{ count($consoleErrors) }})</label>
+                @if (empty($consoleErrors))
                     <p style="font-size:0.78rem; color: var(--dispatch-text-muted); margin:0.3rem 0 0;">None captured.</p>
                 @else
                     <ul style="list-style:none; margin:0.4rem 0 0; padding:0; display:flex; flex-direction:column; gap:0.4rem;">
-                        @foreach (array_slice($errors, -10) as $err)
+                        @foreach (array_slice($consoleErrors, -10) as $err)
                             <li style="border:1px solid var(--dispatch-border); border-radius: var(--dispatch-radius-sm); padding:0.4rem 0.6rem; font-size:0.75rem;">
                                 <strong style="color:#c0392b;">{{ $err['type'] ?? 'error' }}</strong>
                                 <span>{{ $err['message'] ?? '' }}</span>
