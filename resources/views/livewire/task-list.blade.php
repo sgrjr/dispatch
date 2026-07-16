@@ -146,7 +146,7 @@
             @foreach ($tasks as $task)
                 <div class="dispatch-list-row" wire:key="list-row-{{ $task->id }}">
                     <div class="dispatch-list-check">
-                        <input type="checkbox" wire:model="selected" value="{{ $task->id }}" wire:key="select-{{ $task->id }}">
+                        <input type="checkbox" wire:model.live="selected" value="{{ $task->id }}" wire:key="select-{{ $task->id }}">
                     </div>
                     <div style="min-width:0; flex:1;">
                         <div>

@@ -142,7 +142,7 @@
         @if ($selectMode)
             <span style="font-size: 0.75rem; color: var(--dispatch-text-muted);">{{ count($selectedIds) }} selected</span>
 
-            <select wire:model="bulkStatus" class="dispatch-select">
+            <select wire:model.live="bulkStatus" class="dispatch-select">
                 <option value="">Set status…</option>
                 @foreach ($columns as $col)
                     <option value="{{ $col }}">{{ $statusLabels[$col] ?? $col }}</option>
@@ -208,7 +208,7 @@
                                     <input
                                         type="checkbox"
                                         class="dispatch-card-select"
-                                        wire:model="selectedIds"
+                                        wire:model.live="selectedIds"
                                         value="{{ $task->id }}"
                                         draggable="false"
                                     >
