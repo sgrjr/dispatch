@@ -43,6 +43,10 @@ composer require sgrjr/dispatch:^0.2
 # composer require sgrjr/dispatch:dev-master
 ```
 
+@dev is the latest-and-greatest lane. It stays unpinned, so every composer update floats to the newest available release (right now v0.4.2), and it'll automatically pick up v0.5.x, etc., as you tag them — no version bump in composer.json required.
+
+The one nuance: if prefer-stable is on in host application, @dev grabs the newest tagged release. If by "latest and greatest" you want the bleeding edge of untagged master commits, that'd be dev-master instead. But for tracking newest releases as they ship, @dev is correct.
+
 Publish the config and migrations, then migrate:
 
 ```bash
@@ -472,6 +476,36 @@ as the `X-Dispatch-Bootstrap` header) — required in production. `verbs` is
 the global allowlist every session's scopes are bounded by. `enabled` is
 `false` by default: turn it on deliberately on the instance whose backlog an
 agent should be able to work remotely.
+
+**Generating `bootstrap_secret`.** It's compared with `hash_equals`, so any
+high-entropy opaque string works — generate one with a CSPRNG (the same
+primitive the package mints its own tokens with):
+
+```bash
+php -r "echo bin2hex(random_bytes(32)), PHP_EOL;"   # 64 hex chars / 256 bits
+# Laravel-native alternative:
+php artisan tinker --execute="echo Illuminate\Support\Str::random(48);"
+```
+
+Generate it in a terminal (don't let it get logged), put it in the **production**
+instance's `.env` (never commit it), and clear the config cache:
+
+```
+DISPATCH_AGENT=true
+DISPATCH_AGENT_BOOTSTRAP_SECRET=<the value>
+```
+
+```bash
+php artisan config:clear   # or config:cache if you cache config in prod
+```
+
+It's a *coarse* anti-spam / anti-social-engineering gate on the unauthenticated
+request endpoint — **not** the primary credential (that's the human approval plus
+the per-session token) — so 32 bytes is ample, and rotating it later just means
+updating both ends. If it's unset in production the request endpoint fail-closes
+with a 503. The **client** sends the same value: pass `--secret=<value>` to
+`dispatch:session:request`, or set `DISPATCH_AGENT_BOOTSTRAP_SECRET` in the client
+env (the flag falls back to `config('dispatch.agent.bootstrap_secret')`).
 
 On the **client** side (wherever the agent runs), point it at that instance:
 
