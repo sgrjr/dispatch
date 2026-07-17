@@ -48,7 +48,7 @@ against production over the network as that session.
 php artisan dispatch:session:request \
   --name="<agent name>" \
   --purpose="<short reason for this session>" \
-  --scope=next --scope=claim --scope=note --scope=done \
+  --scope=next --scope=claim --scope=show --scope=note --scope=done \
   [--secret=<bootstrap secret, if not already configured>]
 ```
 
@@ -98,11 +98,13 @@ Once approved, every verb takes `--remote` to route through the agent API
 against production instead of the local DB:
 
 ```bash
-php artisan dispatch:next --remote --json         # preview what's next (read-only)
+php artisan dispatch:next --remote --json         # preview what's next (read-only, SUMMARY shape)
 php artisan dispatch:claim --remote --json        # atomically claim it: in_progress + assigned,
                                                    # in one transaction — safe if other agents/humans
-                                                   # are polling the same backlog
+                                                   # are polling the same backlog. Returns the FULL
+                                                   # shape (description + comments) — READ IT.
 # ...do the actual work...
+php artisan dispatch:show <code> --remote --json   # re-read the full brief any time (description + comments)
 php artisan dispatch:note <code> "<finding>" --remote
 php artisan dispatch:done <code> --remote \
   --commit=<sha> --result='{"tests":"passing"}'   # structured completion → context.result
@@ -112,6 +114,16 @@ Always claim before working — never assume a task is yours just because
 `dispatch:next` showed it to you; another agent (or a human) could claim it
 first. `dispatch:claim` is the atomic, race-safe pickup; `dispatch:next` is
 only a preview.
+
+**Read the human's direction before you start.** `dispatch:next`/`queue`
+return only the SUMMARY shape — title, type, labels — never the `description`
+or `comments`, which is where a human plants direction ("do X first", "don't
+touch Y"). `dispatch:claim` returns the FULL shape (description + the full
+`comments[]` thread) for exactly this reason: parse it and follow any
+direction there before touching code. To re-read a task's full brief at any
+point, `dispatch:show <code> --remote --json` (needs the `show` scope — hence
+`--scope=show` in step 1). Skipping this means working blind to what the
+commissioner actually asked for.
 
 `dispatch:schema` prints the frozen `TaskPresenter` JSON contract (summary +
 full-view keys, plus the timeline event vocabulary) — parse `--json` output

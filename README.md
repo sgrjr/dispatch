@@ -418,7 +418,20 @@ php artisan dispatch:claim --label=agent:ok --json
     "submitter": "jane@example.com",
     "assignee": "agent@example.com",
     "created_at": "2026-07-10T14:02:00+00:00",
-    "updated_at": "2026-07-16T09:15:00+00:00"
+    "updated_at": "2026-07-16T09:15:00+00:00",
+    "description": "Totals are wrong when a coupon is applied after tax. Repro on the linked order.",
+    "context": null,
+    "comments": [
+        {
+            "id": 51,
+            "event_type": "comment",
+            "is_internal": false,
+            "author": "jane@example.com",
+            "body": "Focus on the after-tax path first — that's the reported one.",
+            "meta": null,
+            "created_at": "2026-07-16T09:10:00+00:00"
+        }
+    ]
 }
 ```
 
@@ -427,10 +440,12 @@ php artisan dispatch:note TASK-042 "Root cause: coupon discount applied after ta
 php artisan dispatch:done TASK-042 --commit=abc1234 --result='{"tests":"passing"}'
 ```
 
-The `--json` shape above is the full contract for every summary view
-(`add`/`next`/`queue`/`claim`); `dispatch:show --json` adds `description`,
-`context`, and the full `comments[]` thread. Run `php artisan dispatch:schema`
-to get this shape as data instead of relying on this example.
+`add`/`next`/`queue` return the **summary** shape (through `updated_at`).
+`claim` and `dispatch:show` return the **full** shape shown above — the summary
+fields plus `description`, `context`, and the full `comments[]` thread — because
+a claiming agent needs the human's direction, which lives there. Run
+`php artisan dispatch:schema` to get both shapes as data instead of relying on
+this example.
 
 ### The remote agent seam — working the production backlog from elsewhere
 
@@ -440,7 +455,7 @@ API so an agent can work the **authoritative production backlog** from
 somewhere else — a laptop, a different CI job, another project entirely —
 **without a standing credential**. It's an RFC-8628 device-flow shape:
 
-1. The agent requests a session: `dispatch:session:request --name=... --purpose=... [--scope=next --scope=claim]`. This prints a short `user_code`.
+1. The agent requests a session: `dispatch:session:request --name=... --purpose=... [--scope=next --scope=claim --scope=show]`. This prints a short `user_code`.
 2. A human approves or denies it in production's "Agent Sessions" UI — a
    staff-gated Livewire page at `/dispatch/agent-sessions` — confirming the
    `user_code` matches what the agent displayed.

@@ -63,6 +63,34 @@ test('the bootstrap secret gates the unauthenticated session-request endpoint', 
         ->postJson('api/dispatch/agent/session', ['agent_name' => 'a'])->assertCreated();
 });
 
+test('poll is device_code-authed, NOT bootstrap-gated — the token is collectable with a secret set (GAP 1)', function () {
+    // With a bootstrap secret configured (i.e. production), the poll must still
+    // succeed on the device_code alone. Before the fix, poll lived behind the
+    // bootstrap middleware but the client never sent the header, so it 401'd
+    // forever and the token could never be collected.
+    config(['dispatch.agent.bootstrap_secret' => 'p0ll-gate']);
+
+    // The REQUEST endpoint still enforces the bootstrap secret.
+    $this->postJson('api/dispatch/agent/session', ['agent_name' => 'claude-remote'])->assertStatus(401);
+
+    $bootstrap = $this->withHeaders(['X-Dispatch-Bootstrap' => 'p0ll-gate'])
+        ->postJson('api/dispatch/agent/session', ['agent_name' => 'claude-remote'])
+        ->assertCreated()->json();
+
+    $session = AgentSession::where('public_id', $bootstrap['public_id'])->firstOrFail();
+    app(AgentSessionService::class)->approve($session, dispatchMakeUser(98100)->id);
+
+    // POLL carries ONLY the device_code — NO bootstrap header — and delivers the token.
+    $pollUrl = 'api/dispatch/agent/session/'.$bootstrap['public_id'].'?device_code='.$bootstrap['device_code'];
+    $this->getJson($pollUrl)->assertOk()
+        ->assertJsonPath('status', 'approved')
+        ->assertJsonStructure(['token']);
+
+    // The device_code IS the poll credential: a wrong one still 404s (uniformly).
+    $this->getJson('api/dispatch/agent/session/'.$bootstrap['public_id'].'?device_code=wrong')
+        ->assertStatus(404);
+});
+
 test('the agent surface sees a PRIVATE task authored by someone else (staff-equivalent, not public-only)', function () {
     $other = dispatchMakeUser(96000);
     $private = app(DispatchTaskService::class)->create([

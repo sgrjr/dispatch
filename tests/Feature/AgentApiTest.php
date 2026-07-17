@@ -112,6 +112,28 @@ test('POST claim marks a seeded open task in_progress and returns it', function 
     expect($task->fresh()->status)->toBe('in_progress');
 });
 
+test('POST claim returns the FULL shape — description + comments — so an agent sees human direction (GAP 2a)', function () {
+    $task = app(DispatchTaskService::class)->create([
+        'title' => 'Claim me',
+        'status' => 'open',
+        'description' => 'Handle the after-tax coupon path.',
+    ]);
+
+    // A human plants direction as a comment BEFORE the agent claims — the exact
+    // thing the summary shape (next/queue) hides.
+    $author = dispatchMakeUser(88100);
+    $task->recordEvent(Sgrjr\Dispatch\Models\TaskComment::EVENT_COMMENT, $author->id, [], 'Do the null-coupon case first.');
+
+    $token = agentApiToken();
+
+    $this->withToken($token)->postJson('api/dispatch/agent/claim')
+        ->assertOk()
+        ->assertJsonPath('task.code', $task->code)
+        ->assertJsonPath('task.description', 'Handle the after-tax coupon path.')
+        ->assertJsonStructure(['task' => ['description', 'context', 'comments' => [['id', 'event_type', 'body', 'author']]]])
+        ->assertJsonFragment(['body' => 'Do the null-coupon case first.']);
+});
+
 test('POST add creates a task with a null submitter and stamps agent attribution in context', function () {
     $token = agentApiToken();
 

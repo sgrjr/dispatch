@@ -13,12 +13,26 @@ use Sgrjr\Dispatch\Http\Controllers\AgentSessionController;
  * exist (class_exists guard in the provider), so the `use` refs above are safe
  * before Wave 1 lands.
  *
- * Session commissioning — UNAUTHENTICATED, bootstrap-gated + throttled (RFC 8628):
- *   POST session            -> request a session (returns public_id + device_code + user_code)
- *   GET  session/{publicId}  -> poll (device_code required); token delivered once on approval
+ * Session commissioning (RFC 8628) — two DIFFERENT credentials, so two groups:
+ *
+ *   POST session            -> REQUEST a session (returns public_id + device_code +
+ *                              user_code). UNAUTHENTICATED and a spam/social-
+ *                              engineering vector — it creates a row in the human
+ *                              approval queue — so it is bootstrap-secret gated
+ *                              (X-Dispatch-Bootstrap) AND throttled.
+ *   GET  session/{publicId}  -> POLL for approval; token delivered once on approval.
+ *                              Authenticated by the per-session device_code issued
+ *                              at request time (RFC 8628), NOT the shared bootstrap
+ *                              secret: polling creates no queue state, and the
+ *                              device_code is the credential that gates token
+ *                              delivery. Throttled, but deliberately not bootstrap-
+ *                              gated (the bootstrap secret guards only the request).
  */
 Route::middleware(['dispatch.agent.bootstrap', 'throttle:dispatch-agent-request'])->group(function () {
     Route::post('session', [AgentSessionController::class, 'request'])->name('session.request');
+});
+
+Route::middleware(['throttle:dispatch-agent-request'])->group(function () {
     Route::get('session/{publicId}', [AgentSessionController::class, 'poll'])->name('session.poll');
 });
 

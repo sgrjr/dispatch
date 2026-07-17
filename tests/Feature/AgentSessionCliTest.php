@@ -111,3 +111,29 @@ test('dispatch:session:status stores the token once the session is approved', fu
     expect($stored['token'])->toBe('abc');
     expect($stored['public_id'])->toBe('pub-status-1');
 });
+
+test('the client falls back to DISPATCH_AGENT_REMOTE_URL when merged config lacks agent.remote (GAP 3)', function () {
+    // Simulate a host whose published config predates agent.remote: mergeConfigFrom
+    // is a shallow array_merge, so the nested key never merged and the resolved
+    // config value is null even though the env var is set.
+    config(['dispatch.agent.remote.url' => null]);
+
+    $envUrl = 'https://env-fallback.test/api/dispatch/agent';
+    putenv("DISPATCH_AGENT_REMOTE_URL={$envUrl}");
+    $_ENV['DISPATCH_AGENT_REMOTE_URL'] = $envUrl;
+    $_SERVER['DISPATCH_AGENT_REMOTE_URL'] = $envUrl;
+
+    Http::fake(['*' => Http::response([
+        'public_id' => 'pub-env-1',
+        'device_code' => str_repeat('c', 64),
+        'user_code' => 'ENVCODE1',
+    ], 201)]);
+
+    Artisan::call('dispatch:session:request', ['--name' => 'x', '--secret' => 'shh']);
+
+    // The request reached the env-derived base URL, not "No agent remote configured".
+    Http::assertSent(fn ($req) => str_starts_with($req->url(), $envUrl.'/session'));
+
+    putenv('DISPATCH_AGENT_REMOTE_URL');
+    unset($_ENV['DISPATCH_AGENT_REMOTE_URL'], $_SERVER['DISPATCH_AGENT_REMOTE_URL']);
+});

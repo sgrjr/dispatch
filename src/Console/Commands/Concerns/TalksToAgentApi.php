@@ -20,14 +20,22 @@ trait TalksToAgentApi
 {
     protected function agentBaseUrl(): ?string
     {
-        $url = trim((string) config('dispatch.agent.remote.url', ''));
+        // Fall back to the raw env var when the merged config lacks the nested
+        // `agent.remote` key. mergeConfigFrom() is a SHALLOW array_merge: a host
+        // that published config/dispatch.php before `agent.remote` existed keeps
+        // its own (winning) `agent` block, so the package's `agent.remote` never
+        // merges in and config('dispatch.agent.remote.url') is null even with
+        // DISPATCH_AGENT_REMOTE_URL set. Republishing --force fixes the config;
+        // this fallback means the client works without it.
+        $url = trim((string) (config('dispatch.agent.remote.url') ?: env('DISPATCH_AGENT_REMOTE_URL', '')));
 
         return $url !== '' ? rtrim($url, '/') : null;
     }
 
     protected function agentTokenPath(): string
     {
-        $path = config('dispatch.agent.remote.token_path');
+        // Same shallow-merge fallback as agentBaseUrl() for the token path.
+        $path = config('dispatch.agent.remote.token_path') ?: env('DISPATCH_AGENT_TOKEN_PATH');
         if (is_string($path) && $path !== '') {
             return $path;
         }

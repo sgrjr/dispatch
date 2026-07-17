@@ -13,8 +13,10 @@ use Sgrjr\Dispatch\Models\TaskComment;
  * you break the agent skill + the remote parser at once. `dispatch:schema` dumps
  * {@see schema()} so an agent parses against a documented shape, not a guess.
  *
- * Two views: the summary (list/next/queue/add) and the full detail (show), the
- * latter adding description/context/comments.
+ * Two views: the summary (list/next/queue/add) and the full detail (show AND
+ * claim), the latter adding description/context/comments. Claim returns the
+ * full view on purpose — it is the moment an agent commits to a task and needs
+ * the human's direction, which lives in the description/comments.
  */
 class TaskPresenter
 {

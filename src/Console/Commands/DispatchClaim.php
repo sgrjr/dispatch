@@ -52,7 +52,13 @@ class DispatchClaim extends Command
         }
 
         if ($this->option('json')) {
-            $this->line(json_encode(TaskPresenter::toArray($task), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            // Full shape on claim (description + context + comments) — same as the
+            // remote `claim` verb — so a claiming agent sees the human's direction,
+            // not just the summary fields. Mirrors AgentController::claim.
+            $this->line(json_encode(
+                TaskPresenter::toArray($task->load('labels', 'submitter', 'assignee', 'comments.user'), true),
+                JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES,
+            ));
 
             return self::SUCCESS;
         }

@@ -8,11 +8,15 @@ use Illuminate\Routing\Controller;
 use Sgrjr\Dispatch\Services\AgentSessionService;
 
 /**
- * Session commissioning (§20 Phase 1) — UNAUTHENTICATED endpoints, gated by
- * the `dispatch.agent.bootstrap` middleware declared in routes/agent.php (not
- * rechecked here). An agent REQUESTS a session here; a human approves it via
- * the AgentSessions Livewire queue; the agent POLLS here until it receives a
- * one-time bearer token.
+ * Session commissioning (§20 Phase 1). Two endpoints with two DIFFERENT
+ * credentials (see routes/agent.php), not rechecked here:
+ *
+ *  - request(): UNAUTHENTICATED — gated by the `dispatch.agent.bootstrap`
+ *    middleware (X-Dispatch-Bootstrap). This is where an agent asks for a
+ *    session and a human sees it in the AgentSessions Livewire queue.
+ *  - poll(): authenticated by the per-session device_code issued at request
+ *    time (RFC 8628) — NOT the bootstrap secret. The agent polls here until a
+ *    human approves and a one-time bearer token is delivered.
  */
 class AgentSessionController extends Controller
 {

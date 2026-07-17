@@ -110,8 +110,18 @@ class AgentController extends Controller
             'label' => $v['label'] ?? null,
         ]), null);
 
+        // Deliver the FULL shape on claim — description + context + the comments
+        // thread — because claim is exactly when the agent commits to a task and
+        // needs the human's direction (which lives in the description/comments,
+        // invisible in the summary shape that next/queue return). Load the
+        // relations the full presenter reads so it doesn't lazy-load per row.
         return response()->json([
-            'task' => $task ? TaskPresenter::toArray($task) : null,
+            'task' => $task
+                ? TaskPresenter::toArray(
+                    $task->load('labels', 'submitter', 'assignee', 'comments.user'),
+                    true,
+                )
+                : null,
         ]);
     }
 
