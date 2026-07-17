@@ -381,22 +381,30 @@ dispatch:claim  {code?} {--type=} {--label=*} {--assignee=} {--json} {--remote}
                   task still never steals in-flight work. A named-but-unclaimable
                   code exits non-zero.
 
-dispatch:add    {title} ... {--key=} {--remote}
+dispatch:add    {title} ... {--description=} {--description-file=} {--key=} {--remote}
                 → idempotent create: pass --key=<dedupe key> and a re-run
                   with the same key returns the existing task instead of
-                  creating a duplicate
+                  creating a duplicate. --description-file=PATH (or `-` for
+                  stdin) reads a long body from a file instead of inline
 
 dispatch:next   {--type=} {--label=*} {--json} {--remote}
-dispatch:queue  {--status=} {--type=} {--label=*} {--json} {--remote}
-                → filter to only agent-appropriate work, e.g. --label agent:ok
+dispatch:queue  {--status=} {--type=} {--label=*} {--limit=} {--json} {--remote}
+                → filter to only agent-appropriate work, e.g. --label agent:ok;
+                  --limit=N caps the rows to the top N of the priority order so
+                  a triage preview needn't pull the whole backlog
 
-dispatch:done   {code} {--status=} {--commit=} {--result=} {--json} {--remote}
+dispatch:done   {code} {--status=} {--commit=} {--result=} {--result-file=} {--json} {--remote}
                 → record a structured completion: --commit=<sha> plus
                   --result='{...}' land under context.result, tying the task
-                  to the exact code change and verification that closed it
+                  to the exact code change and verification that closed it.
+                  For a large result blob, --result-file=PATH (or `-` for stdin)
+                  reads the JSON from a file instead of inline — no multi-line
+                  quoting on one command line
 
 dispatch:show   {code} {--json} {--remote}
-dispatch:note   {code} {body} {--internal} {--remote}
+dispatch:note   {code} {body?} {--body-file=} {--internal} {--remote}
+                → --body-file=PATH (or `-` for stdin) supplies a long/multi-line
+                  comment body instead of the inline argument
 
 dispatch:batch  {path} {--remote} {--dry-run} {--json}
                 → apply a whole manifest of add/update ops in ONE transaction:
@@ -521,6 +529,65 @@ To turn a plain `todo.md`-style checklist into a manifest, see the
 commit SHAs — use `dispatch:import` (backdated timestamps, codeless keyed upsert,
 `--no-notify`); **`MIGRATING.md`** is the end-to-end guide and covers picking
 between the two paths plus the flatten / vocab-map / provenance conventions.
+
+### Inbox → batch — an editable `todo.md` that stays in sync with the board
+
+The batch verb makes one workflow worth standardizing: **keep editing a plain
+markdown inbox by hand, and re-run it into Dispatch whenever you like.** You
+never leave your editor to file a task, and re-running is safe because the batch
+is idempotent. The moving parts are a **recommended md-entry grammar**, the
+**`batch` manifest** those entries translate to, and one **idempotency
+convention** that makes re-runs harmless.
+
+**1. The md-entry grammar.** One task per top-level bullet; anything you want
+kept out of the backlog stays out. A workable convention:
+
+```markdown
+## area:checkout            <!-- headings ride along as labels/context, not tasks -->
+
+- [ ] Null-coupon crash on the cart page  {type:bug, priority:high}
+      Repro: apply a coupon after tax, refresh. Stack trace in the linked order.
+- [ ] Add a "remember me" checkbox to login  {type:feature}
+
+<!-- Anything fenced or in an HTML comment is invisible to the processor: -->
+<!-- - [ ] this line is a note, not a task -->
+```
+
+- Only **task bullets** (`- [ ]` / `- [x]`) become operations; headings, prose,
+  fenced code blocks, and `<!-- … -->` comments are ignored (headings can be
+  carried along as labels or `context`). Check the `tasks_skipped` count on a
+  `--dry-run` to confirm nothing you meant as a task was silently dropped.
+- A checked box (`- [x]`) memorializes work already done — it maps to an
+  `update` with a real status (`done`, `verifying`), never a fake `done` just to
+  close it out.
+
+**2. It translates to a `batch` manifest.** Each bullet becomes one `add`/`update`
+op in the same `{"operations":[…]}` document shown above — `dispatch:schema`
+(the `batch` key) is the authoritative shape. Producing the manifest from the md
+is a mechanical, deterministic transform: the package ships the applier
+(`dispatch:batch`) and the contract (`dispatch:schema`), and the
+`dispatch-batch-migrate` skill drives the md→manifest translation (a host may
+also automate it with its own parser). Apply it the usual three ways:
+
+```bash
+php artisan dispatch:batch inbox.json --dry-run   # validate + preview, writes nothing
+php artisan dispatch:batch inbox.json             # apply to the local DB
+php artisan dispatch:batch inbox.json --remote    # memorialize on production in one hit
+```
+
+**3. Keyed ⇒ re-runnable; stamp, don't delete.** The one rule that makes an
+inbox you re-run repeatedly behave: give every `add` a stable idempotency
+**`key`** (e.g. `sha1(file|first-line)`), so re-applying the same file returns
+the existing task instead of minting a duplicate, `update`s upsert by `code`,
+labels attach (never replace), and duplicate comments are skipped. Because
+re-running is safe, you **never delete a line to mark it handled** — instead
+**stamp it in place** (e.g. append the returned code, `<!-- CP-123 -->`, or move
+it under a `## Filed` heading). The file stays a complete, greppable history; the
+board stays the source of truth for status. Deleting a line just means the next
+run can't reconcile it — stamping keeps the md and the backlog convergent.
+
+This is the *ongoing* sibling of the one-time `MIGRATING.md` backfill: same
+`batch` primitive, but you live in the md file and re-sync on demand.
 
 ### Agent run metrics
 

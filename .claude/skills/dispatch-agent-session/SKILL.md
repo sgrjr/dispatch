@@ -49,12 +49,31 @@ php artisan dispatch:session:request \
   --name="<agent name>" \
   --purpose="<short reason for this session>" \
   --scope=next --scope=queue --scope=claim --scope=show --scope=note --scope=done \
-  [--scope=batch] \
+  [--scope=add] [--scope=batch] \
   [--secret=<bootstrap secret, if not already configured>]
 ```
 
-Add `--scope=batch` when you intend to memorialize a whole run in one hit
-(see §5b) rather than closing tasks out one `--remote` verb at a time.
+**One scope per verb you'll call — and scopes FREEZE at approval.** You cannot
+widen a session after it's approved. If you discover mid-run that you need a verb
+you didn't request, the only fix is `dispatch:session:end` and commissioning a
+new session — so request every scope you might plausibly need **up front**. The
+grantable verbs and their scopes:
+
+| Scope | Kind | What it authorizes |
+|---|---|---|
+| `next` / `queue` | read | preview the backlog (SUMMARY shape) |
+| `show` | read | a candidate's full brief (description + comments) before claiming |
+| `claim` | work | atomically pick up a task (→ `in_progress` + assigned) |
+| `note` | write | append a comment to a task's timeline |
+| `done` | write | set final status + structured result |
+| `add` | write | **file a NEW task** — request it the moment you might create one (e.g. a bug you find while working). Its omission is the classic "had to re-commission" trap. |
+| `batch` | write | memorialize a whole run of add/update ops in one hit (§5b) |
+
+The default six (`next`/`queue`/`claim`/`show`/`note`/`done`) cover the full
+read → claim → work → close loop. Add `--scope=add` if there's any chance you'll
+file a task, and `--scope=batch` if you'll memorialize a run as one manifest
+(§5b). `edit` and `merge` are **local-only** — they have no `--remote` path, so a
+remote session can't restructure or merge tasks; that stays a local/human action.
 
 This POSTs to the remote's session-request endpoint (bootstrap-secret gated,
 not bearer — there's no token yet) and stores a pending request locally. It
@@ -114,7 +133,7 @@ Once approved, every verb takes `--remote` to route through the agent API
 against production instead of the local DB:
 
 ```bash
-php artisan dispatch:queue --remote --json         # triage: the next N candidates (read-only, SUMMARY shape)
+php artisan dispatch:queue --remote --limit=20 --json   # triage: top N candidates (SUMMARY shape; --limit caps the pull)
 php artisan dispatch:next --remote --json          # or just preview the single top task (read-only, SUMMARY shape)
 php artisan dispatch:show <code> --remote --json    # read a CANDIDATE's full brief (description + comments) BEFORE claiming
 php artisan dispatch:claim --remote --json          # atomically claim it: in_progress + assigned in one txn — safe if
@@ -162,6 +181,37 @@ against that documented shape, not a guess:
 ```bash
 php artisan dispatch:schema
 ```
+
+**Long or multi-line inputs — pass a file, don't inline-quote.** A large
+`--result` JSON, or a `note`/`add` body with newlines or quotes, is a shell
+quoting hazard on one command line (the same reason this repo writes commit
+messages to a file, not inline). Each has a file/stdin escape hatch — give it a
+path, or `-` to read stdin:
+
+```bash
+php artisan dispatch:done <code> --remote --commit=<sha> --result-file=result.json
+php artisan dispatch:note <code> --remote --body-file=finding.md
+php artisan dispatch:add "<title>" --remote --description-file=body.md
+```
+
+### 5a. Working a task the human named (by code)
+
+Often the human doesn't want "the next task" — they name a specific one: *"work
+`TASK-042` on prod."* `dispatch:claim <code>` targets that exact task
+atomically, so there's no queue scan and no chance of picking up the wrong one:
+
+```bash
+php artisan dispatch:show TASK-042 --remote --json     # read the brief first (especially if comment_count > 0)
+php artisan dispatch:claim TASK-042 --remote --json     # claim THAT task; returns the full shape
+```
+
+`dispatch:claim <code>` is honored **only while the task is still unclaimed**
+(open/triage), so naming one never steals in-flight work. If it's already being
+worked, the claim comes back empty and the command exits **non-zero** — treat
+that as "someone else has it": report it and don't force it. (This replaces the
+old workaround of claiming by `--type`/`--label` and then verifying the returned
+code matched the one you were asked for — no longer needed now that `claim` takes
+a code.) Needs the `claim` scope, plus `show` to read the brief first.
 
 ### 5b. Batch memorialize — commit a whole run in one hit (optional)
 
@@ -273,6 +323,14 @@ expire.
   could assemble one manifest and `dispatch:batch --remote` it (§5b).
 - ❌ Force a partially-done task to `done` in a batch just to close it. Set its
   real status (`in_progress`, `verifying`) — batch exists to memorialize honestly.
+- ❌ Request only the read/claim/close scopes and then discover mid-run you need
+  `add` (or `batch`). Scopes freeze at approval — request everything you might
+  need up front (step 1), or you'll have to end and re-commission.
+- ❌ Claim a human-named task by guessing `--type`/`--label` and hoping you got
+  the right one. Use `dispatch:claim <code>` — it targets that exact task (§5a).
+- ❌ Inline a large `--result` JSON or a multi-line `note`/`add` body and fight
+  shell quoting. Use `--result-file` / `--body-file` / `--description-file` (or
+  `-` for stdin).
 - ❌ Approve your own session, or ask a non-staff user to approve one (they
   can't see the approval UI).
 

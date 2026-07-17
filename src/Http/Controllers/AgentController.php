@@ -79,6 +79,11 @@ class AgentController extends Controller
             ->orderBy('position')
             ->orderBy('id');
 
+        $limit = (int) $request->query('limit', 0);
+        if ($limit > 0) {
+            $query->limit($limit);
+        }
+
         return response()->json([
             'tasks' => TaskPresenter::collection($query->get()),
         ]);

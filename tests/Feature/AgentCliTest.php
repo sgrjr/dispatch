@@ -107,6 +107,28 @@ test('dispatch:queue --status, --type and --label all compose (AND)', function (
         ->and($decoded[0]['code'])->toBe($match->code);
 });
 
+test('dispatch:queue --limit caps the rows to the top of the priority order', function () {
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'low one', 'status' => 'open', 'priority' => 'low']);
+    $high = $svc->create(['title' => 'high one', 'status' => 'open', 'priority' => 'high']);
+    $mid = $svc->create(['title' => 'mid one', 'status' => 'open', 'priority' => 'medium']);
+
+    Artisan::call('dispatch:queue', ['--limit' => 2, '--json' => true]);
+    $decoded = json_decode(Artisan::output(), true);
+
+    expect($decoded)->toHaveCount(2)
+        ->and(array_column($decoded, 'code'))->toBe([$high->code, $mid->code]);
+});
+
+test('dispatch:queue --limit rejects a non-positive value', function () {
+    app(DispatchTaskService::class)->create(['title' => 'a task', 'status' => 'open']);
+
+    $exit = Artisan::call('dispatch:queue', ['--limit' => '0']);
+
+    expect($exit)->toBe(1)
+        ->and(Artisan::output())->toContain('--limit must be a positive integer');
+});
+
 // --- C4: dispatch:done --commit/--result/--json -----------------------------
 
 test('dispatch:done --commit --result records the result under context.result', function () {
@@ -139,6 +161,55 @@ test('dispatch:done --result rejects invalid JSON with a clear error', function 
         ->and($task->fresh()->status)->toBe('open'); // never touched
 });
 
+test('dispatch:done --result-file reads the JSON result from a file', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'ship it', 'status' => 'open']);
+
+    $path = sys_get_temp_dir().'/dispatch-result-'.uniqid().'.json';
+    file_put_contents($path, json_encode(['tests' => 'green', 'notes' => 'from a file']));
+
+    $exit = Artisan::call('dispatch:done', [
+        'code' => $task->code,
+        '--commit' => 'abc1234',
+        '--result-file' => $path,
+    ]);
+    @unlink($path);
+
+    expect($exit)->toBe(0);
+
+    $fresh = $task->fresh();
+    expect($fresh->status)->toBe('done')
+        ->and($fresh->context['result']['commit'])->toBe('abc1234')
+        ->and($fresh->context['result']['tests'])->toBe('green')
+        ->and($fresh->context['result']['notes'])->toBe('from a file');
+});
+
+test('dispatch:done rejects both --result and --result-file', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'ship it', 'status' => 'open']);
+
+    $exit = Artisan::call('dispatch:done', [
+        'code' => $task->code,
+        '--result' => json_encode(['a' => 1]),
+        '--result-file' => 'anything.json',
+    ]);
+
+    expect($exit)->toBe(1)
+        ->and(Artisan::output())->toContain('not both')
+        ->and($task->fresh()->status)->toBe('open'); // never touched
+});
+
+test('dispatch:done --result-file errors when the file is missing', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'ship it', 'status' => 'open']);
+
+    $exit = Artisan::call('dispatch:done', [
+        'code' => $task->code,
+        '--result-file' => sys_get_temp_dir().'/dispatch-missing-'.uniqid().'.json',
+    ]);
+
+    expect($exit)->toBe(1)
+        ->and(Artisan::output())->toContain('--result-file not found')
+        ->and($task->fresh()->status)->toBe('open'); // never touched
+});
+
 test('dispatch:done --json emits a TaskPresenter summary', function () {
     $task = app(DispatchTaskService::class)->create(['title' => 'ship it', 'status' => 'open'], ['area:api']);
 
@@ -157,6 +228,78 @@ test('dispatch:done --json emits a TaskPresenter summary', function () {
             'labels', 'comment_count', 'due_at', 'dedupe_key', 'submitter', 'assignee',
             'created_at', 'updated_at',
         ]);
+});
+
+// --- file / stdin input for the long-text options (note body, add description)
+
+test('dispatch:note --body-file reads the comment body from a file', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'discuss', 'status' => 'open']);
+
+    $path = sys_get_temp_dir().'/dispatch-note-'.uniqid().'.md';
+    file_put_contents($path, "Root cause across\nmultiple lines with \"quotes\".");
+
+    $exit = Artisan::call('dispatch:note', [
+        'code' => $task->code,
+        '--body-file' => $path,
+    ]);
+    @unlink($path);
+
+    expect($exit)->toBe(0);
+
+    $comment = $task->comments()->latest('id')->first();
+    expect($comment->body)->toBe("Root cause across\nmultiple lines with \"quotes\".");
+});
+
+test('dispatch:note errors when neither a body argument nor --body-file is given', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'discuss', 'status' => 'open']);
+
+    $exit = Artisan::call('dispatch:note', ['code' => $task->code]);
+
+    expect($exit)->toBe(1)
+        ->and(Artisan::output())->toContain('--body-file')
+        ->and($task->comments()->where('event_type', 'comment')->count())->toBe(0);
+});
+
+test('dispatch:note rejects both an inline body and --body-file', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'discuss', 'status' => 'open']);
+
+    $exit = Artisan::call('dispatch:note', [
+        'code' => $task->code,
+        'body' => 'inline',
+        '--body-file' => 'somewhere.md',
+    ]);
+
+    expect($exit)->toBe(1)
+        ->and(Artisan::output())->toContain('not both');
+});
+
+test('dispatch:add --description-file reads the task body from a file', function () {
+    $path = sys_get_temp_dir().'/dispatch-desc-'.uniqid().'.md';
+    file_put_contents($path, "## Steps\n1. do a\n2. do b");
+
+    $exit = Artisan::call('dispatch:add', [
+        'title' => 'long-bodied task',
+        '--type' => 'bug',
+        '--description-file' => $path,
+    ]);
+    @unlink($path);
+
+    expect($exit)->toBe(0);
+
+    $task = Task::where('title', 'long-bodied task')->firstOrFail();
+    expect($task->description)->toBe("## Steps\n1. do a\n2. do b");
+});
+
+test('dispatch:add rejects both --description and --description-file', function () {
+    $exit = Artisan::call('dispatch:add', [
+        'title' => 'conflicting body',
+        '--description' => 'inline',
+        '--description-file' => 'somewhere.md',
+    ]);
+
+    expect($exit)->toBe(1)
+        ->and(Artisan::output())->toContain('not both')
+        ->and(Task::where('title', 'conflicting body')->exists())->toBeFalse();
 });
 
 // --- --remote: one case per AGENT API JSON CONTRACT pattern -----------------
@@ -196,6 +339,19 @@ test('dispatch:queue --remote calls GET queue and prints the returned tasks', fu
     Http::assertSent(fn ($request) => $request->method() === 'GET'
         && str_contains($request->url(), '/api/dispatch/agent/queue')
         && str_contains($request->url(), 'status=open'));
+});
+
+test('dispatch:queue --remote forwards --limit as a query param', function () {
+    Http::fake([
+        'agent.example.test/*' => Http::response(['tasks' => []], 200),
+    ]);
+
+    $exit = Artisan::call('dispatch:queue', ['--remote' => true, '--limit' => 5]);
+    expect($exit)->toBe(0);
+
+    Http::assertSent(fn ($request) => $request->method() === 'GET'
+        && str_contains($request->url(), '/api/dispatch/agent/queue')
+        && str_contains($request->url(), 'limit=5'));
 });
 
 test('dispatch:show renders an Agent run section from stamped context.result.metrics', function () {

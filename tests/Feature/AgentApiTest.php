@@ -95,6 +95,22 @@ test('GET next surfaces comment_count so an agent knows a task carries direction
         ->assertJsonPath('task.comment_count', 1);
 });
 
+test('GET queue honors ?limit, capping to the top of the priority order', function () {
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'low', 'status' => 'open', 'priority' => 'low']);
+    $high = $svc->create(['title' => 'high', 'status' => 'open', 'priority' => 'high']);
+    $mid = $svc->create(['title' => 'mid', 'status' => 'open', 'priority' => 'medium']);
+
+    $token = agentApiToken();
+
+    $tasks = $this->withToken($token)->getJson('api/dispatch/agent/queue?limit=2')
+        ->assertOk()
+        ->json('tasks');
+
+    expect($tasks)->toHaveCount(2)
+        ->and(array_column($tasks, 'code'))->toBe([$high->code, $mid->code]);
+});
+
 test('a revoked session gets a uniform 401 on a verb it was previously scoped for', function () {
     $svc = app(AgentSessionService::class);
     $req = $svc->request('claude-remote', null);

@@ -4,6 +4,7 @@ namespace Sgrjr\Dispatch\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Auth;
+use Sgrjr\Dispatch\Console\Commands\Concerns\ResolvesTextInput;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
@@ -15,6 +16,7 @@ use Sgrjr\Dispatch\Support\TaskPresenter;
  */
 class DispatchDone extends Command
 {
+    use ResolvesTextInput;
     use TalksToAgentApi;
 
     protected $signature = 'dispatch:done
@@ -22,6 +24,7 @@ class DispatchDone extends Command
         {--status=done : Final status, e.g. done | declined | verifying}
         {--commit= : SHA of the code change}
         {--result= : JSON blob stored under context.result}
+        {--result-file= : Read the JSON result from a file (or `-` for stdin) instead of inline --result — avoids the multi-line-quoting hazard}
         {--remote : Act on the configured remote agent API instead of the local DB}
         {--json : Emit machine-readable JSON instead of human text}';
 
@@ -41,11 +44,27 @@ class DispatchDone extends Command
 
         $commit = $this->option('commit');
 
+        // Result JSON comes from --result (inline) OR --result-file (a path, or
+        // `-` for stdin) — the file/stdin path is the escape hatch for a large
+        // result blob that would be a multi-line-quoting hazard on one command
+        // line (mirrors the commit-message guidance).
+        [$resultRaw, $err] = $this->resolveInlineOrFile(
+            $this->option('result'),
+            $this->option('result-file'),
+            '--result',
+            '--result-file',
+        );
+        if ($err !== null) {
+            $this->error($err);
+
+            return self::FAILURE;
+        }
+
         $result = null;
-        if (($resultOption = $this->option('result')) !== null) {
-            $decoded = json_decode($resultOption, true);
+        if ($resultRaw !== null) {
+            $decoded = json_decode($resultRaw, true);
             if (json_last_error() !== JSON_ERROR_NONE || ! is_array($decoded)) {
-                $this->error('--result must be a valid JSON object: '.json_last_error_msg());
+                $this->error('Result must be a valid JSON object (--result / --result-file): '.json_last_error_msg());
 
                 return self::FAILURE;
             }

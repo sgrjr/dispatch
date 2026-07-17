@@ -21,6 +21,7 @@ class DispatchQueue extends Command
         {--status= : Restrict to a single status (default: open, in_progress, triage)}
         {--type= : Filter to a single type}
         {--label=* : Filter to tasks carrying any of these labels}
+        {--limit= : Cap the number of tasks returned, top of the priority order (default: all). For the single-task case use dispatch:next.}
         {--remote : Act on the configured remote agent API instead of the local DB}
         {--json : Emit machine-readable JSON instead of a human table}';
 
@@ -28,11 +29,22 @@ class DispatchQueue extends Command
 
     public function handle(): int
     {
+        $limit = $this->option('limit');
+        if ($limit !== null) {
+            if (! ctype_digit((string) $limit) || (int) $limit < 1) {
+                $this->error('--limit must be a positive integer.');
+
+                return self::FAILURE;
+            }
+            $limit = (int) $limit;
+        }
+
         if ($this->option('remote')) {
             $r = $this->agentGet('queue', array_filter([
                 'status' => $this->option('status'),
                 'type' => $this->option('type'),
                 'label' => $this->option('label'),
+                'limit' => $limit,
             ]));
 
             if ($r === null) {
@@ -66,6 +78,7 @@ class DispatchQueue extends Command
             ->orderByRaw("CASE priority WHEN 'blocker' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 99 END")
             ->orderBy('position')
             ->orderBy('id')
+            ->when($limit, fn ($q) => $q->limit($limit))
             ->get();
 
         if ($this->option('json')) {

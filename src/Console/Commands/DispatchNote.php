@@ -4,6 +4,7 @@ namespace Sgrjr\Dispatch\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Auth;
+use Sgrjr\Dispatch\Console\Commands\Concerns\ResolvesTextInput;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 use Sgrjr\Dispatch\Models\TaskComment;
 
@@ -13,11 +14,13 @@ use Sgrjr\Dispatch\Models\TaskComment;
  */
 class DispatchNote extends Command
 {
+    use ResolvesTextInput;
     use TalksToAgentApi;
 
     protected $signature = 'dispatch:note
         {code : The task code, e.g. TASK-042}
-        {body : The comment body (markdown ok)}
+        {body? : The comment body (markdown ok). Omit and use --body-file for a long/multi-line body.}
+        {--body-file= : Read the comment body from a file (or `-` for stdin) instead of the inline body argument}
         {--internal : Mark the comment internal (default: public)}
         {--remote : Act on the configured remote agent API instead of the local DB}';
 
@@ -25,10 +28,23 @@ class DispatchNote extends Command
 
     public function handle(): int
     {
+        [$body, $err] = $this->resolveInlineOrFile(
+            $this->argument('body'),
+            $this->option('body-file'),
+            'a body argument',
+            '--body-file',
+            required: true,
+        );
+        if ($err !== null) {
+            $this->error($err);
+
+            return self::FAILURE;
+        }
+
         if ($this->option('remote')) {
             $r = $this->agentPost('note', array_filter([
                 'code' => $this->argument('code'),
-                'body' => $this->argument('body'),
+                'body' => $body,
                 'internal' => $this->option('internal') ? true : null,
             ], fn ($v) => $v !== null));
 
@@ -58,7 +74,7 @@ class DispatchNote extends Command
         // allows.
         $comment = $task->comments()->create([
             'user_id' => Auth::id(),
-            'body' => $this->argument('body'),
+            'body' => $body,
             'is_internal' => (bool) $this->option('internal'),
             'event_type' => TaskComment::EVENT_COMMENT,
         ]);

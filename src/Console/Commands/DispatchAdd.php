@@ -3,6 +3,7 @@
 namespace Sgrjr\Dispatch\Console\Commands;
 
 use Illuminate\Console\Command;
+use Sgrjr\Dispatch\Console\Commands\Concerns\ResolvesTextInput;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
@@ -18,6 +19,7 @@ use Sgrjr\Dispatch\Support\TaskPresenter;
  */
 class DispatchAdd extends Command
 {
+    use ResolvesTextInput;
     use TalksToAgentApi;
 
     protected $signature = 'dispatch:add
@@ -25,6 +27,7 @@ class DispatchAdd extends Command
         {--type= : bug | feature | chore | debt | verify (default: feature)}
         {--priority= : blocker | high | medium | low (default: medium)}
         {--description= : Full task body (markdown). Use heredoc or quoted multi-line.}
+        {--description-file= : Read the task body from a file (or `-` for stdin) instead of inline --description}
         {--label=* : Label name(s) to attach; auto-created if missing. Repeatable.}
         {--public : Mark visible outside staff (default: private)}
         {--key= : Idempotency key; returns the existing task with this key instead of creating a duplicate}
@@ -58,12 +61,24 @@ class DispatchAdd extends Command
 
         $key = $this->option('key');
 
+        [$description, $err] = $this->resolveInlineOrFile(
+            $this->option('description'),
+            $this->option('description-file'),
+            '--description',
+            '--description-file',
+        );
+        if ($err !== null) {
+            $this->error($err);
+
+            return self::FAILURE;
+        }
+
         if ($this->option('remote')) {
             $r = $this->agentPost('add', array_filter([
                 'title' => $this->argument('title'),
                 'type' => $type,
                 'priority' => $priority,
-                'description' => $this->option('description'),
+                'description' => $description,
                 'labels' => $labelNames ?: null,
                 'public' => $this->option('public') ? true : null,
                 'key' => $key,
@@ -85,7 +100,7 @@ class DispatchAdd extends Command
         if ($priority !== null) {
             $attributes['priority'] = $priority;
         }
-        if ($description = $this->option('description')) {
+        if ($description !== null && $description !== '') {
             $attributes['description'] = $description;
         }
         $attributes['is_public'] = (bool) $this->option('public');
