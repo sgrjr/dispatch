@@ -58,27 +58,39 @@ prints a short `user_code`. **Show that code to the human operator verbatim**
 — they need it to confirm the request in the approval UI matches what you
 requested.
 
-### 2. Hand off to a human — do not proceed alone
+### 2. Hand off to a human — you cannot approve your own session
 
-Tell the operator: *"Approve this session in the Agent Sessions UI at
-`/dispatch/agent-sessions` on the production instance — confirm the code
-reads `<user_code>`."* That page is a staff-gated Livewire view where a human
-approves or denies pending requests (and can see/kill active sessions).
+Show the operator the code **once** and point them at the approval UI:
 
-You cannot approve your own session. Stop here and wait.
+> *"Approve this session in the Agent Sessions UI at `/dispatch/agent-sessions`
+> on the production instance — confirm the code reads `<user_code>`, then click
+> Approve."*
 
-### 3. Poll for approval — async + human-gated, back off, do NOT spin
+That page is a staff-gated Livewire view where a human approves/denies pending
+requests (and can see/kill active sessions). Then go **straight to polling
+(step 3) yourself** — don't also ask the operator to come back and tell you
+"approved." The approval already happens on the site, so a second "it's
+approved" confirmation is redundant round-tripping. Most approvals land within
+~10 seconds, so the poll itself is your signal.
+
+### 3. Poll for approval — wait a few seconds, then poll; back off, do NOT spin
 
 ```bash
-php artisan dispatch:session:status
+php artisan dispatch:session:status --wait=15    # blocks in-process: sleep + retry while pending, up to 15s
 ```
 
-This polls **once** and exits — it is deliberately not a loop. Approval is a
-human, out-of-band action: it can take seconds or it can take minutes. Space
-re-polls out (tens of seconds apart, backing off further the longer it's been
-pending) rather than hammering the endpoint in a tight loop, and don't burn
-the conversation spinning on it — if it's still pending after a few checks,
-say so and stop, so the user can decide whether to keep waiting.
+`--wait=<secs>` polls **in one process** — it sleeps and re-checks while the
+session is `pending` and returns the instant a human approves. Run one blocking
+`--wait` right after showing the code and you usually collect the token on the
+first call with no further word from the operator. Bare `--wait` waits ~60s;
+omit it (`dispatch:session:status`) for a single non-blocking poll. This is also
+the clean way to realize a "wait ~10s then check" step without your harness
+blocking a foreground shell `sleep`.
+
+If it's still `pending` when the wait budget is spent, back off and retry a
+couple more times (widen the wait) rather than hammering the endpoint. Only
+after a few pending attempts do you say so and ask whether to keep waiting —
+never spin in a tight loop.
 
 ### 4. Handle the outcome
 
@@ -114,7 +126,9 @@ php artisan dispatch:done <code> --remote \
 Always claim before working — never assume a task is yours just because
 `dispatch:next` showed it to you; another agent (or a human) could claim it
 first. `dispatch:claim` is the atomic, race-safe pickup; `dispatch:next` and
-`dispatch:queue` are only previews.
+`dispatch:queue` are only previews. Scope to agent-appropriate work with
+`--type` / `--label` on `next`/`queue`/`claim` (e.g. `--label=agent:ok`) so you
+only pick up tasks a human has cleared for an agent.
 
 **Reading the human's direction is a required step, not optional.**
 `dispatch:next` / `dispatch:queue` return only the SUMMARY shape — title,
@@ -132,7 +146,8 @@ full brief, and you must use one before you start work:
 Working straight from a summary means working blind to what the commissioner
 actually asked for. The `queue` and `show` scopes requested in step 1 are what
 make this triage-then-inspect path possible — that's why they're in the
-request.
+request. If your session wasn't granted `--scope=show`, re-request one that is
+rather than working a task blind.
 
 `dispatch:schema` prints the frozen `TaskPresenter` JSON contract (summary +
 full-view keys, plus the timeline event vocabulary) — parse `--json` output
@@ -183,6 +198,21 @@ can only ever end yourself) and deletes the local token. It needs no scope, so
 it always works. After this, every `--remote` verb will `401` until a new
 session is commissioned. Prefer this over walking away and letting the session
 expire.
+
+---
+
+## Anti-patterns (don't)
+
+- ❌ Point a dev app's DB connection at production "just to see the real tasks."
+  Commission a session and use `--remote` instead.
+- ❌ Run the verb loop **without** `--remote` and think it touches production —
+  it edits throwaway local tasks.
+- ❌ Ask the operator to come back and confirm "approved" after they clicked
+  Approve on the site — poll it yourself (step 3).
+- ❌ Retry-spam a `denied` / `revoked` session with fresh requests. Stop and let
+  the operator decide.
+- ❌ Approve your own session, or ask a non-staff user to approve one (they
+  can't see the approval UI).
 
 ---
 

@@ -2,6 +2,7 @@
 
 namespace Sgrjr\Dispatch\Console\Commands\Concerns;
 
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
 
@@ -133,9 +134,15 @@ trait TalksToAgentApi
         $url = $base.'/'.ltrim($path, '/');
         $method = strtoupper($method);
 
-        $response = $method === 'GET'
-            ? $this->agentClient()->get($url, $payload)
-            : $this->agentClient()->send($method, $url, ['json' => $payload]);
+        try {
+            $response = $method === 'GET'
+                ? $this->agentClient()->get($url, $payload)
+                : $this->agentClient()->send($method, $url, ['json' => $payload]);
+        } catch (ConnectionException $e) {
+            $this->reportConnectionFailure($e);
+
+            return null;
+        }
 
         if ($response->status() === 401) {
             $this->forgetToken();
@@ -169,5 +176,32 @@ trait TalksToAgentApi
     protected function agentPost(string $path, array $data = []): ?array
     {
         return $this->agentRequest('POST', $path, $data);
+    }
+
+    /**
+     * Whether a transport exception looks like a missing/broken CA bundle — the
+     * classic cURL error 60 on a box with no `curl.cainfo` / `openssl.cafile`.
+     * First `--remote` run on a bare box hits this, so name the fix rather than
+     * dumping a raw ConnectionException stack trace at the operator.
+     */
+    protected function looksLikeTlsError(\Throwable $e): bool
+    {
+        $m = strtolower($e->getMessage());
+
+        return str_contains($m, 'curl error 60')
+            || str_contains($m, 'unable to get local issuer certificate')
+            || str_contains($m, 'certificate verify failed')
+            || str_contains($m, 'ssl certificate problem');
+    }
+
+    protected function reportConnectionFailure(\Throwable $e): void
+    {
+        if ($this->looksLikeTlsError($e)) {
+            $this->error('Could not reach the agent API — TLS verification failed. PHP has no CA bundle configured: download https://curl.se/ca/cacert.pem and point `curl.cainfo` (and `openssl.cafile`) at it in php.ini, then retry.');
+
+            return;
+        }
+
+        $this->error('Could not reach the agent API: '.$e->getMessage());
     }
 }

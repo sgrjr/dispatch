@@ -3,6 +3,7 @@
 namespace Sgrjr\Dispatch\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 
@@ -43,17 +44,30 @@ class DispatchSessionRequest extends Command
         $purpose = $this->option('purpose');
         $scopes = array_values(array_filter(array_map('trim', (array) $this->option('scope')), fn ($s) => $s !== ''));
 
-        $response = Http::acceptJson()
-            ->timeout((int) config('dispatch.sync.timeout', 30))
-            ->withHeaders(array_filter(['X-Dispatch-Bootstrap' => $secret]))
-            ->post($base.'/session', [
-                'agent_name' => $name,
-                'purpose' => $purpose,
-                'scopes' => $scopes,
-            ]);
+        try {
+            $response = Http::acceptJson()
+                ->timeout((int) config('dispatch.sync.timeout', 30))
+                ->withHeaders(array_filter(['X-Dispatch-Bootstrap' => $secret]))
+                ->post($base.'/session', [
+                    'agent_name' => $name,
+                    'purpose' => $purpose,
+                    'scopes' => $scopes,
+                ]);
+        } catch (ConnectionException $e) {
+            $this->reportConnectionFailure($e);
+
+            return self::FAILURE;
+        }
 
         if (! $response->successful()) {
             $this->error("Agent API HTTP {$response->status()}: ".substr($response->body(), 0, 300));
+
+            // The request endpoint is bootstrap-secret gated. A 401/403 here is
+            // almost always a mismatched secret — and after a server-side
+            // rotation, the usual culprit is a stale config cache on production.
+            if (in_array($response->status(), [401, 403], true)) {
+                $this->line('Hint: the bootstrap secret sent doesn\'t match production\'s configured value. If it was rotated on the server recently, the server may be serving a STALE CONFIG CACHE — have the operator run `php artisan config:clear` and retry. Pass the value with --secret=<value> or set DISPATCH_AGENT_BOOTSTRAP_SECRET.');
+            }
 
             return self::FAILURE;
         }

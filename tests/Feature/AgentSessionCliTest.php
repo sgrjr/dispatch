@@ -112,6 +112,54 @@ test('dispatch:session:status stores the token once the session is approved', fu
     expect($stored['public_id'])->toBe('pub-status-1');
 });
 
+test('dispatch:session:status --wait polls in-process and collects the token when approval lands', function () {
+    file_put_contents($this->tokenPath, json_encode([
+        'public_id' => 'pub-wait-1',
+        'device_code' => str_repeat('e', 64),
+    ]));
+
+    // First poll: still pending. Second poll: approved with a token.
+    Http::fake(['*' => Http::sequence()
+        ->push(['status' => 'pending', 'poll_interval' => 1], 200)
+        ->push(['status' => 'approved', 'token' => 'waited-token', 'poll_interval' => 1], 200),
+    ]);
+
+    Artisan::call('dispatch:session:status', ['--wait' => '5']);
+    $output = Artisan::output();
+
+    expect($output)->toContain('Approved');
+    $stored = json_decode((string) file_get_contents($this->tokenPath), true);
+    expect($stored['token'])->toBe('waited-token');
+});
+
+test('dispatch:session:status surfaces a CA-bundle hint on a TLS/connection failure (DX)', function () {
+    file_put_contents($this->tokenPath, json_encode([
+        'public_id' => 'pub-tls-1',
+        'device_code' => str_repeat('f', 64),
+    ]));
+
+    Http::fake(['*' => function () {
+        throw new \Illuminate\Http\Client\ConnectionException('cURL error 60: unable to get local issuer certificate');
+    }]);
+
+    $exit = Artisan::call('dispatch:session:status');
+    $output = Artisan::output();
+
+    expect($exit)->toBe(1)
+        ->and($output)->toContain('TLS verification failed')
+        ->and($output)->toContain('cacert.pem');
+});
+
+test('dispatch:session:request hints at a stale config cache on a bootstrap 401 (DX)', function () {
+    Http::fake(['*' => Http::response('Invalid bootstrap secret.', 401)]);
+
+    $exit = Artisan::call('dispatch:session:request', ['--name' => 'x', '--secret' => 'wrong']);
+    $output = Artisan::output();
+
+    expect($exit)->toBe(1)
+        ->and($output)->toContain('config:clear');
+});
+
 test('dispatch:session:end revokes remotely and clears the local token (GAP 5)', function () {
     file_put_contents($this->tokenPath, json_encode([
         'public_id' => 'pub-end-1',
