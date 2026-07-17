@@ -167,6 +167,7 @@ class TaskPresenter
                     'isPublic' => 'bool',
                     'position' => 'int',
                     'exceptionSignature' => 'string|null (dedupe key for auto-captured errors)',
+                    'context' => 'object|null (merged onto the task — e.g. context.source = {file, line, imported_at} provenance)',
                     'submitter' => 'string|null (email — resolved to a user id; unresolved ⇒ null submitter)',
                     'assignee' => 'string|null (email — resolved to a user id)',
                     'labels' => 'string[] (label names — attached; must appear in labels[] or already exist)',

@@ -172,6 +172,32 @@ test('import notifies once per created task by default, and --no-notify silences
         ->and(Task::whereIn('dedupe_key', ['q3', 'q4'])->count())->toBe(2);
 });
 
+// --- provenance: context passthrough (feeds MIGRATING.md §6) ----------------
+
+test('a row context (e.g. context.source provenance) is merged onto the task', function () {
+    // First import records provenance from the md.
+    expect(Artisan::call('dispatch:import', ['path' => importDoc(['tasks' => [[
+        'key' => 'prov-1',
+        'title' => 'Migrated with provenance',
+        'context' => ['source' => ['file' => 'todo.archive.md', 'line' => 142]],
+    ]]])]))->toBe(0);
+
+    $task = Task::where('dedupe_key', 'prov-1')->firstOrFail();
+    expect($task->context['source']['file'])->toBe('todo.archive.md')
+        ->and($task->context['source']['line'])->toBe(142);
+
+    // A re-import that adds a different context key must MERGE, not clobber.
+    expect(Artisan::call('dispatch:import', ['path' => importDoc(['tasks' => [[
+        'key' => 'prov-1',
+        'title' => 'Migrated with provenance',
+        'context' => ['imported_at' => '2026-07-17T00:00:00Z'],
+    ]]])]))->toBe(0);
+
+    $task->refresh();
+    expect($task->context['source']['file'])->toBe('todo.archive.md') // preserved
+        ->and($task->context['imported_at'])->toBe('2026-07-17T00:00:00Z'); // added
+});
+
 // --- history fidelity on the keyed create path -----------------------------
 
 test('a codeless done row preserves backdated timestamps and comments', function () {

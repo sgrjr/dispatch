@@ -188,6 +188,14 @@ class DispatchImport extends Command
                     $task->save();
                 }
 
+                // Preserve caller-supplied context (e.g. `context.source` from an
+                // md migration — file/line provenance), merged so a re-import or an
+                // agent run's own context is never clobbered.
+                if (! empty($t['context']) && is_array($t['context'])) {
+                    $task->context = array_merge($task->context ?? [], $t['context']);
+                    $task->save();
+                }
+
                 $labelIds = [];
                 foreach (($t['labels'] ?? []) as $name) {
                     if (isset($labelIdsByName[$name])) {

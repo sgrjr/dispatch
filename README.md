@@ -511,7 +511,11 @@ local handles back to production task codes. `php artisan dispatch:schema` dumps
 the full manifest contract (the `batch` key) as data.
 
 To turn a plain `todo.md`-style checklist into a manifest, see the
-`dispatch-batch-migrate` skill.
+`dispatch-batch-migrate` skill. For a **full-history backfill** — a large
+`todo.archive.md` whose done items must keep their original dates, authors, and
+commit SHAs — use `dispatch:import` (backdated timestamps, codeless keyed upsert,
+`--no-notify`); **`MIGRATING.md`** is the end-to-end guide and covers picking
+between the two paths plus the flatten / vocab-map / provenance conventions.
 
 ### Agent run metrics
 

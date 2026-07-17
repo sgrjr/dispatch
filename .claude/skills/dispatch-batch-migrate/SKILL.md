@@ -1,6 +1,6 @@
 ---
 name: dispatch-batch-migrate
-description: Convert a plain todo.md / checklist / notes file into a Dispatch BATCH MANIFEST (the operations[] JSON that `dispatch:batch` applies) and apply it in one shot. Use when the user has an informal task list — "turn my todo.md into Dispatch tasks", "import this checklist", "memorialize these into the backlog", "batch-load these tasks", "migrate my notes into dispatch" — and wants the items filed/updated as Dispatch tasks in a single transaction rather than one `dispatch:add` at a time. Produces a manifest, validates it with `--dry-run`, shows the mapping, and only then applies (local or `--remote`). Do NOT use for a single item (use `dispatch:add`) or to design the batch API itself.
+description: Convert a plain todo.md / checklist / notes file into a Dispatch BATCH MANIFEST (the operations[] JSON that `dispatch:batch` applies) and apply it in one shot. Use when the user has an informal task list — "turn my todo.md into Dispatch tasks", "import this checklist", "memorialize these into the backlog", "batch-load these tasks", "migrate my notes into dispatch" — and wants the items filed/updated as Dispatch tasks in a single transaction rather than one `dispatch:add` at a time. Produces a manifest, validates it with `--dry-run`, shows the mapping, and only then applies (local or `--remote`). For a full-history backfill that must preserve original origination/completion dates, authors, and commit SHAs (e.g. a large `todo.archive.md`), use the `dispatch:import` path instead — see `MIGRATING.md`. Do NOT use for a single item (use `dispatch:add`) or to design the batch API itself.
 ---
 
 # Migrate a todo.md-style file into a Dispatch batch manifest
@@ -14,6 +14,15 @@ a `todo.md`, a scratch list, meeting notes with action items — into a valid
 The point is to memorialize a batch of work honestly and in one hit:
 **batch-insert brand-new items straight to triage**, and **upsert existing tasks
 to the status they actually reached** (never force everything to `done`).
+
+> **Pick the right path first.** This skill produces a **`dispatch:batch`**
+> manifest — additive, and always timestamped **"now"**. That's right for a live
+> run you're memorializing. If the source is a **historical** file whose done
+> items must keep their **original dates, authors, and commit SHAs** (a big
+> `todo.archive.md`), that's the **`dispatch:import`** path instead — it backdates
+> `createdAt` and dates completion via a `status_change` comment. **`MIGRATING.md`
+> (repo root) is the full guide** and covers both; the conventions below (§Step 2)
+> — vocab-preserving labels, flatten rule, provenance key — apply to either path.
 
 ---
 
@@ -42,6 +51,13 @@ numbered item) as one operation. Ignore headings, prose, blank lines, and
 horizontal rules — but **use headings as context** (a line under "## In
 progress" is in-progress; under "## Done" is done; under "## Backlog"/"## New"
 is a fresh triage item).
+
+**Nested sub-items** (`  - [x]` indented under a parent) have no home in Dispatch's
+**flat** model — there is no subtask/parent column. Flatten them: by default,
+**fold the sub-items into the parent's `description`** as a checklist (one task,
+full detail). Only when a sub-item is substantial and worth tracking on its own,
+emit it as a separate task linked back with a `parent:<code>` label or
+`context.parent`. (MIGRATING.md §4.)
 
 Classify each line as **update** (it names an existing task) or **add** (new):
 
@@ -83,6 +99,17 @@ done signal.
 - **`labels`** — from inline `#tags`, `[area:x]`, `@owner`, or a section like
   "## API". Applies to both add and update (labels **attach** additively —
   batch never strips existing labels).
+- **`labels` — preserve a richer md taxonomy (don't discard it).** Dispatch's
+  native vocab is narrow (`type` = bug/feature/chore/debt/verify). When the md
+  carries more — kinds `BUG/NEW/INFRA/POLISH/PERF/UPGRADE`, states
+  `PARTIAL/DEFERRED/WIP`, sizes `S/M/L` — map to the nearest native field **and
+  keep the original as a label**: `kind:INFRA`, `state:PARTIAL`, `size:M`. Nothing
+  is lost, and a filter recovers the original taxonomy. (`dispatch.workflow.types`
+  is config-extensible if a host wants richer *native* types instead — MIGRATING.md §5.)
+- **Provenance** — stamp every migrated task with **`source:todo-md`** (one filter
+  shows the whole migrated cohort). For an `add` that a re-run might re-file, set a
+  **stable `key`** derived from the source (`sha1(file|first-line)` is the
+  convention) so re-applying upserts instead of duplicating (MIGRATING.md §6).
 - **`commit`** — a trailing `(commit <sha>)` / `#<sha>` → the op's `commit`.
 - **`comments`** — trailing notes after `—`, `:`, or an indented sub-bullet
   become a `comment` (`{"body": "…"}`). Mark it `"internal": true` unless it's
@@ -197,7 +224,10 @@ in-progress task keeps moving, not force-closed; only the explicitly-checked
 
 ## See also
 
-- `php artisan dispatch:schema` — the manifest contract as data (the `batch` key)
+- **`MIGRATING.md` (repo root)** — the full migration guide: batch-vs-import path
+  choice, the flatten / vocab-map / provenance conventions, and the full-history
+  `dispatch:import` backfill (backdated dates, original authors, `--no-notify`).
+- `php artisan dispatch:schema` — the contract as data (the `batch` **and** `import` keys)
 - `.claude/skills/dispatch-track/SKILL.md` — local `dispatch:batch` + the verb loop
 - `.claude/skills/dispatch-agent-session/SKILL.md` — driving `dispatch:batch --remote`
   against production (§5b), including the `batch` scope
