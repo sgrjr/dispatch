@@ -131,4 +131,19 @@ class AgentSession extends Model
         $this->last_used_at = now();
         $this->saveQuietly();
     }
+
+    /**
+     * How many sessions are awaiting a human decision — powers the "Agent
+     * Sessions" nav badge. Rescue-wrapped so a host that enabled the feature but
+     * hasn't run the migration yet renders 0 instead of erroring in the shared
+     * layout (the nav renders on every package page).
+     */
+    public static function pendingCount(): int
+    {
+        return (int) rescue(
+            fn () => static::query()->where('status', self::STATUS_PENDING)->count(),
+            0,
+            false,
+        );
+    }
 }

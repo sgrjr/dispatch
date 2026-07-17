@@ -108,6 +108,21 @@
             text-decoration: none;
             box-shadow: var(--dispatch-shadow);
         }
+        /* Approval-queue pending-request counter — amber to read as
+           attention-needed without the alarm of danger red. */
+        .dispatch-nav-badge {
+            display: inline-block;
+            margin-left: 0.35rem;
+            min-width: 1.15rem;
+            padding: 0 0.35rem;
+            font-size: 0.7rem;
+            line-height: 1.5;
+            text-align: center;
+            font-weight: 700;
+            border-radius: var(--dispatch-radius-pill);
+            background: var(--dispatch-warning);
+            color: var(--dispatch-accent-contrast);
+        }
 
         /* Shared primitives used by the Livewire component views. */
         .dispatch-card {
@@ -198,10 +213,28 @@
         <header class="dispatch-topbar">
             <h1>{{ config('dispatch.brand.name', 'Dispatch') }}</h1>
             <nav class="dispatch-nav">
+                @php
+                    // Show the approval-queue link only to staff, and only when the
+                    // agent API is enabled and its route is registered. The badge
+                    // surfaces pending requests so staff know one is waiting without
+                    // having to hunt for the page.
+                    $dispatchShowAgent = (bool) config('dispatch.agent.enabled', false)
+                        && \Illuminate\Support\Facades\Route::has('dispatch.agent-sessions')
+                        && app(\Sgrjr\Dispatch\Contracts\DispatchGate::class)->isStaff(auth()->user());
+                    $dispatchAgentPending = $dispatchShowAgent ? \Sgrjr\Dispatch\Models\AgentSession::pendingCount() : 0;
+                @endphp
                 <a href="{{ route('dispatch.board') }}" @class(['is-active' => request()->routeIs('dispatch.board')])>Board</a>
                 <a href="{{ route('dispatch.index') }}" @class(['is-active' => request()->routeIs('dispatch.index')])>List</a>
                 <a href="{{ route('dispatch.create') }}" @class(['is-active' => request()->routeIs('dispatch.create')])>New</a>
                 <a href="{{ route('dispatch.portal') }}" @class(['is-active' => request()->routeIs('dispatch.portal')])>My Submissions</a>
+                @if ($dispatchShowAgent)
+                    <a href="{{ route('dispatch.agent-sessions') }}" @class(['is-active' => request()->routeIs('dispatch.agent-sessions')])>
+                        Agent Sessions
+                        @if ($dispatchAgentPending > 0)
+                            <span class="dispatch-nav-badge" title="{{ $dispatchAgentPending }} pending agent session request(s)">{{ $dispatchAgentPending }}</span>
+                        @endif
+                    </a>
+                @endif
             </nav>
         </header>
 
