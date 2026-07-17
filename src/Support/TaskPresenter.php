@@ -33,6 +33,10 @@ class TaskPresenter
             'status' => $task->status,
             'is_public' => (bool) $task->is_public,
             'labels' => $task->labels->pluck('name')->values()->all(),
+            // Cheap "is there human direction to read?" signal on the SUMMARY
+            // shape (GAP 2c): a count of human comments (event_type=comment),
+            // NOT system timeline events. > 0 means run `show` before claiming.
+            'comment_count' => self::commentCount($task),
             'due_at' => optional($task->due_at)->toIso8601String(),
             'dedupe_key' => $task->dedupe_key,
             // Guard on the FK before touching the relation: an agent/CLI task has
@@ -91,6 +95,7 @@ class TaskPresenter
                 'status' => Task::statuses(),
                 'is_public' => 'bool',
                 'labels' => 'string[]',
+                'comment_count' => 'int',   // human comments (event_type=comment); >0 → run `show` for direction
                 'due_at' => 'iso8601|null',
                 'dedupe_key' => 'string|null',
                 'submitter' => 'string|int|null',
@@ -117,6 +122,35 @@ class TaskPresenter
                 TaskComment::EVENT_CLAIMED,
             ],
         ];
+    }
+
+    /**
+     * Number of HUMAN comments (event_type=comment) on the task — the "does this
+     * task carry direction I should read before claiming?" signal (GAP 2c).
+     * System timeline events (status_change, claimed, …) are excluded.
+     *
+     * Order of preference keeps collections off the N+1 path:
+     *   1. an eager `->withCount(['comments as comment_count' => human filter])`
+     *      (added by the summary/collection query sites);
+     *   2. the already-loaded `comments` relation (full shape) — counted in memory;
+     *   3. a single COUNT query as a fallback (single-task summaries only).
+     */
+    protected static function commentCount(Task $task): int
+    {
+        $attrs = $task->getAttributes();
+        if (array_key_exists('comment_count', $attrs)) {
+            return (int) $attrs['comment_count'];
+        }
+
+        if ($task->relationLoaded('comments')) {
+            return $task->comments
+                ->where('event_type', TaskComment::EVENT_COMMENT)
+                ->count();
+        }
+
+        return (int) $task->comments()
+            ->where('event_type', TaskComment::EVENT_COMMENT)
+            ->count();
     }
 
     /**

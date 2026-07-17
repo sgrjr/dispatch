@@ -5,6 +5,7 @@ namespace Sgrjr\Dispatch\Console\Commands;
 use Illuminate\Console\Command;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 use Sgrjr\Dispatch\Models\Task;
+use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Support\TaskPresenter;
 
 /**
@@ -51,6 +52,7 @@ class DispatchNext extends Command
         // then position, then id.
         $task = $taskModel::query()
             ->with('labels')
+            ->withCount(['comments as comment_count' => fn ($q) => $q->where('event_type', TaskComment::EVENT_COMMENT)])
             ->whereIn('status', ['open', 'in_progress', 'triage'])
             ->when($type, fn ($q) => $q->where('type', $type))
             ->when($labels, fn ($q) => $q->whereHas('labels', fn ($lq) => $lq->whereIn('name', (array) $labels)))

@@ -35,6 +35,7 @@ class AgentController extends Controller
 
         $task = $taskModel::query()
             ->with(['labels', 'submitter', 'assignee'])
+            ->withCount(['comments as comment_count' => fn ($q) => $q->where('event_type', TaskComment::EVENT_COMMENT)])
             ->whereIn('status', ['open', 'in_progress', 'triage'])
             ->when($request->query('type'), fn ($q, $type) => $q->where('type', $type))
             ->when($request->query('label'), fn ($q, $label) => $q->whereHas(
@@ -57,7 +58,9 @@ class AgentController extends Controller
         /** @var class-string<Task> $taskModel */
         $taskModel = config('dispatch.models.task');
 
-        $query = $taskModel::query()->with(['labels', 'submitter', 'assignee']);
+        $query = $taskModel::query()
+            ->with(['labels', 'submitter', 'assignee'])
+            ->withCount(['comments as comment_count' => fn ($q) => $q->where('event_type', TaskComment::EVENT_COMMENT)]);
 
         if ($status = $request->query('status')) {
             $query->where('status', $status);

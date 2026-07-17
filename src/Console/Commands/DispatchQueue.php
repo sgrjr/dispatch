@@ -6,6 +6,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Str;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 use Sgrjr\Dispatch\Models\Task;
+use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Support\TaskPresenter;
 
 /**
@@ -46,7 +47,9 @@ class DispatchQueue extends Command
         /** @var class-string<Task> $taskModel */
         $taskModel = config('dispatch.models.task');
 
-        $query = $taskModel::query()->with('labels');
+        $query = $taskModel::query()
+            ->with('labels')
+            ->withCount(['comments as comment_count' => fn ($q) => $q->where('event_type', TaskComment::EVENT_COMMENT)]);
 
         if ($status = $this->option('status')) {
             $query->where('status', $status);

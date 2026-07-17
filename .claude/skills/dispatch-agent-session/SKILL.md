@@ -144,8 +144,10 @@ full brief, and you must use one before you start work:
   direction there before touching code.
 
 Working straight from a summary means working blind to what the commissioner
-actually asked for. The `queue` and `show` scopes requested in step 1 are what
-make this triage-then-inspect path possible — that's why they're in the
+actually asked for. The summary shape does carry a `comment_count` (human
+comments only) — a non-zero value flags a task with human direction waiting, so
+`show` those before claiming. The `queue` and `show` scopes requested in step 1
+are what make this triage-then-inspect path possible — that's why they're in the
 request. If your session wasn't granted `--scope=show`, re-request one that is
 rather than working a task blind.
 

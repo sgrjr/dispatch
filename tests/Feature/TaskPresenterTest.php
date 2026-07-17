@@ -24,7 +24,7 @@ test('the summary shape carries exactly the documented keys', function () {
 
     expect(array_keys($data))->toEqual([
         'code', 'title', 'type', 'priority', 'status', 'is_public',
-        'labels', 'due_at', 'dedupe_key', 'submitter', 'assignee',
+        'labels', 'comment_count', 'due_at', 'dedupe_key', 'submitter', 'assignee',
         'created_at', 'updated_at',
     ]);
 
@@ -33,8 +33,34 @@ test('the summary shape carries exactly the documented keys', function () {
         ->and($data['priority'])->toBe('high')
         ->and($data['is_public'])->toBeFalse()
         ->and($data['labels'])->toEqualCanonicalizing(['area:api', 'urgent'])
+        ->and($data['comment_count'])->toBe(0)
         ->and($data['dedupe_key'])->toBeNull()
         ->and($data)->not->toHaveKey('description');
+});
+
+test('comment_count counts human comments only, not system events (GAP 2c)', function () {
+    $svc = app(DispatchTaskService::class);
+    $task = $svc->create(['title' => 'has direction', 'status' => 'open']);
+
+    // System timeline events — must NOT count toward "direction".
+    $task->recordEvent(TaskComment::EVENT_STATUS_CHANGE, null, ['from' => 'triage', 'to' => 'open']);
+    $task->recordEvent(TaskComment::EVENT_CLAIMED, null, ['agent_name' => 'x']);
+    // Two human comments — the actual direction.
+    $task->recordEvent(TaskComment::EVENT_COMMENT, null, [], 'do X first');
+    $task->recordEvent(TaskComment::EVENT_COMMENT, null, [], 'not Y');
+
+    // Path 1 — fallback COUNT query (relation not loaded, no withCount).
+    expect(TaskPresenter::toArray($task->fresh())['comment_count'])->toBe(2);
+
+    // Path 2 — eager ->withCount (the summary/collection query sites).
+    $eager = config('dispatch.models.task')::query()
+        ->withCount(['comments as comment_count' => fn ($q) => $q->where('event_type', TaskComment::EVENT_COMMENT)])
+        ->whereKey($task->id)->first();
+    expect(TaskPresenter::toArray($eager)['comment_count'])->toBe(2);
+
+    // Path 3 — full shape, comments relation already loaded (counted in memory).
+    $full = $task->fresh()->load('comments.user');
+    expect(TaskPresenter::toArray($full, full: true)['comment_count'])->toBe(2);
 });
 
 test('the full shape adds description, context and comments', function () {

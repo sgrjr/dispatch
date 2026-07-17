@@ -82,6 +82,19 @@ test('GET next with a valid bearer returns the highest-priority actionable task'
         ->assertJsonStructure(['task' => ['code', 'title', 'type', 'priority', 'status', 'labels', 'submitter', 'assignee']]);
 });
 
+test('GET next surfaces comment_count so an agent knows a task carries direction (GAP 2c)', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'has direction', 'status' => 'open', 'priority' => 'high']);
+    $task->recordEvent(Sgrjr\Dispatch\Models\TaskComment::EVENT_COMMENT, dispatchMakeUser(88600)->id, [], 'do X first');
+    $task->recordEvent(Sgrjr\Dispatch\Models\TaskComment::EVENT_CLAIMED, null, []); // system event — must not count
+
+    $token = agentApiToken();
+
+    $this->withToken($token)->getJson('api/dispatch/agent/next')
+        ->assertOk()
+        ->assertJsonPath('task.code', $task->code)
+        ->assertJsonPath('task.comment_count', 1);
+});
+
 test('a revoked session gets a uniform 401 on a verb it was previously scoped for', function () {
     $svc = app(AgentSessionService::class);
     $req = $svc->request('claude-remote', null);
