@@ -5,6 +5,7 @@ namespace Sgrjr\Dispatch\Console\Commands;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Sgrjr\Dispatch\Models\Label;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
@@ -13,10 +14,13 @@ use Throwable;
 
 /**
  * Reads a JSON-LD snapshot (as written by dispatch:export) and upserts tasks
- * by `code`, plus their labels/comments. New tasks are minted through
- * DispatchTaskService (which honors an explicit `code` in the attributes
- * rather than reminting one — see Task::createWithCode()); existing tasks are
- * updated in place, which is not "creation" so it bypasses the service.
+ * by `code` — or, for a codeless md migration, by a stable import `key`
+ * persisted as `dedupe_key` so a re-import upserts instead of duplicating —
+ * plus their labels/comments. New tasks are minted through DispatchTaskService
+ * (which honors an explicit `code` in the attributes rather than reminting one,
+ * and mints a code when only a `key` is given — see Task::createWithCode()); an
+ * existing task is updated in place, which is not "creation" so it bypasses the
+ * service (titles are truncated on that path too, matching create()).
  */
 class DispatchImport extends Command
 {
@@ -98,13 +102,21 @@ class DispatchImport extends Command
 
             foreach ($tasksData as $t) {
                 $code = $t['code'] ?? null;
-                if (! $code) {
+                // A codeless md migration has no Dispatch code to key on, so fall
+                // back to a stable import key (host convention: sha1(file|first-line))
+                // persisted as `dedupe_key`. Re-imports then upsert by key instead
+                // of duplicating. A row carrying neither is still skipped + counted.
+                $key = $t['key'] ?? $t['dedupeKey'] ?? null;
+                if (! $code && ! $key) {
                     $summary['tasks_skipped']++;
                     continue;
                 }
 
                 $payload = [
-                    'title' => $t['title'] ?? '(untitled)',
+                    // Truncate on BOTH branches to match create()'s 255-cap: the
+                    // update path fills the model directly (bypassing the service),
+                    // so without this a long-titled re-import overflows the column.
+                    'title' => Str::limit(trim((string) ($t['title'] ?? '(untitled)')), 255, '…'),
                     'description' => $t['description'] ?? null,
                     'type' => in_array($t['type'] ?? null, Task::TYPES, true) ? $t['type'] : 'feature',
                     'priority' => in_array($t['priority'] ?? null, Task::PRIORITIES, true) ? $t['priority'] : 'medium',
@@ -114,8 +126,12 @@ class DispatchImport extends Command
                     'exception_signature' => $t['exceptionSignature'] ?? null,
                 ];
 
+                // Resolve by whichever stable identifier the row carries — an
+                // explicit code wins, else the import key (dedupe_key).
                 /** @var Task|null $task */
-                $task = $taskModel::query()->where('code', $code)->first();
+                $task = $code
+                    ? $taskModel::query()->where('code', $code)->first()
+                    : $taskModel::query()->where('dedupe_key', $key)->first();
 
                 if ($task) {
                     // A local status transition newer than the snapshot means
@@ -139,7 +155,9 @@ class DispatchImport extends Command
                     $summary['tasks_updated']++;
                 } else {
                     $submitterId = $userLookup($t['submitter'] ?? null);
-                    $createAttrs = ['code' => $code] + $payload;
+                    // Honor an explicit code (never reminted — see createWithCode),
+                    // or key the new task by dedupe_key and let the code mint.
+                    $createAttrs = ($code ? ['code' => $code] : ['dedupe_key' => $key]) + $payload;
                     if ($submitterId) {
                         $createAttrs['submitter_user_id'] = $submitterId;
                     }
