@@ -102,7 +102,18 @@ test('collection maps a list of tasks to summaries', function () {
 test('schema() documents the shape and the claimed event type', function () {
     $schema = TaskPresenter::schema();
 
-    expect($schema)->toHaveKeys(['summary', 'full_adds', 'event_types'])
+    expect($schema)->toHaveKeys(['summary', 'full_adds', 'batch', 'import', 'event_types'])
         ->and($schema['summary'])->toHaveKeys(['code', 'status', 'dedupe_key'])
         ->and($schema['event_types'])->toContain(TaskComment::EVENT_CLAIMED);
+});
+
+test('schema() documents the import (backfill-with-history) shape', function () {
+    $import = TaskPresenter::schema()['import'];
+
+    expect($import)->toHaveKeys(['request', 'task', 'label', 'semantics'])
+        ->and($import['request'])->toHaveKeys(['tasks', 'labels'])
+        // the codeless-migration handle (M1) and the backdating keys are the
+        // reason import exists as a distinct path from batch — assert they're documented.
+        ->and($import['task'])->toHaveKeys(['code', 'key', 'title', 'status', 'comments', 'createdAt', 'updatedAt'])
+        ->and($import['label'])->toHaveKeys(['name', 'color', 'description']);
 });

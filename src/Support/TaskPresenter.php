@@ -145,6 +145,43 @@ class TaskPresenter
                     'results' => '[{ref?:string, op:add|update, code:string, created?:bool, status?:string}]',
                 ],
             ],
+            // The `dispatch:import` document (also exactly what `dispatch:export`
+            // writes): a full snapshot upserted by `code`, OR — for a codeless md
+            // migration — by a stable import `key` persisted as `dedupe_key`, so a
+            // re-import upserts instead of duplicating. Backdated timestamps +
+            // per-comment author/date make this the backfill-WITH-HISTORY path
+            // (the `batch` verb above is the additive, always-"now" sibling).
+            'import' => [
+                'request' => [
+                    'tasks' => '[task, …]',
+                    'labels' => '[label, …] (optional — upserted by name before tasks resolve their label refs)',
+                ],
+                'task' => [
+                    'code' => 'string|null (upsert key; honored + never reminted — omit for a codeless md migration)',
+                    'key' => 'string|null (codeless idempotency key — host convention sha1(file|first-line); persisted as dedupe_key. `dedupeKey` is an accepted alias)',
+                    'title' => 'string (truncated to 255 on BOTH create and update)',
+                    'description' => 'string|null',
+                    'type' => Task::types(),
+                    'priority' => Task::priorities(),
+                    'status' => Task::statuses(),
+                    'isPublic' => 'bool',
+                    'position' => 'int',
+                    'exceptionSignature' => 'string|null (dedupe key for auto-captured errors)',
+                    'submitter' => 'string|null (email — resolved to a user id; unresolved ⇒ null submitter)',
+                    'assignee' => 'string|null (email — resolved to a user id)',
+                    'labels' => 'string[] (label names — attached; must appear in labels[] or already exist)',
+                    'comments' => '[{body:string, eventType:string, isInternal:bool, notifiedSubmitter:bool, author:string|null(email), meta:object|null, createdAt:iso8601}]',
+                    'createdAt' => 'iso8601 (backdated origination — preserved on create)',
+                    'updatedAt' => 'iso8601 (backdated)',
+                ],
+                'label' => ['name' => 'string', 'color' => 'string|null', 'description' => 'string|null'],
+                'semantics' => [
+                    'a row needs a code OR a key; a row with neither is skipped and counted (tasks_skipped).',
+                    'an existing task (matched by code or dedupe_key) is updated in place; a local status transition newer than the snapshot is kept — unpushed work is never reverted.',
+                    'comments merge additively, deduped on (event_type|body), so local-only notes survive a re-import.',
+                    'run `dispatch:import --no-notify` for a bulk historical backfill: no per-row receipts, no reactive automation.',
+                ],
+            ],
             'event_types' => [
                 TaskComment::EVENT_COMMENT,
                 TaskComment::EVENT_STATUS_CHANGE,
