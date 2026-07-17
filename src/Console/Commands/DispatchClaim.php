@@ -8,23 +8,26 @@ use Sgrjr\Dispatch\Services\DispatchTaskService;
 use Sgrjr\Dispatch\Support\TaskPresenter;
 
 /**
- * Atomically claim the next actionable task: marks it in_progress + assigns it
- * (see DispatchTaskService::claim — C1). Local by default; `--remote` posts to
- * the agent API's `claim` verb instead, which runs the same service on the
- * authoritative (production) instance.
+ * Atomically claim an actionable task: marks it in_progress + assigns it (see
+ * DispatchTaskService::claim — C1). With no argument it claims the next
+ * candidate (dispatch:next order); pass a {code} to claim ONE specific task by
+ * code, provided it's still unclaimed (open/triage). Local by default;
+ * `--remote` posts to the agent API's `claim` verb instead, which runs the same
+ * service on the authoritative (production) instance.
  */
 class DispatchClaim extends Command
 {
     use TalksToAgentApi;
 
     protected $signature = 'dispatch:claim
-        {--type= : Restrict to this task type}
-        {--label=* : Restrict to tasks carrying ALL of these labels. Repeatable.}
+        {code? : Claim THIS task by code (e.g. TASK-042), if still unclaimed; omit to claim the next candidate}
+        {--type= : Restrict to this task type (ignored when a code is given)}
+        {--label=* : Restrict to tasks carrying ALL of these labels. Repeatable. (ignored when a code is given)}
         {--assignee= : User id to assign the claimed task to}
         {--json : Emit machine-readable JSON instead of human text}
         {--remote : Claim via the remote agent API instead of the local DB}';
 
-    protected $description = 'Atomically claim the next actionable task (marks it in_progress + assigns it).';
+    protected $description = 'Atomically claim an actionable task — the next candidate, or a specific one by code (marks it in_progress + assigns it).';
 
     public function handle(DispatchTaskService $tasks): int
     {
@@ -33,22 +36,18 @@ class DispatchClaim extends Command
             'label' => $this->option('label'),
         ]);
 
+        $code = $this->argument('code');
+
         if ($this->option('remote')) {
-            return $this->claimRemote($filters);
+            return $this->claimRemote($filters, $code);
         }
 
         $assignee = $this->option('assignee');
 
-        $task = $tasks->claim(null, $filters, $assignee !== null ? (int) $assignee : null);
+        $task = $tasks->claim(null, $filters, $assignee !== null ? (int) $assignee : null, $code);
 
         if ($task === null) {
-            if ($this->option('json')) {
-                $this->line('null');
-            } else {
-                $this->line('Nothing to claim.');
-            }
-
-            return self::SUCCESS;
+            return $this->reportNothingClaimed($code);
         }
 
         if ($this->option('json')) {
@@ -73,11 +72,12 @@ class DispatchClaim extends Command
     /**
      * @param  array<string,mixed>  $filters
      */
-    protected function claimRemote(array $filters): int
+    protected function claimRemote(array $filters, ?string $code): int
     {
         $payload = array_filter([
             'type' => $filters['type'] ?? null,
             'label' => $filters['label'] ?? null,
+            'code' => $code,
         ]);
 
         $response = $this->agentPost('claim', $payload);
@@ -85,8 +85,48 @@ class DispatchClaim extends Command
             return self::FAILURE;
         }
 
-        $this->line(json_encode($response['task'] ?? null, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        $task = $response['task'] ?? null;
+
+        $this->line(json_encode($task, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+        // A NAMED code that came back unclaimed is a failure — mirror the local
+        // path so `dispatch:claim TASK-003 --remote` is scriptable the same way.
+        if ($code !== null && $task === null) {
+            return self::FAILURE;
+        }
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Nothing got claimed. In next-candidate mode an empty queue is a normal,
+     * successful no-op. But when the caller NAMED a task by code and it wasn't
+     * claimable, that's a failure — exit non-zero and say why (not found vs.
+     * already past the open/triage window a claim needs), so a script that asked
+     * for a specific task can tell "queue empty" from "I didn't get TASK-003".
+     */
+    protected function reportNothingClaimed(?string $code): int
+    {
+        if ($code === null) {
+            $this->line($this->option('json') ? 'null' : 'Nothing to claim.');
+
+            return self::SUCCESS;
+        }
+
+        if ($this->option('json')) {
+            $this->line('null');
+        } else {
+            /** @var class-string<\Sgrjr\Dispatch\Models\Task> $taskModel */
+            $taskModel = config('dispatch.models.task');
+            $existing = $taskModel::query()->where('code', $code)->first();
+
+            if ($existing === null) {
+                $this->error("No task {$code}.");
+            } else {
+                $this->error("{$code} is not claimable — its status is {$existing->status} (only open/triage tasks can be claimed).");
+            }
+        }
+
+        return self::FAILURE;
     }
 }

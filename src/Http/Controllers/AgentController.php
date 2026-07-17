@@ -108,12 +108,13 @@ class AgentController extends Controller
         $v = $request->validate([
             'type' => ['nullable', 'string'],
             'label' => ['nullable'],
+            'code' => ['nullable', 'string'],
         ]);
 
         $task = app(DispatchTaskService::class)->claim($s, array_filter([
             'type' => $v['type'] ?? null,
             'label' => $v['label'] ?? null,
-        ]), null);
+        ]), null, $v['code'] ?? null);
 
         // Deliver the FULL shape on claim — description + context + the comments
         // thread — because claim is exactly when the agent commits to a task and

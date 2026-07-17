@@ -371,10 +371,15 @@ best-effort dump).
 ### Agent-CLI verbs
 
 ```
-dispatch:claim  {--type=} {--label=*} {--assignee=} {--json} {--remote}
-                → atomically claim the next actionable task: marks it
-                  in_progress + assigns it in one transaction, so two agents
-                  (or an agent and a human) never grab the same task
+dispatch:claim  {code?} {--type=} {--label=*} {--assignee=} {--json} {--remote}
+                → atomically claim an actionable task: marks it in_progress +
+                  assigns it in one transaction, so two agents (or an agent and
+                  a human) never grab the same task. With no argument it claims
+                  the next candidate (dispatch:next order); pass a code to claim
+                  ONE specific task (e.g. dispatch:claim TASK-042) — honored only
+                  while that task is still unclaimed (open/triage), so naming a
+                  task still never steals in-flight work. A named-but-unclaimable
+                  code exits non-zero.
 
 dispatch:add    {title} ... {--key=} {--remote}
                 → idempotent create: pass --key=<dedupe key> and a re-run

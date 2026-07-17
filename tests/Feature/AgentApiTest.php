@@ -125,6 +125,31 @@ test('POST claim marks a seeded open task in_progress and returns it', function 
     expect($task->fresh()->status)->toBe('in_progress');
 });
 
+test('POST claim with a code claims that specific task even when a higher-priority one is queued', function () {
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'top', 'status' => 'open', 'priority' => 'blocker']);
+    $target = $svc->create(['title' => 'wanted', 'status' => 'open', 'priority' => 'low']);
+
+    $token = agentApiToken();
+
+    $this->withToken($token)->postJson('api/dispatch/agent/claim', ['code' => $target->code])
+        ->assertOk()
+        ->assertJsonPath('task.code', $target->code)
+        ->assertJsonPath('task.status', 'in_progress');
+
+    expect($target->fresh()->status)->toBe('in_progress');
+});
+
+test('POST claim with the code of an already in_progress task returns null (no double-claim)', function () {
+    $target = app(DispatchTaskService::class)->create(['title' => 'busy', 'status' => 'in_progress']);
+
+    $token = agentApiToken();
+
+    $this->withToken($token)->postJson('api/dispatch/agent/claim', ['code' => $target->code])
+        ->assertOk()
+        ->assertJsonPath('task', null);
+});
+
 test('POST claim returns the FULL shape — description + comments — so an agent sees human direction (GAP 2a)', function () {
     $task = app(DispatchTaskService::class)->create([
         'title' => 'Claim me',

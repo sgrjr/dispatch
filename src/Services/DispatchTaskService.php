@@ -231,24 +231,38 @@ class DispatchTaskService
     }
 
     /**
-     * Atomically claim the next actionable task for an agent (C1). Picks only
-     * UNSTARTED work (never `in_progress`, so two agents can't grab the same
-     * in-flight task), mirroring dispatch:next's ordering so an agent claims
-     * exactly what `next` would surface. Row-locked inside a transaction; on
-     * MySQL/Postgres SKIP LOCKED hands each concurrent agent a distinct task.
+     * Atomically claim an actionable task for an agent (C1). Picks only
+     * UNSTARTED work (status open/triage, never `in_progress`, so two agents
+     * can't grab the same in-flight task), mirroring dispatch:next's ordering so
+     * an agent claims exactly what `next` would surface. Row-locked inside a
+     * transaction; on MySQL/Postgres SKIP LOCKED hands each concurrent agent a
+     * distinct task.
+     *
+     * Pass $code to claim ONE specific task by code instead of the next
+     * candidate — used when a human (or a plan) hands an agent a particular
+     * task. The same UNSTARTED guard still applies: a named task that is already
+     * in_progress/done/etc. (or doesn't exist) yields null, so claim-by-code
+     * still never steals in-flight work. A named code is exact — the type/label
+     * filters are ignored, since the code already picks the task.
      *
      * @param  array{type?:string,label?:string|array<int,string>}  $filters
      */
-    public function claim(?AgentSession $session = null, array $filters = [], ?int $assigneeUserId = null): ?Task
+    public function claim(?AgentSession $session = null, array $filters = [], ?int $assigneeUserId = null, ?string $code = null): ?Task
     {
         /** @var class-string<Task> $taskModel */
         $taskModel = config('dispatch.models.task');
 
-        return DB::transaction(function () use ($taskModel, $session, $filters, $assigneeUserId) {
+        // A named code picks the task outright; the narrowing filters would only
+        // muddy that (and could null out an explicit request), so drop them.
+        $type = $code === null ? ($filters['type'] ?? null) : null;
+        $label = $code === null ? ($filters['label'] ?? null) : null;
+
+        return DB::transaction(function () use ($taskModel, $session, $type, $label, $assigneeUserId, $code) {
             $query = $taskModel::query()
                 ->whereIn('status', ['open', 'triage'])
-                ->when($filters['type'] ?? null, fn ($q, $type) => $q->where('type', $type))
-                ->when($filters['label'] ?? null, fn ($q, $label) => $q->whereHas(
+                ->when($code, fn ($q, $c) => $q->where('code', $c))
+                ->when($type, fn ($q, $type) => $q->where('type', $type))
+                ->when($label, fn ($q, $label) => $q->whereHas(
                     'labels',
                     fn ($lq) => $lq->whereIn('name', (array) $label)
                 ))

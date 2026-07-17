@@ -57,6 +57,46 @@ test('claim respects --type and --label filters', function () {
     expect($svc->claim(filters: ['label' => 'area:api'])->code)->toBe($labeled->code);
 });
 
+test('claim by code claims that specific task, not the top candidate', function () {
+    $svc = taskSvc();
+    // A higher-ranked open task would win the next-candidate race...
+    $svc->create(['title' => 'top', 'status' => 'open', 'priority' => 'blocker']);
+    $target = $svc->create(['title' => 'wanted', 'status' => 'open', 'priority' => 'low']);
+
+    $claimed = $svc->claim(code: $target->code);
+
+    expect($claimed)->not->toBeNull()
+        ->and($claimed->code)->toBe($target->code)
+        ->and($claimed->status)->toBe('in_progress');
+});
+
+test('claim by code ignores type/label filters — the code already picks the task', function () {
+    $svc = taskSvc();
+    $target = $svc->create(['title' => 'a feature', 'status' => 'open', 'type' => 'feature']);
+
+    // Filters that would EXCLUDE the target must not veto an explicit code.
+    $claimed = $svc->claim(filters: ['type' => 'bug', 'label' => 'nope'], code: $target->code);
+
+    expect($claimed?->code)->toBe($target->code);
+});
+
+test('claim by code refuses an already in_progress task (never steals in-flight work)', function () {
+    $svc = taskSvc();
+    $target = $svc->create(['title' => 'busy', 'status' => 'open']);
+
+    // First claim starts it; a second claim by the same code finds nothing.
+    expect($svc->claim(code: $target->code)?->code)->toBe($target->code);
+    expect($svc->claim(code: $target->code))->toBeNull();
+});
+
+test('claim by code returns null for a done task and for a code that does not exist', function () {
+    $svc = taskSvc();
+    $done = $svc->create(['title' => 'shipped', 'status' => 'done']);
+
+    expect($svc->claim(code: $done->code))->toBeNull()
+        ->and($svc->claim(code: 'TASK-999999'))->toBeNull();
+});
+
 test('claim stamps agent attribution into the timeline (null user + meta)', function () {
     $svc = taskSvc();
     $svc->create(['title' => 'x', 'status' => 'open']);

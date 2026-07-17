@@ -65,6 +65,30 @@ test('dispatch:claim locally claims a seeded open task', function () {
     expect($task->fresh()->status)->toBe('in_progress');
 });
 
+test('dispatch:claim {code} claims that specific task even behind a higher-priority one', function () {
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'top', 'status' => 'open', 'priority' => 'blocker']);
+    $target = $svc->create(['title' => 'wanted', 'status' => 'open', 'priority' => 'low']);
+
+    $this->artisan('dispatch:claim', ['code' => $target->code])
+        ->expectsOutputToContain("Claimed {$target->code}")
+        ->assertOk();
+
+    expect($target->fresh()->status)->toBe('in_progress');
+});
+
+test('dispatch:claim {code} exits non-zero when the named task is already claimed', function () {
+    $target = app(DispatchTaskService::class)->create(['title' => 'busy', 'status' => 'in_progress']);
+
+    $this->artisan('dispatch:claim', ['code' => $target->code])->assertExitCode(1);
+});
+
+test('dispatch:claim {code} exits non-zero for an unknown code', function () {
+    $this->artisan('dispatch:claim', ['code' => 'TASK-999999'])
+        ->expectsOutputToContain('No task TASK-999999.')
+        ->assertExitCode(1);
+});
+
 test('dispatch:session:request stores public_id/device_code and prints the user_code', function () {
     Http::fake([
         '*' => Http::response([
