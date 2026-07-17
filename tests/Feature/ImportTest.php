@@ -1,7 +1,9 @@
 <?php
 
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Str;
+use Sgrjr\Dispatch\Contracts\DispatchNotifier;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
 
@@ -124,6 +126,50 @@ test('a long title is truncated on the update path (matching create())', functio
     $stored = Task::where('code', 'TASK-950')->value('title');
     expect($stored)->toBe(Str::limit($long, 255, '…'))   // update path truncated
         ->and(mb_strlen($stored))->toBeLessThanOrEqual(256);
+});
+
+// --- M2: --no-notify suppresses the create receipt on a bulk backfill ------
+
+/** A DispatchNotifier that only counts taskCreated fan-outs. */
+function importNotifierSpy(): DispatchNotifier
+{
+    return new class implements DispatchNotifier
+    {
+        public int $created = 0;
+
+        public function taskCreated(Task $task): void
+        {
+            $this->created++;
+        }
+
+        public function taskStatusChanged(Task $task, string $from, string $to, ?Authenticatable $actor): void {}
+
+        public function taskCommented(Task $task, TaskComment $comment): void {}
+
+        public function taskAssigned(Task $task, ?int $from, ?int $to, ?Authenticatable $actor): void {}
+    };
+}
+
+test('import notifies once per created task by default, and --no-notify silences it', function () {
+    $spy = importNotifierSpy();
+    app()->singleton(DispatchNotifier::class, fn () => $spy);
+
+    // Default: a create receipt fires per new task.
+    expect(Artisan::call('dispatch:import', ['path' => importDoc(['tasks' => [
+        ['key' => 'q1', 'title' => 'One'],
+        ['key' => 'q2', 'title' => 'Two'],
+    ]])]))->toBe(0);
+    expect($spy->created)->toBe(2);
+
+    // --no-notify: fresh rows still land, but no receipts / reactive automation.
+    $spy->created = 0;
+    expect(Artisan::call('dispatch:import', ['path' => importDoc(['tasks' => [
+        ['key' => 'q3', 'title' => 'Three'],
+        ['key' => 'q4', 'title' => 'Four'],
+    ]]), '--no-notify' => true]))->toBe(0);
+
+    expect($spy->created)->toBe(0)
+        ->and(Task::whereIn('dedupe_key', ['q3', 'q4'])->count())->toBe(2);
 });
 
 // --- history fidelity on the keyed create path -----------------------------

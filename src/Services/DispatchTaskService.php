@@ -30,6 +30,38 @@ class DispatchTaskService
     ) {}
 
     /**
+     * When false, create() skips the taskCreated() notifier fan-out — and, when
+     * a host has bound the reactive EventNotifier, its per-task orchestration
+     * trigger. Flipped only inside quietly().
+     */
+    protected bool $notifyOnCreate = true;
+
+    /**
+     * Run $fn with create()-time notifications suppressed — for a bulk backfill
+     * (`dispatch:import`, `dispatch:batch --no-notify`) that must not email a
+     * "request received" receipt or fire reactive automation once per historical
+     * row. The flag is restored even if $fn throws, and nested calls stack
+     * safely. Only the create receipt is gated; explicit status/comment/assign
+     * notifications elsewhere are unaffected.
+     *
+     * @template T
+     *
+     * @param  callable():T  $fn
+     * @return T
+     */
+    public function quietly(callable $fn): mixed
+    {
+        $previous = $this->notifyOnCreate;
+        $this->notifyOnCreate = false;
+
+        try {
+            return $fn();
+        } finally {
+            $this->notifyOnCreate = $previous;
+        }
+    }
+
+    /**
      * Create a task and attach any labels (auto-creating labels as needed).
      *
      * @param  array<string,mixed>  $attributes  Task attributes (title required).
@@ -65,11 +97,14 @@ class DispatchTaskService
 
         // Submission-acknowledgement receipt (N2). The DispatchNotifier
         // contract guarantees implementations never throw, but this is a
-        // critical path — don't trust that promise, catch here too.
-        try {
-            app(\Sgrjr\Dispatch\Contracts\DispatchNotifier::class)->taskCreated($task);
-        } catch (\Throwable) {
-            // never break task creation over a notification failure
+        // critical path — don't trust that promise, catch here too. Suppressed
+        // inside quietly() so a bulk backfill neither emails nor orchestrates.
+        if ($this->notifyOnCreate) {
+            try {
+                app(\Sgrjr\Dispatch\Contracts\DispatchNotifier::class)->taskCreated($task);
+            } catch (\Throwable) {
+                // never break task creation over a notification failure
+            }
         }
 
         return $task;

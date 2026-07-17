@@ -1,6 +1,8 @@
 <?php
 
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Support\Facades\Artisan;
+use Sgrjr\Dispatch\Contracts\DispatchNotifier;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Services\DispatchBatchService;
@@ -243,4 +245,58 @@ test('dispatch:batch surfaces a validation error and writes nothing', function (
     expect($exit)->toBe(1)
         ->and(Artisan::output())->toContain('TASK-NOPE')
         ->and(Task::count())->toBe(0);
+});
+
+// --- M2: quiet / --no-notify suppresses the per-add create receipt ----------
+
+/** A DispatchNotifier that only counts taskCreated fan-outs. */
+function batchNotifierSpy(): DispatchNotifier
+{
+    return new class implements DispatchNotifier
+    {
+        public int $created = 0;
+
+        public function taskCreated(Task $task): void
+        {
+            $this->created++;
+        }
+
+        public function taskStatusChanged(Task $task, string $from, string $to, ?Authenticatable $actor): void {}
+
+        public function taskCommented(Task $task, TaskComment $comment): void {}
+
+        public function taskAssigned(Task $task, ?int $from, ?int $to, ?Authenticatable $actor): void {}
+    };
+}
+
+test('apply() notifies per add by default but the quiet flag suppresses it', function () {
+    $spy = batchNotifierSpy();
+    app()->singleton(DispatchNotifier::class, fn () => $spy);
+
+    app(DispatchBatchService::class)->apply([
+        ['op' => 'add', 'title' => 'loud one'],
+        ['op' => 'add', 'title' => 'loud two'],
+    ]);
+    expect($spy->created)->toBe(2);
+
+    $spy->created = 0;
+    $out = app(DispatchBatchService::class)->apply(
+        [['op' => 'add', 'title' => 'quiet one'], ['op' => 'add', 'title' => 'quiet two']],
+        [], null, false, true // dryRun=false, quiet=true
+    );
+
+    expect($spy->created)->toBe(0)
+        ->and($out['summary']['tasks_created'])->toBe(2);
+});
+
+test('dispatch:batch --no-notify threads quiet through to the applier', function () {
+    $spy = batchNotifierSpy();
+    app()->singleton(DispatchNotifier::class, fn () => $spy);
+
+    $path = batchManifest([['op' => 'add', 'title' => 'via cli quiet']]);
+    $exit = Artisan::call('dispatch:batch', ['path' => $path, '--no-notify' => true]);
+
+    expect($exit)->toBe(0)
+        ->and($spy->created)->toBe(0)
+        ->and(Task::where('title', 'via cli quiet')->exists())->toBeTrue();
 });

@@ -40,6 +40,7 @@ class DispatchBatch extends Command
         {path : JSON manifest file (an {"operations":[…]} object, or a bare […] array)}
         {--remote : Apply against the configured remote agent API instead of the local DB}
         {--dry-run : Validate + report what would change without writing}
+        {--no-notify : Suppress per-add create notifications + reactive automation (local bulk memorialize)}
         {--json : Emit machine-readable JSON instead of human text}';
 
     protected $description = 'Apply a manifest of add/update task ops in one transaction (batch memorialize).';
@@ -86,7 +87,7 @@ class DispatchBatch extends Command
     protected function applyLocal(DispatchBatchService $batch, array $operations, bool $dryRun): int
     {
         try {
-            $outcome = $batch->apply($operations, [], Auth::id(), $dryRun);
+            $outcome = $batch->apply($operations, [], Auth::id(), $dryRun, (bool) $this->option('no-notify'));
         } catch (\InvalidArgumentException $e) {
             $this->error($e->getMessage());
 

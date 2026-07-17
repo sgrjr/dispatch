@@ -26,7 +26,8 @@ class DispatchImport extends Command
 {
     protected $signature = 'dispatch:import
         {path : JSON-LD file to import, resolved relative to the app base path}
-        {--dry-run : Show what would change without writing}';
+        {--dry-run : Show what would change without writing}
+        {--no-notify : Suppress per-task create notifications + reactive automation (bulk historical backfill)}';
 
     protected $description = 'Import a JSON-LD snapshot, upserting tasks by code (and their comments/labels).';
 
@@ -238,16 +239,21 @@ class DispatchImport extends Command
             }
         };
 
+        // A bulk historical backfill shouldn't email a receipt or trigger
+        // reactive orchestration once per imported row — run the whole thing
+        // through the service's quiet scope when --no-notify is set.
+        $apply = $this->option('no-notify') ? fn () => $tasks->quietly($run) : $run;
+
         if ($dryRun) {
             DB::beginTransaction();
             try {
-                $run();
+                $apply();
             } finally {
                 DB::rollBack();
             }
             $this->warn('Dry run — no changes persisted.');
         } else {
-            DB::transaction($run);
+            DB::transaction($apply);
         }
 
         $this->info('Import complete.');

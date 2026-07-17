@@ -53,13 +53,15 @@ class DispatchBatchService
      *                                           (empty for a trusted local run).
      * @param  int|null  $actorUserId  Author id for appended comments (null for
      *                                  an agent — its identity lives in meta).
+     * @param  bool  $quiet  Suppress the per-add create notifier + reactive
+     *                       automation (bulk memorialize / backfill).
      * @return array{summary:array<string,int>, results:array<int,array<string,mixed>>}
      *
      * @throws \InvalidArgumentException on a malformed manifest (message names
      *                                   the offending op index) — thrown BEFORE
      *                                   any write, so nothing is persisted.
      */
-    public function apply(array $operations, array $actorMeta = [], ?int $actorUserId = null, bool $dryRun = false): array
+    public function apply(array $operations, array $actorMeta = [], ?int $actorUserId = null, bool $dryRun = false, bool $quiet = false): array
     {
         $normalized = $this->validate($operations);
 
@@ -79,17 +81,21 @@ class DispatchBatchService
             }
         };
 
+        // A quiet bulk memorialize suppresses the per-add create receipt +
+        // reactive automation (same scope dispatch:import --no-notify uses).
+        $exec = $quiet ? fn () => $this->tasks->quietly($run) : $run;
+
         if ($dryRun) {
             // Same rollback-to-observe trick as dispatch:import --dry-run: run the
             // full apply for its validation/existence checks, then discard it.
             DB::beginTransaction();
             try {
-                $run();
+                $exec();
             } finally {
                 DB::rollBack();
             }
         } else {
-            DB::transaction($run);
+            DB::transaction($exec);
         }
 
         return ['summary' => $summary, 'results' => $results];
