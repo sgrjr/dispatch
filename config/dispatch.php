@@ -305,6 +305,14 @@ return [
         'verb_throttle' => env('DISPATCH_AGENT_VERB_THROTTLE', '120,1'),
         'verbs' => ['next', 'queue', 'show', 'add', 'note', 'done', 'claim', 'batch'],
 
+        // Explicit denylist — the supported way to WITHHOLD a shipped verb. The
+        // grant ceiling for an explicitly-requested scope is the UNION of `verbs`
+        // and the package's known verbs (AgentSessionService::KNOWN_VERBS), so a
+        // stale *published* config can't silently drop a verb the package ships
+        // (GAP-3). To withhold one (e.g. `batch` on a public instance), list it
+        // here rather than removing it from `verbs`.
+        'disabled_verbs' => [],
+
         // Batch "memorialize" endpoint (POST agent/batch). Additive + server-
         // bounded (no delete, labels attach not replace, status never assumed
         // done) so it stays inside the curated-verb posture. `max_operations`

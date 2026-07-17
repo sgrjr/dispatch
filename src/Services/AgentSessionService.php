@@ -20,6 +20,19 @@ class AgentSessionService
     protected const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
     /**
+     * Every verb the package ships a route for — the package-owned source of
+     * truth for what is grantable. The explicit-request grant ceiling is the
+     * UNION of this and the host's `agent.verbs`, so a stale *published*
+     * `config/dispatch.php` (shallow `mergeConfigFrom` can't deep-merge a
+     * newly-shipped verb into an already-published array) can never silently
+     * drop a verb the package actually registers — the recurring GAP-3
+     * "stale-published-config" trap that most recently disabled `batch` and
+     * 403'd every `todo:inbox --remote` push. A host still WITHHOLDS a verb via
+     * the explicit `agent.disabled_verbs` denylist, not by omitting it here.
+     */
+    public const KNOWN_VERBS = ['next', 'queue', 'show', 'add', 'note', 'done', 'claim', 'batch'];
+
+    /**
      * Register a pending session and return the one-time bootstrap payload.
      * `device_code` is the RFC-8628 secret the agent must present on every poll;
      * only its hash is stored.
@@ -66,9 +79,22 @@ class AgentSessionService
 
         $requested = $scopes ?? ($session->requested_meta['scopes'] ?? null);
 
-        $granted = $requested === null
-            ? $allowed
-            : array_values(array_intersect(array_map('strval', (array) $requested), $allowed));
+        if ($requested === null) {
+            // No explicit request → grant exactly the host's configured allowlist.
+            $granted = $allowed;
+        } else {
+            // Explicit request → intersect with the grant CEILING: the host
+            // allowlist UNIONED with the package's KNOWN_VERBS, minus any explicit
+            // `agent.disabled_verbs`. This lets a verb the package actually ships
+            // survive even when a stale *published* config omits it (GAP-3), while
+            // a host can still withhold one via the denylist. An explicit []
+            // requested still grants nothing (intersect of an empty set).
+            $ceiling = array_diff(
+                array_unique(array_merge($allowed, self::KNOWN_VERBS)),
+                (array) config('dispatch.agent.disabled_verbs', [])
+            );
+            $granted = array_values(array_intersect(array_map('strval', (array) $requested), $ceiling));
+        }
 
         $session->scopes = $granted;
         $session->save();

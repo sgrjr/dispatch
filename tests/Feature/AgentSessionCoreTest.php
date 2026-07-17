@@ -84,6 +84,32 @@ test('approve with no requested scopes grants the full allowlist; explicit [] gr
     expect($empty->fresh()->scopes)->toBe([]);
 });
 
+test('approve grants an explicitly-requested KNOWN verb even when the published allowlist is stale (GAP-3)', function () {
+    // Simulate a host whose *published* config.verbs predates `batch` being shipped.
+    config(['dispatch.agent.verbs' => ['next', 'claim', 'done']]);
+
+    $req = agentSvc()->request('a', null, ['scopes' => ['claim', 'batch']]);
+    $session = AgentSession::where('public_id', $req['public_id'])->firstOrFail();
+    agentSvc()->approve($session, 1);
+
+    // `batch` is a package KNOWN_VERB, so the union ceiling grants it despite the
+    // stale allowlist. `claim` (in both) is granted; a bogus verb still wouldn't be.
+    expect($session->fresh()->scopes)->toBe(['claim', 'batch']);
+});
+
+test('agent.disabled_verbs withholds a KNOWN verb even when explicitly requested', function () {
+    config([
+        'dispatch.agent.verbs' => ['next', 'claim', 'done', 'batch'],
+        'dispatch.agent.disabled_verbs' => ['batch'],
+    ]);
+
+    $req = agentSvc()->request('a', null, ['scopes' => ['claim', 'batch']]);
+    $session = AgentSession::where('public_id', $req['public_id'])->firstOrFail();
+    agentSvc()->approve($session, 1);
+
+    expect($session->fresh()->scopes)->toBe(['claim']);
+});
+
 test('resolveToken returns the session for a valid token and null for anything else', function () {
     $req = agentSvc()->request('a', null);
     $session = AgentSession::where('public_id', $req['public_id'])->firstOrFail();
