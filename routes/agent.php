@@ -50,6 +50,12 @@ Route::middleware(['dispatch.agent', 'throttle:dispatch-agent-verb'])->group(fun
     Route::post('note', [AgentController::class, 'note'])->middleware('dispatch.agent.scope:note')->name('note');
     Route::post('done', [AgentController::class, 'done'])->middleware('dispatch.agent.scope:done')->name('done');
 
+    // Batch memorialize (§20) — apply a whole manifest of add/update ops in ONE
+    // transactional hit instead of a verb call per task. Additive + server-bounded
+    // (no delete, labels attach not replace, status never assumed done), so it
+    // stays inside the curated-verb posture despite acting on many tasks at once.
+    Route::post('batch', [AgentController::class, 'batch'])->middleware('dispatch.agent.scope:batch')->name('batch');
+
     // Self-revoke (§20). Bearer-authed like the verbs, but deliberately NOT
     // scope-gated — ending your own session is a hygiene action every agent may
     // take, not a backlog verb. Identified purely by the bearer token (no id

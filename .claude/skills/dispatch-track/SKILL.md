@@ -216,6 +216,25 @@ parse against that instead of guessing field names from examples.
 - `php artisan dispatch:schema` — the documented `--json` shape (the frozen
   `TaskPresenter` contract) every `--json` verb's output conforms to
 
+### Batch: apply a whole manifest at once
+
+When you've done a chunk of work offline and want to record it all in one shot
+— several new tasks plus status/label/comment updates to existing ones — write
+a JSON manifest and apply it with a single command instead of many `add` /
+`note` / `done` calls:
+
+```bash
+php artisan dispatch:batch run.json --dry-run   # validate + preview, writes nothing
+php artisan dispatch:batch run.json             # apply to the local DB in one transaction
+```
+
+Each operation is either an `add` (new task, defaults to triage) or an `update`
+(existing task by `code`); labels attach additively, comments dedupe, and the
+whole file applies atomically. `php artisan dispatch:schema` documents the
+manifest under the `batch` key. To turn a `todo.md`-style checklist into a
+manifest automatically, use the `dispatch-batch-migrate` skill. (Add `--remote`
+only when driving the **production** backlog — see the agent-session skill.)
+
 ### Working the production backlog instead of local dev
 
 Everything in Part 2 operates on **this app's local database**. `pull` /

@@ -393,6 +393,11 @@ dispatch:done   {code} {--status=} {--commit=} {--result=} {--json} {--remote}
 dispatch:show   {code} {--json} {--remote}
 dispatch:note   {code} {body} {--internal} {--remote}
 
+dispatch:batch  {path} {--remote} {--dry-run} {--json}
+                → apply a whole manifest of add/update ops in ONE transaction:
+                  work the backlog offline, then memorialize the run in a single
+                  hit instead of a verb call per task (see "Batch memorialize")
+
 dispatch:schema → dumps the documented --json shape (the frozen
                   TaskPresenter contract) — parse against this, not a guess
 ```
@@ -446,6 +451,67 @@ fields plus `description`, `context`, and the full `comments[]` thread — becau
 a claiming agent needs the human's direction, which lives there. Run
 `php artisan dispatch:schema` to get both shapes as data instead of relying on
 this example.
+
+### Batch memorialize — one hit instead of forty
+
+The single verbs above each cost a round trip. An agent working a long run —
+especially against **production** over `--remote` — would otherwise fire a
+`claim`/`note`/`done`/`add` per task, dozens of progressive HTTPS hits. Instead
+it can work the whole run **offline**, tracking its own changes, and commit the
+result as one JSON manifest with `dispatch:batch`.
+
+```
+dispatch:batch  {path} {--remote} {--dry-run} {--json}
+```
+
+The manifest is a list of two op kinds, in the **same vocabulary** as the single
+verbs:
+
+```json
+{
+  "operations": [
+    { "op": "add", "ref": "a1", "title": "Null-coupon crash", "type": "bug",
+      "priority": "high", "labels": ["area:checkout"],
+      "comments": [{ "body": "spotted while working TASK-042" }] },
+
+    { "op": "update", "code": "TASK-042", "status": "in_progress",
+      "commit": "abc1234", "labels": ["needs-review"],
+      "comments": [{ "body": "partial: after-tax path fixed, pre-tax remains",
+                     "internal": true }] }
+  ]
+}
+```
+
+```bash
+php artisan dispatch:batch run.json --dry-run   # validate + preview, writes nothing
+php artisan dispatch:batch run.json             # apply to the local DB
+php artisan dispatch:batch run.json --remote    # memorialize on production in one hit
+```
+
+The semantics are deliberately **additive and safe**, so it stays inside the
+same posture as the curated single verbs (it is *not* the destructive
+package↔package snapshot `apply`):
+
+- **`add`** mints a new task — server-minted code, defaults to **triage** (batch
+  never assumes `done`). An idempotency `key` makes a re-add return the existing
+  task instead of duplicating.
+- **`update`** upserts the *work* on an existing task by `code` — it never
+  creates, and only touches the fields you send. `status` is whatever the run
+  actually reached; leave it out and the status doesn't move. This is how
+  **partially-completed** work is memorialized honestly.
+- **Labels attach additively** (never replace-all), so a batch can't strip a
+  task's existing labels.
+- **Comments dedupe** on content and **the whole manifest is one transaction** —
+  a bad op rolls it all back, and a re-submit is safe (keyed adds dedupe,
+  duplicate comments are skipped, an unchanged status records no event).
+
+`op` is optional — an object with a `code` is inferred as `update`, otherwise
+`add`. The response echoes each op's `ref` → minted `code` so you can map your
+local handles back to production task codes. `php artisan dispatch:schema` dumps
+the full manifest contract (the `batch` key) as data.
+
+To turn a plain `todo.md`-style checklist into a manifest, see the
+`dispatch-batch-migrate` skill.
 
 ### Agent run metrics
 

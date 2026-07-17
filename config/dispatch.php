@@ -290,7 +290,8 @@ return [
     | `bootstrap_secret` gates the unauthenticated request endpoint (send it as
     | the X-Dispatch-Bootstrap header). Required in production; leave unset only
     | on a trusted/local network (see VerifyBootstrapSecret). `verbs` is the
-    | global allowlist a session's scopes are bounded by — no delete/bulk.
+    | global allowlist a session's scopes are bounded by — no delete, and the
+    | one many-task verb (`batch`) is additive-only (upsert, never replace/delete).
     | `remote.*` is the CLIENT side (a dev box driving `dispatch:* --remote`).
     */
     'agent' => [
@@ -302,7 +303,17 @@ return [
         'poll_interval' => (int) env('DISPATCH_AGENT_POLL_INTERVAL', 5),
         'request_throttle' => env('DISPATCH_AGENT_REQUEST_THROTTLE', '10,1'),
         'verb_throttle' => env('DISPATCH_AGENT_VERB_THROTTLE', '120,1'),
-        'verbs' => ['next', 'queue', 'show', 'add', 'note', 'done', 'claim'],
+        'verbs' => ['next', 'queue', 'show', 'add', 'note', 'done', 'claim', 'batch'],
+
+        // Batch "memorialize" endpoint (POST agent/batch). Additive + server-
+        // bounded (no delete, labels attach not replace, status never assumed
+        // done) so it stays inside the curated-verb posture. `max_operations`
+        // caps a single request so it can't become an unbounded bulk write
+        // (0 = uncapped — not recommended on a public instance).
+        'batch' => [
+            'max_operations' => (int) env('DISPATCH_AGENT_BATCH_MAX', 200),
+        ],
+
         'remote' => [
             'url' => env('DISPATCH_AGENT_REMOTE_URL'),
             'token_path' => env('DISPATCH_AGENT_TOKEN_PATH'),

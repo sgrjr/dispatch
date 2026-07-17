@@ -236,6 +236,7 @@ class DispatchServiceProvider extends ServiceProvider
             \Sgrjr\Dispatch\Console\Commands\DispatchMerge::class,
             // Agent layer (Wave 1) — auto-register once the classes land.
             \Sgrjr\Dispatch\Console\Commands\DispatchClaim::class,
+            \Sgrjr\Dispatch\Console\Commands\DispatchBatch::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchSchema::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchSessionRequest::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchSessionStatus::class,
@@ -286,6 +287,7 @@ class DispatchServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__.'/../.claude/skills/dispatch-track' => base_path('.claude/skills/dispatch-track'),
             __DIR__.'/../.claude/skills/dispatch-agent-session' => base_path('.claude/skills/dispatch-agent-session'),
+            __DIR__.'/../.claude/skills/dispatch-batch-migrate' => base_path('.claude/skills/dispatch-batch-migrate'),
         ], 'dispatch-skills');
     }
 }

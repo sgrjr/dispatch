@@ -1,6 +1,6 @@
 ---
 name: dispatch-agent-session
-description: PROACTIVELY use when asked to work the PRODUCTION Dispatch backlog from outside the deploy — "work the live/prod backlog", "run as a remote agent", "commission an agent session", "pick up real tasks remotely", "work this against production" — or whenever context makes clear the target is the authoritative (production) Dispatch instance rather than local dev. Drives the human-commissioned session protocol (`dispatch:session:request` → human approval → `dispatch:session:status`) and then the `--remote` verb loop (`dispatch:next --remote` → `dispatch:claim --remote` → work → `dispatch:note --remote` → `dispatch:done --remote`). Also use when a session goes stale (401 mid-loop, denied, revoked, expired) and needs graceful handling. Do NOT use for local dev work against the app's own database — see `dispatch-track` for that.
+description: PROACTIVELY use when asked to work the PRODUCTION Dispatch backlog from outside the deploy — "work the live/prod backlog", "run as a remote agent", "commission an agent session", "pick up real tasks remotely", "work this against production" — or whenever context makes clear the target is the authoritative (production) Dispatch instance rather than local dev. Drives the human-commissioned session protocol (`dispatch:session:request` → human approval → `dispatch:session:status`) and then the `--remote` verb loop (`dispatch:next --remote` → `dispatch:claim --remote` → work → `dispatch:note --remote` → `dispatch:done --remote`), OR the batch "memorialize" path (`dispatch:batch --remote`) that commits a whole run of add/update ops in one hit instead of a verb call per task. Also use when a session goes stale (401 mid-loop, denied, revoked, expired) and needs graceful handling. Do NOT use for local dev work against the app's own database — see `dispatch-track` for that.
 ---
 
 # Dispatch remote agent session & `--remote` verb loop
@@ -49,8 +49,12 @@ php artisan dispatch:session:request \
   --name="<agent name>" \
   --purpose="<short reason for this session>" \
   --scope=next --scope=queue --scope=claim --scope=show --scope=note --scope=done \
+  [--scope=batch] \
   [--secret=<bootstrap secret, if not already configured>]
 ```
+
+Add `--scope=batch` when you intend to memorialize a whole run in one hit
+(see §5b) rather than closing tasks out one `--remote` verb at a time.
 
 This POSTs to the remote's session-request endpoint (bootstrap-secret gated,
 not bearer — there's no token yet) and stores a pending request locally. It
@@ -159,6 +163,58 @@ against that documented shape, not a guess:
 php artisan dispatch:schema
 ```
 
+### 5b. Batch memorialize — commit a whole run in one hit (optional)
+
+The per-verb loop in §5 costs a round trip **per action** — against production
+that's dozens of progressive HTTPS hits for a long run. When you'd rather work
+the run **offline** and then commit it all at once, use `dispatch:batch`
+instead. Track your own changes as you go (new tasks you'd file, status moves,
+notes), assemble one JSON manifest, and memorialize it in a single request:
+
+```bash
+php artisan dispatch:batch run.json --remote --dry-run   # validate against prod, writes nothing
+php artisan dispatch:batch run.json --remote             # apply the whole manifest in one txn
+```
+
+The manifest is a list of two op kinds, in the **same vocabulary** as the
+single verbs — `dispatch:schema` documents it under the `batch` key:
+
+```json
+{
+  "operations": [
+    {"op": "add", "ref": "a1", "title": "New bug found while working",
+     "type": "bug", "priority": "high", "labels": ["area:api"],
+     "comments": [{"body": "spotted while working TASK-042"}]},
+    {"op": "update", "code": "TASK-042", "status": "in_progress",
+     "commit": "abc123", "labels": ["needs-review"],
+     "comments": [{"body": "partial: A done, B remains", "internal": true}]}
+  ]
+}
+```
+
+What the batch does and does **not** do — this matters for how you build the
+manifest:
+
+- **`add`** files a NEW task (server mints the code; defaults to **triage** — it
+  never assumes `done`). Give each add a `ref` so you can map it back to the
+  minted code in the response. Add a `key` to make a re-submit idempotent.
+- **`update`** upserts the WORK on an EXISTING task by `code` — it never
+  creates. Set `status` to whatever the task actually reached (leave it out and
+  the status doesn't move); this is how you honestly memorialize *partially
+  completed* work rather than force-closing it.
+- Labels **attach** (never replace); comments **dedupe**; the whole manifest is
+  **one transaction** (a bad op rolls it all back). So a re-submit after a
+  network blip is safe.
+
+Prefer `--dry-run` first against production to validate the manifest (it reports
+the summary and rolls back). This path needs the `batch` scope (§1); if your
+session wasn't granted it, either close tasks out with the §5 single verbs or
+re-request a session that includes `--scope=batch`.
+
+**Building the manifest from a checklist.** If your run is captured as a plain
+`todo.md`-style file, the `dispatch-batch-migrate` skill converts it into a
+valid `operations[]` manifest for you.
+
 ### 6. Handle a mid-session `401`
 
 Every `--remote` verb can fail with `401` if the session was revoked or
@@ -213,6 +269,10 @@ expire.
   Approve on the site — poll it yourself (step 3).
 - ❌ Retry-spam a `denied` / `revoked` session with fresh requests. Stop and let
   the operator decide.
+- ❌ Fire forty progressive `--remote` verbs to close out a long run when you
+  could assemble one manifest and `dispatch:batch --remote` it (§5b).
+- ❌ Force a partially-done task to `done` in a batch just to close it. Set its
+  real status (`in_progress`, `verifying`) — batch exists to memorialize honestly.
 - ❌ Approve your own session, or ask a non-staff user to approve one (they
   can't see the approval UI).
 

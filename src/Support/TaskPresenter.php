@@ -108,6 +108,43 @@ class TaskPresenter
                 'context' => 'object|null',
                 'comments' => '[{id:int, event_type:string, is_internal:bool, author:string|int|null, body:string, meta:object|null, created_at:iso8601}]',
             ],
+            // The `dispatch:batch` / POST agent/batch manifest — apply a whole
+            // run of ops in one transaction. Additive + server-bounded: `add`
+            // mints a new task (defaults to triage); `update` upserts the WORK on
+            // an existing task by code (never creates, never assumes done);
+            // labels ATTACH (never replace); comments are plain human comments,
+            // deduped on (event_type|body) so a re-submit is safe.
+            'batch' => [
+                'request' => ['operations' => '[op, …]', 'dry_run' => 'bool (optional)'],
+                'op' => [
+                    'op' => 'add|update (optional — inferred as update when `code` is present, else add)',
+                    'ref' => 'string|null (client handle, echoed back in results so you can map it to the minted code)',
+                    'code' => 'string (update: the task to upsert; ignored for add)',
+                    'key' => 'string|null (add: idempotency key — returns the existing task instead of duplicating)',
+                    'title' => 'string (add: required)',
+                    'type' => Task::types(),
+                    'priority' => Task::priorities(),
+                    'status' => Task::statuses(),
+                    'description' => 'string|null',
+                    'public' => 'bool (optional)',
+                    'labels' => 'string[] (ATTACHED additively — never replaces existing labels)',
+                    'commit' => 'string|null (stored under context.result.commit)',
+                    'result' => 'object|null (stored under context.result)',
+                    'comments' => '[{body:string, internal:bool}]',
+                ],
+                'semantics' => [
+                    'add mints a new task (server-minted code); status defaults to triage.',
+                    'update upserts the WORK on an existing task by code — it never creates, and leaves status unchanged unless set.',
+                    'the whole manifest applies in one transaction; a bad op rolls it all back.',
+                    're-submits are safe: keyed adds dedupe, comments dedupe on (event_type|body), an unchanged status records no event.',
+                ],
+                'response' => [
+                    'applied' => 'bool',
+                    'dry_run' => 'bool',
+                    'summary' => ['tasks_created' => 'int', 'tasks_updated' => 'int', 'comments_added' => 'int', 'statuses_changed' => 'int'],
+                    'results' => '[{ref?:string, op:add|update, code:string, created?:bool, status?:string}]',
+                ],
+            ],
             'event_types' => [
                 TaskComment::EVENT_COMMENT,
                 TaskComment::EVENT_STATUS_CHANGE,

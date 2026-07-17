@@ -10,6 +10,7 @@ use Sgrjr\Dispatch\Models\AgentSession;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Services\AgentSessionService;
+use Sgrjr\Dispatch\Services\DispatchBatchService;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
 use Sgrjr\Dispatch\Support\TaskPresenter;
 
@@ -239,6 +240,50 @@ class AgentController extends Controller
 
         return response()->json([
             'task' => TaskPresenter::toArray($task->fresh()->load('labels', 'submitter', 'assignee')),
+        ]);
+    }
+
+    /**
+     * Batch memorialize (§20). Apply a whole manifest of `add`/`update` ops in a
+     * single transaction — the "work offline, commit the run in one hit" path.
+     * The manifest carries the SAME vocabulary as the single verbs; see
+     * {@see DispatchBatchService} for the additive, server-bounded semantics.
+     *
+     * The op count is capped so a single request can't be turned into an
+     * unbounded bulk-write; a malformed manifest yields a 422 that names the
+     * offending op index and rolls back cleanly (nothing persists).
+     */
+    public function batch(Request $request): JsonResponse
+    {
+        $s = $this->session($request);
+
+        $v = $request->validate([
+            'operations' => ['required', 'array'],
+            'operations.*' => ['array'],
+            'dry_run' => ['nullable', 'boolean'],
+        ]);
+
+        $max = (int) config('dispatch.agent.batch.max_operations', 200);
+        abort_if($max > 0 && count($v['operations']) > $max, 422, "Batch too large: {$max} operations max.");
+
+        $dryRun = (bool) ($v['dry_run'] ?? false);
+
+        try {
+            $outcome = app(DispatchBatchService::class)->apply(
+                $v['operations'],
+                $this->agentMeta($s),
+                null,
+                $dryRun,
+            );
+        } catch (\InvalidArgumentException $e) {
+            abort(422, $e->getMessage());
+        }
+
+        return response()->json([
+            'applied' => ! $dryRun,
+            'dry_run' => $dryRun,
+            'summary' => $outcome['summary'],
+            'results' => $outcome['results'],
         ]);
     }
 

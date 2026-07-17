@@ -36,6 +36,26 @@ Quick diagnosis:
   route cache** (or OPcache) — `php artisan route:clear`, then recycle the app
   pool if it persists.
 
+## Enabling the batch verb (`dispatch:batch --remote` / `POST agent/batch`)
+
+The batch memorialize verb is gated by the server's `agent.verbs` allowlist. If
+you **published `config/dispatch.php` before this verb existed**, your host's
+`agent` block wins wholesale over the package default (shallow `mergeConfigFrom`,
+the same trap as GAP 3), so `batch` is absent from `agent.verbs` and **no session
+can ever be granted the `batch` scope** — a `--remote` batch call will `403`.
+
+To enable it on the server, either re-publish the config and re-apply your
+customizations:
+
+```bash
+php artisan vendor:publish --tag=dispatch-config --force
+```
+
+or just add `'batch'` to the `agent.verbs` array (and, optionally, the
+`agent.batch.max_operations` cap) in your existing `config/dispatch.php`. Then
+clear the config cache (see above). The **local** `dispatch:batch <file>` path
+needs none of this — it doesn't go through the session/scope layer.
+
 ## Re-publishing skills after an upgrade
 
 The Claude Code skills ship in the package but are used from the host's own
