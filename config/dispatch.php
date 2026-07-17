@@ -308,4 +308,38 @@ return [
             'token_path' => env('DISPATCH_AGENT_TOKEN_PATH'),
         ],
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Agent run metrics
+    |--------------------------------------------------------------------------
+    |
+    | Powers `dispatch:metrics`, which reads the local Claude Code transcript and
+    | stamps per-task token/cost/tool/duration figures under context.result.metrics.
+    | A model can't read its own usage mid-run, so the numbers come from the
+    | transcript JSONL — never from the agent's say-so.
+    |
+    | `session_file` is where the SessionStart hook (`dispatch:metrics:capture`)
+    | writes the current transcript path; discovery falls back to the newest
+    | transcript for this project if it's absent. `transcript_root` overrides the
+    | default `~/.claude/projects` location.
+    |
+    | `pricing` is $ / 1M tokens per model, prefix-matched against the transcript's
+    | model id (so `claude-opus-4-8` matches `claude-opus-4-8[1m]`). Raw tokens are
+    | stored durably; cost is derived here, so edit these rates rather than trusting
+    | a baked-in dollar figure. `cache_write` defaults to the 5-minute-TTL rate
+    | (1.25x input); Claude Code may use the 1-hour TTL (2x) — adjust if that
+    | matters for your accounting.
+    */
+    'metrics' => [
+        'session_file' => storage_path('app/dispatch/agent-session.json'),
+        'transcript_root' => env('DISPATCH_METRICS_TRANSCRIPT_ROOT'),
+
+        'pricing' => [
+            'claude-opus-4-8' => ['input' => 5.00, 'output' => 25.00, 'cache_write' => 6.25, 'cache_read' => 0.50],
+            'claude-sonnet-5' => ['input' => 3.00, 'output' => 15.00, 'cache_write' => 3.75, 'cache_read' => 0.30],
+            'claude-haiku-4-5' => ['input' => 1.00, 'output' => 5.00, 'cache_write' => 1.25, 'cache_read' => 0.10],
+            'claude-fable-5' => ['input' => 10.00, 'output' => 50.00, 'cache_write' => 12.50, 'cache_read' => 1.00],
+        ],
+    ],
 ];

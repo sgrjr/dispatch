@@ -142,6 +142,39 @@ immediately**, tell the operator the session ended, and do not silently
 re-request a new session mid-task. Go back to step 1 only if the user wants
 to resume.
 
+### 7. Record run metrics (optional)
+
+To memorialize what the session cost the commissioner — tokens, cost, tool
+usage, duration — compute them from the **local** transcript and attach them
+to the remote task via `done`'s result field. The task lives on production
+(not in the local DB), so pass the claim timestamp as the window and let
+`dispatch:metrics` run in compute-only mode:
+
+```bash
+php artisan dispatch:done <code> --remote \
+  --result="$(php artisan dispatch:metrics <code> --since=<claim-iso8601> --json)"
+```
+
+Metrics always come from the transcript, never your own estimate — you can't
+read your own token usage. (`--stamp`/`--note` are local-DB only and don't
+apply to a remote task.)
+
+### 8. End the session when the work is done
+
+Least-privilege: don't let an idle bearer token linger until its TTL. The
+moment your commissioned work is complete (or you're stopping), surrender the
+credential:
+
+```bash
+php artisan dispatch:session:end
+```
+
+This revokes **your own** session server-side (identified by your token — you
+can only ever end yourself) and deletes the local token. It needs no scope, so
+it always works. After this, every `--remote` verb will `401` until a new
+session is commissioned. Prefer this over walking away and letting the session
+expire.
+
 ---
 
 ## Configuration prerequisites (client side)

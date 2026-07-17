@@ -447,6 +447,61 @@ a claiming agent needs the human's direction, which lives there. Run
 `php artisan dispatch:schema` to get both shapes as data instead of relying on
 this example.
 
+### Agent run metrics
+
+`dispatch:metrics` memorializes what an agent run cost — tokens, dollar cost,
+tool usage, duration, subagents — by reading the **local Claude Code
+transcript** (a model can't read its own token usage mid-run, so these come
+from the transcript, never the agent's estimate). It windows to the task's
+claim→now span, so one Claude Code session working many tasks in the verb loop
+attributes each task correctly.
+
+```
+dispatch:metrics {code} {--since=} {--until=} {--transcript=} {--session=}
+                 {--stamp} {--note} {--json}
+                 → tokens (input/output/cache split + cache-hit ratio), cost_usd,
+                   turns, tool_calls, per-tool histogram, subagents, errors,
+                   models — for the claim→now window
+```
+
+The intended use is to fold it into the same `dispatch:done` call so the
+numbers land under `context.result.metrics` alongside the commit:
+
+```bash
+php artisan dispatch:done TASK-042 --commit=abc1234 \
+  --result="$(php artisan dispatch:metrics TASK-042 --json)"
+```
+
+`--stamp` deep-merges the metrics into `context.result.metrics` directly, and
+`--note` posts a one-line internal summary on the timeline. Raw token counts
+are stored durably; **cost is derived** from the per-model rate table in
+`config/dispatch.php` (`metrics.pricing`), so edit those rates rather than
+trusting a baked-in dollar figure — cache writes default to the 5-minute-TTL
+rate (1.25× input).
+
+**Locating the transcript.** By default the command derives the transcript
+directory from the project path and picks the active session's file, so it
+works with **no setup**. To pin the exact session when several run against one
+project, add a `SessionStart` hook to the **host app's** `.claude/settings.json`
+that records the transcript path (`dispatch:metrics:capture` reads the hook JSON
+on stdin and writes a sidecar the command prefers):
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "php artisan dispatch:metrics:capture" } ] }
+    ]
+  }
+}
+```
+
+The hook is optional — discovery falls back to the newest transcript for the
+project without it. Metrics against a **remote** (production) task work too:
+pass `--since=<claim time>` and `--json` and pipe into `dispatch:done --remote
+--result` (the task lives on production, so `--stamp`/`--note`, which write the
+local DB, don't apply).
+
 ### The remote agent seam — working the production backlog from elsewhere
 
 An agent normally only ever sees the database of the app it's running
@@ -468,6 +523,12 @@ somewhere else — a laptop, a different CI job, another project entirely —
    through the agent API to production instead of the local DB. A `401`
    mid-session means the session was revoked or expired: the local token is
    cleared automatically and the agent should stop.
+5. When the work is done, the agent ends its session with
+   `dispatch:session:end` — a bearer-authed call that revokes its **own**
+   session server-side (no id param, so it can only ever end itself) and
+   deletes the local token. Least-privilege: surrender the credential instead
+   of letting it idle to TTL. The route is not scope-gated, so an agent can
+   always end itself regardless of which verbs it was granted.
 
 Enable it on the **production** (authoritative) instance via the `agent`
 block in `config/dispatch.php`:

@@ -239,7 +239,10 @@ class DispatchServiceProvider extends ServiceProvider
             \Sgrjr\Dispatch\Console\Commands\DispatchSchema::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchSessionRequest::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchSessionStatus::class,
+            \Sgrjr\Dispatch\Console\Commands\DispatchSessionEnd::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchSessionsPrune::class,
+            \Sgrjr\Dispatch\Console\Commands\DispatchMetrics::class,
+            \Sgrjr\Dispatch\Console\Commands\DispatchMetricsCapture::class,
         ];
 
         $this->commands(array_filter($commands, 'class_exists'));

@@ -192,6 +192,36 @@ test('POST done moves the task to done and records a status_change event', funct
         ->and($event->meta['to'])->toBe('done');
 });
 
+test('POST session/end revokes the callers own session; the token then 401s (GAP 5)', function () {
+    $svc = app(AgentSessionService::class);
+    $req = $svc->request('claude-remote', null);
+    $session = AgentSession::where('public_id', $req['public_id'])->firstOrFail();
+    $svc->approve($session, dispatchMakeUser(88500)->id);
+    $token = $svc->poll($req['public_id'], $req['device_code'])['token'];
+
+    $this->withToken($token)->postJson('api/dispatch/agent/session/end')
+        ->assertOk()
+        ->assertJsonPath('ended', true)
+        ->assertJsonPath('status', 'revoked')
+        ->assertJsonPath('public_id', $req['public_id']);
+
+    expect($session->fresh()->status)->toBe(AgentSession::STATUS_REVOKED);
+
+    // The token is now dead — any further call (including end again) 401s.
+    $this->withToken($token)->getJson('api/dispatch/agent/next')->assertStatus(401);
+    $this->withToken($token)->postJson('api/dispatch/agent/session/end')->assertStatus(401);
+});
+
+test('session/end is not scope-gated — a next-only session can still end itself (GAP 5)', function () {
+    $token = agentApiToken(['next']);   // scoped to `next` ONLY
+
+    $this->withToken($token)->postJson('api/dispatch/agent/session/end')->assertOk();
+});
+
+test('session/end requires a valid bearer', function () {
+    $this->postJson('api/dispatch/agent/session/end')->assertStatus(401);
+});
+
 test('the AgentSessions Livewire approve action approves a pending session for a staff user', function () {
     $staff = dispatchMakeUser(803);
     $this->actingAs($staff);

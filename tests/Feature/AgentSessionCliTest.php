@@ -112,6 +112,31 @@ test('dispatch:session:status stores the token once the session is approved', fu
     expect($stored['public_id'])->toBe('pub-status-1');
 });
 
+test('dispatch:session:end revokes remotely and clears the local token (GAP 5)', function () {
+    file_put_contents($this->tokenPath, json_encode([
+        'public_id' => 'pub-end-1',
+        'device_code' => str_repeat('d', 64),
+        'token' => 'live-token',
+    ]));
+
+    Http::fake([
+        '*' => Http::response(['ended' => true, 'status' => 'revoked', 'public_id' => 'pub-end-1'], 200),
+    ]);
+
+    Artisan::call('dispatch:session:end');
+    $output = Artisan::output();
+
+    expect($output)->toContain('Session ended');
+    Http::assertSent(fn ($req) => str_ends_with($req->url(), '/session/end') && $req->method() === 'POST');
+    expect(is_file($this->tokenPath))->toBeFalse();  // local token cleared
+});
+
+test('dispatch:session:end with no local token is a graceful no-op (GAP 5)', function () {
+    Artisan::call('dispatch:session:end');
+
+    expect(Artisan::output())->toContain('nothing to end');
+});
+
 test('the client falls back to DISPATCH_AGENT_REMOTE_URL when merged config lacks agent.remote (GAP 3)', function () {
     // Simulate a host whose published config predates agent.remote: mergeConfigFrom
     // is a shallow array_merge, so the nested key never merged and the resolved

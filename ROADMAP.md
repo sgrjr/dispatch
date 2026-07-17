@@ -527,6 +527,24 @@ Single at-a-glance list of everything open. Details live in §14 / §16 / §17. 
 - [x] Update the `dispatch-track` skill to target production via the agent API (`--remote`), never the local dev DB. *(shipped.)*
 - [ ] **Live delivery (centerpoint runtime).** `php artisan migrate` (dispatch_agent_sessions), set `DISPATCH_AGENT=true` + `DISPATCH_AGENT_BOOTSTRAP_SECRET`, run a queue worker, `npm run build` (nav link), then the live `dispatch:session:request` → approve-in-UI → `dispatch:next --remote` smoke. **By hand.**
 
+### 🛰️ Remote-agent production-run gaps (absorbed from the centerpoint inbox)
+
+> Source: the `dispatch-remote-agent-gaps.md` **inbox** the centerpoint host writes findings into (`staff/storage/notes/`); absorbed here for scheduling, then the inbox is reset to a stub. These came out of the **first real end-to-end `--remote` human-commissioned run against production** (`TASK-001`). All are package-level, not host bugs.
+
+- [x] **GAP 1 (BLOCKER)** `dispatch:session:status` could never succeed — the poll route was bootstrap-gated but the command sent no `X-Dispatch-Bootstrap` header. **Fixed (v0.4.5):** `routes/agent.php` splits the poll into its own group with the bootstrap middleware removed (device_code-only, RFC 8628). *(verified live.)*
+- [x] **GAP 2a (HIGH)** an agent couldn't see a task's description/comments — `claim` returned the summary shape. **Fixed (v0.4.5):** `claim` eager-loads `comments.user` and returns the FULL shape, so human direction arrives on claim with no extra call. *(AgentApiTest.)*
+- [ ] **GAP 2b (HIGH)** the `dispatch-agent-session` skill under-scopes/under-drives: the step-1 request omits `--scope=show` and the documented loop never calls `show`. Add `--scope=show` (+`queue`) to the request example and make "run `dispatch:show <code> --remote` right after claim" a required loop step.
+- [ ] **GAP 2c (LOW, optional)** add a cheap `comment_count` / `has_agent_direction` field to the summary shape so an agent knows to fetch full even if `claim` is left summary-only. *(Touches the frozen `TaskPresenter` C5 contract — additive only; update `dispatch:schema` with it.)*
+- [x] **GAP 3 (MEDIUM)** adding `agent.remote` to the publishable config silently broke hosts that published `config/dispatch.php` before the key existed (shallow `mergeConfigFrom`). **Fixed:** `TalksToAgentApi::agentBaseUrl()/agentTokenPath()` fall back to `env(DISPATCH_AGENT_REMOTE_URL / …TOKEN_PATH)`. *(AgentSessionCliTest — GAP 3 case.)* Remaining nicety → the `UPGRADING.md` note in GAP 4.
+- [ ] **GAP 4 (DOC)** after a dispatch upgrade, stale **config / route / OPcache** caches silently serve old behavior (bit both the bootstrap secret and the GAP-1 route fix on the live run). Add an "After upgrading the dispatch package" section to `UPGRADING.md`: `php artisan optimize:clear` (+ rebuild if caching), and recycle php-fpm/IIS for OPcache `validate_timestamps=0`.
+- [x] **GAP 5 (MEDIUM — security/hygiene)** an agent couldn't self-revoke its bearer token (stayed valid until TTL/human revoke). **Fixed:** `dispatch:session:end` → a bearer-authed, non-scope-gated `POST session/end` that revokes the caller's OWN session (identified by token, no id param) + clears the local token dotfile. *(AgentApiTest / AgentSessionCliTest — GAP 5 cases.)*
+- [ ] **DX polish (operator goodwill — host root cause, CLI could soften the edge):**
+  - [ ] TLS/CA hint — catch cURL error 60 in `TalksToAgentApi` + the session commands and point at `curl.cainfo` / `openssl.cafile`.
+  - [ ] Bootstrap-secret 401 hint — on a 401 from `session:request`, mention a possibly stale **config cache** after rotating the secret.
+  - [ ] `dispatch:session:status --wait[=secs]` — poll-in-process (sleep + retry a few times) so the operator approves on the site once and the agent collects the token in a single blocking call (kills the double-confirmation).
+
+**Bonus shipped alongside GAP 5 (not a gap):** `dispatch:metrics` — per-task agent run metrics (tokens/cost/tools/duration) parsed from the local Claude Code transcript, windowed claim→done, stamped under `context.result.metrics`; optional `SessionStart` capture hook (host-side). *(MetricsTest.)*
+
 ### 🧩 Product-completeness gaps (confirmed — fill over time)
 From a completeness review, verified against code. **The core batch below shipped this session** (Wave 0 foundation + Wave 1 surfaces).
 - [x] **Configurable workflow** — `Task::types()/priorities()/statuses()` + `*Labels()` read `config('dispatch.workflow.*')` (consts stay as fallback); `prioritySql()/statusSql()` generate sort SQL from config; board columns + list/show/create selects + filters all read it. *(shipped; WorkflowConfigTest.)*

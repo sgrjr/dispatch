@@ -9,6 +9,7 @@ use Sgrjr\Dispatch\Http\Middleware\AuthenticateAgentSession;
 use Sgrjr\Dispatch\Models\AgentSession;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
+use Sgrjr\Dispatch\Services\AgentSessionService;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
 use Sgrjr\Dispatch\Support\TaskPresenter;
 
@@ -235,6 +236,27 @@ class AgentController extends Controller
 
         return response()->json([
             'task' => TaskPresenter::toArray($task->fresh()->load('labels', 'submitter', 'assignee')),
+        ]);
+    }
+
+    /**
+     * Self-revoke (§20 — GAP 5). End the CALLER'S OWN session — identified
+     * solely by the bearer token, no id parameter — so a well-behaved agent can
+     * surrender its credential the moment its work is done instead of leaving a
+     * usable token alive until TTL. An agent can only ever end itself. The route
+     * is bearer-authed but not scope-gated, so this works regardless of which
+     * verbs the session was granted.
+     */
+    public function end(Request $request): JsonResponse
+    {
+        $s = $this->session($request);
+
+        app(AgentSessionService::class)->revoke($s);
+
+        return response()->json([
+            'ended' => true,
+            'status' => AgentSession::STATUS_REVOKED,
+            'public_id' => $s->public_id,
         ]);
     }
 

@@ -191,6 +191,20 @@ parse against that instead of guessing field names from examples.
    `--status=verifying` are valid alternatives to `done` when that's the actual
    outcome. (To leave a comment, use `dispatch:note` — `done` has no note flag.)
 
+   **Stamp run metrics (optional).** To memorialize what the run cost —
+   tokens, cost, tool usage, duration — fold `dispatch:metrics` into the same
+   `--result` call so the numbers come from the transcript, not your say-so
+   (you can't read your own token usage, so never hand-write these):
+
+   ```bash
+   php artisan dispatch:done <code> --commit=<sha> \
+     --result="$(php artisan dispatch:metrics <code> --json)"
+   ```
+
+   It windows the transcript to this task's claim→now span (many tasks per
+   session is fine) and lands under `context.result.metrics`. Add `--note` for
+   a one-line internal summary on the timeline instead.
+
 7. **`php artisan dispatch:push`** — only when the user explicitly asks to
    sync local state to a remote install. Never push automatically as a side
    effect of finishing a task.

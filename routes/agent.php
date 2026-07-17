@@ -49,4 +49,10 @@ Route::middleware(['dispatch.agent', 'throttle:dispatch-agent-verb'])->group(fun
     Route::post('add', [AgentController::class, 'add'])->middleware('dispatch.agent.scope:add')->name('add');
     Route::post('note', [AgentController::class, 'note'])->middleware('dispatch.agent.scope:note')->name('note');
     Route::post('done', [AgentController::class, 'done'])->middleware('dispatch.agent.scope:done')->name('done');
+
+    // Self-revoke (§20). Bearer-authed like the verbs, but deliberately NOT
+    // scope-gated — ending your own session is a hygiene action every agent may
+    // take, not a backlog verb. Identified purely by the bearer token (no id
+    // param), so an agent can only ever end ITSELF, never another session.
+    Route::post('session/end', [AgentController::class, 'end'])->name('session.end');
 });
