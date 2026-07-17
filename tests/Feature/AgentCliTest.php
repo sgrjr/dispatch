@@ -198,6 +198,44 @@ test('dispatch:queue --remote calls GET queue and prints the returned tasks', fu
         && str_contains($request->url(), 'status=open'));
 });
 
+test('dispatch:show renders an Agent run section from stamped context.result.metrics', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'agent-worked task']);
+    $task->context = ['result' => ['commit' => 'abc1234', 'metrics' => [
+        'window' => ['basis' => 'claimed_at'],
+        'duration_s' => 754,
+        'transcript' => ['source' => 'session-file'],
+        'tokens' => ['input' => 1000, 'output' => 500, 'cache_read' => 8000, 'cache_creation' => 1500, 'total' => 11000, 'cache_hit_ratio' => 0.7273],
+        'cost_usd' => 0.1234,
+        'cost_partial' => false,
+        'turns' => 8,
+        'tool_calls' => 22,
+        'tools' => ['Bash' => 10, 'Read' => 8],
+        'subagents' => 2,
+        'errors' => 1,
+        'models' => ['claude-opus-4-8'],
+    ]]];
+    $task->save();
+
+    Artisan::call('dispatch:show', ['code' => $task->code]);
+    $out = Artisan::output();
+
+    expect($out)->toContain('# Agent run')
+        ->and($out)->toContain('11k (72.7% cached)')
+        ->and($out)->toContain('duration: 12m 34s')
+        ->and($out)->toContain('cost: $0.1234')
+        ->and($out)->toContain('Bash · 10')
+        ->and($out)->toContain('claude-opus-4-8')
+        ->and($out)->toContain('commit: abc1234');
+});
+
+test('dispatch:show omits the Agent run section when no metrics are stamped', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'never worked by an agent']);
+
+    Artisan::call('dispatch:show', ['code' => $task->code]);
+
+    expect(Artisan::output())->not->toContain('# Agent run');
+});
+
 test('dispatch:show --remote calls GET show/{code} and prints the returned task', function () {
     Http::fake([
         'agent.example.test/*' => Http::response(['task' => ['code' => 'TASK-902', 'title' => 'remote show', 'comments' => []]], 200),

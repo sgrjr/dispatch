@@ -23,6 +23,10 @@
         .dispatch-gallery-thumb { width: 6rem; height: 6rem; border-radius: var(--dispatch-radius-sm); overflow: hidden; border: 1px solid var(--dispatch-border); display: block; }
         .dispatch-gallery-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
         .dispatch-file-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.6rem; border: 1px solid var(--dispatch-border); border-radius: var(--dispatch-radius-sm); font-size: 0.78rem; }
+        .dispatch-stat-row { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+        .dispatch-stat { flex: 1 1 6rem; min-width: 6rem; background: var(--dispatch-surface-muted); border: 1px solid var(--dispatch-border); border-radius: var(--dispatch-radius-md); padding: 0.55rem 0.75rem; }
+        .dispatch-stat-value { font-size: 1.2rem; font-weight: 700; line-height: 1.1; }
+        .dispatch-stat-label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--dispatch-text-muted); margin-top: 0.2rem; }
     </style>
 
     {{-- Header --}}
@@ -139,6 +143,82 @@
                         @endforeach
                     </ul>
                 @endif
+            </div>
+        </section>
+    @endif
+
+    {{--
+        Agent run metrics (staff-facing). The token / cost / tool footprint an
+        agent stamps at dispatch:done time under context.result.metrics (see
+        dispatch:metrics --stamp). Rendered ONLY once a run has been stamped, so
+        the panel's presence is the confirmation that metrics are captured and
+        stored — its absence means nothing has been stamped for this task yet.
+    --}}
+    @php($agentMetrics = \Sgrjr\Dispatch\Support\MetricsPresenter::present($task->context))
+    @if ($this->canEdit() && $agentMetrics !== null)
+        <section class="dispatch-card" style="margin-top: 1rem;">
+            <h2 class="dispatch-section-title">Agent run</h2>
+
+            <div class="dispatch-stat-row">
+                <div class="dispatch-stat">
+                    <div class="dispatch-stat-value" title="{{ $agentMetrics['total_tokens_full'] }} tokens">{{ $agentMetrics['total_tokens'] }}</div>
+                    <div class="dispatch-stat-label">tokens · {{ $agentMetrics['cache_pct'] }} cached</div>
+                </div>
+                <div class="dispatch-stat">
+                    <div class="dispatch-stat-value">{{ $agentMetrics['cost'] }}</div>
+                    <div class="dispatch-stat-label">cost</div>
+                </div>
+                <div class="dispatch-stat">
+                    <div class="dispatch-stat-value">{{ $agentMetrics['duration'] }}</div>
+                    <div class="dispatch-stat-label">duration</div>
+                </div>
+                <div class="dispatch-stat">
+                    <div class="dispatch-stat-value">{{ $agentMetrics['tool_calls'] }}</div>
+                    <div class="dispatch-stat-label">tool calls</div>
+                </div>
+                <div class="dispatch-stat">
+                    <div class="dispatch-stat-value">{{ $agentMetrics['turns'] }}</div>
+                    <div class="dispatch-stat-label">turns</div>
+                </div>
+                <div class="dispatch-stat">
+                    <div class="dispatch-stat-value">{{ $agentMetrics['subagents'] }}</div>
+                    <div class="dispatch-stat-label">subagents</div>
+                </div>
+                @if ($agentMetrics['errors'] > 0)
+                    <div class="dispatch-stat">
+                        <div class="dispatch-stat-value" style="color:#c0392b;">{{ $agentMetrics['errors'] }}</div>
+                        <div class="dispatch-stat-label">errors</div>
+                    </div>
+                @endif
+            </div>
+
+            <div class="dispatch-meta-grid" style="margin-top:0.9rem;">
+                <div><label class="dispatch-label">Input</label><div style="font-size:0.8rem;">{{ $agentMetrics['tokens']['input'] }}</div></div>
+                <div><label class="dispatch-label">Output</label><div style="font-size:0.8rem;">{{ $agentMetrics['tokens']['output'] }}</div></div>
+                <div><label class="dispatch-label">Cache read</label><div style="font-size:0.8rem;">{{ $agentMetrics['tokens']['cache_read'] }}</div></div>
+                <div><label class="dispatch-label">Cache write</label><div style="font-size:0.8rem;">{{ $agentMetrics['tokens']['cache_creation'] }}</div></div>
+            </div>
+
+            @if (! empty($agentMetrics['tools']))
+                <div style="margin-top:0.9rem;">
+                    <label class="dispatch-label">Tools</label>
+                    <div class="dispatch-show-badges" style="margin-top:0.4rem;">
+                        @foreach ($agentMetrics['tools'] as $tool)
+                            <span class="dispatch-badge">{{ $tool['name'] }} · {{ $tool['count'] }}</span>
+                        @endforeach
+                    </div>
+                </div>
+            @endif
+
+            <div class="dispatch-meta-grid" style="margin-top:0.9rem;">
+                @if (! empty($agentMetrics['models']))
+                    <div style="grid-column: 1 / -1;"><label class="dispatch-label">Models</label><div style="font-size:0.75rem; color: var(--dispatch-text-muted); word-break: break-all;">{{ implode(', ', $agentMetrics['models']) }}</div></div>
+                @endif
+                @if ($agentMetrics['commit'])
+                    <div><label class="dispatch-label">Commit</label><div style="font-size:0.78rem; font-family: monospace;">{{ $agentMetrics['commit'] }}</div></div>
+                @endif
+                <div><label class="dispatch-label">Window</label><div style="font-size:0.78rem;">{{ $agentMetrics['window_basis'] }}</div></div>
+                <div><label class="dispatch-label">Transcript</label><div style="font-size:0.78rem;">{{ $agentMetrics['transcript_source'] }}</div></div>
             </div>
         </section>
     @endif

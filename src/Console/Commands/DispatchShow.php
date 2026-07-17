@@ -5,6 +5,7 @@ namespace Sgrjr\Dispatch\Console\Commands;
 use Illuminate\Console\Command;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 use Sgrjr\Dispatch\Models\Task;
+use Sgrjr\Dispatch\Support\MetricsPresenter;
 use Sgrjr\Dispatch\Support\TaskPresenter;
 
 /**
@@ -93,6 +94,29 @@ class DispatchShow extends Command
             foreach (array_slice($errs, -5) as $e) {
                 $this->line('    <fg=red>'.($e['type'] ?? 'error').'</>: '.($e['message'] ?? ''));
             }
+        }
+
+        // Agent run metrics (parity with the staff "Agent run" panel). Present
+        // only once a run has been stamped under context.result.metrics — same
+        // MetricsPresenter shaping, so the CLI and the web view read identically.
+        if (($m = MetricsPresenter::present($task->context)) !== null) {
+            $this->newLine();
+            $this->line('<fg=gray># Agent run</>');
+            $this->line("  tokens: {$m['total_tokens']} ({$m['cache_pct']} cached)  ·  cost: {$m['cost']}  ·  duration: {$m['duration']}");
+            $this->line("  turns: {$m['turns']}  ·  tool calls: {$m['tool_calls']}  ·  subagents: {$m['subagents']}  ·  errors: {$m['errors']}");
+            $this->line("  input {$m['tokens']['input']} · output {$m['tokens']['output']} · cache read {$m['tokens']['cache_read']} · cache write {$m['tokens']['cache_creation']}");
+            if (! empty($m['tools'])) {
+                $this->line('  tools: '.implode(', ', array_map(fn ($t) => "{$t['name']} · {$t['count']}", $m['tools'])));
+            }
+            if (! empty($m['models'])) {
+                $this->line('  models: '.implode(', ', $m['models']));
+            }
+            $tail = array_filter([
+                $m['commit'] ? "commit: {$m['commit']}" : null,
+                "window: {$m['window_basis']}",
+                "transcript: {$m['transcript_source']}",
+            ]);
+            $this->line('  '.implode('  ·  ', $tail));
         }
 
         $this->newLine();

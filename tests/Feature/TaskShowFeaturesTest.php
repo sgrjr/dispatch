@@ -44,6 +44,47 @@ test('editing the description memorializes the previous body as a hidden event a
     expect($memorial->is_internal)->toBeTrue();
 });
 
+test('the Agent run panel renders the stamped metrics for staff', function () {
+    $staff = dispatchMakeUser(40);
+    $this->actingAs($staff);
+
+    $task = app(DispatchTaskService::class)->create(['title' => 'agent-worked task']);
+    $task->context = ['result' => ['commit' => 'abc1234', 'metrics' => [
+        'window' => ['basis' => 'claimed_at'],
+        'duration_s' => 754,
+        'transcript' => ['source' => 'session-file'],
+        'tokens' => ['input' => 1000, 'output' => 500, 'cache_read' => 8000, 'cache_creation' => 1500, 'total' => 11000, 'cache_hit_ratio' => 0.7273],
+        'cost_usd' => 0.1234,
+        'cost_partial' => false,
+        'turns' => 8,
+        'tool_calls' => 22,
+        'tools' => ['Bash' => 10, 'Read' => 8],
+        'subagents' => 2,
+        'errors' => 1,
+        'models' => ['claude-opus-4-8'],
+    ]]];
+    $task->save();
+
+    Livewire::test(TaskShow::class, ['task' => $task])
+        ->assertSee('Agent run')
+        ->assertSee('11k')            // compact total tokens
+        ->assertSee('12m 34s')        // humanized duration
+        ->assertSee('$0.1234')        // cost
+        ->assertSee('Bash · 10')      // top tool
+        ->assertSee('claude-opus-4-8')
+        ->assertSee('abc1234');       // commit from context.result
+});
+
+test('the Agent run panel is absent when a task has no stamped metrics', function () {
+    $staff = dispatchMakeUser(41);
+    $this->actingAs($staff);
+
+    $task = app(DispatchTaskService::class)->create(['title' => 'never worked by an agent']);
+
+    Livewire::test(TaskShow::class, ['task' => $task])
+        ->assertDontSee('Agent run');
+});
+
 test('watch() and unwatch() toggle isWatchedBy for the current user', function () {
     $staff = dispatchMakeUser(2);
     $this->actingAs($staff);

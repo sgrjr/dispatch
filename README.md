@@ -577,6 +577,18 @@ pass `--since=<claim time>` and `--json` and pipe into `dispatch:done --remote
 --result` (the task lives on production, so `--stamp`/`--note`, which write the
 local DB, don't apply).
 
+**Where stamped metrics show up.** Once a run is stamped under
+`context.result.metrics`, two staff-facing surfaces render it — so the panel's
+mere presence is your confirmation the run was captured and stored, and its
+absence means nothing has been stamped for that task yet:
+
+- **Task detail page** — an "Agent run" card (staff only) with stat tiles for
+  tokens (+cache-hit %), cost, duration, tool calls, turns, subagents and
+  errors, a token split, a per-tool histogram, and the models / commit / window
+  / transcript source.
+- **`dispatch:show TASK-042`** — the same figures as a `# Agent run` block in
+  the CLI, for parity with the web view.
+
 ### The remote agent seam — working the production backlog from elsewhere
 
 An agent normally only ever sees the database of the app it's running
