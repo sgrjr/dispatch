@@ -66,6 +66,13 @@ php artisan vendor:publish --tag=dispatch-views
 
 # Compiled front-end assets used by the Livewire components
 php artisan vendor:publish --tag=dispatch-assets
+
+# Claude Code skills (dispatch-track + dispatch-agent-session) into .claude/skills/.
+# Required for the skills to work at all — Claude Code discovers skills only from
+# your project's .claude/skills, never from vendor/. Re-run with --force to re-sync
+# after upgrading; without --force it skips files you've already customized (e.g. an
+# agent-session skill you've pointed at your own production host).
+php artisan vendor:publish --tag=dispatch-skills
 ```
 
 ---
