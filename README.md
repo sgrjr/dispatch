@@ -561,3 +561,11 @@ throttled, or on failure — safe to call inside an exception handler.
 - `throttle_seconds` — minimum seconds between writes per signature (error-storm guard).
 - `environments` — `null` for all, or e.g. `['production']` to gate out dev noise.
 - `redact` — keys whose values are scrubbed from captured request input.
+
+## Upgrading: Runtime Activation on Production
+
+- composer update sgrjr/dispatch
+- php artisan migrate
+- set DISPATCH_AGENT=true + DISPATCH_AGENT_BOOTSTRAP_SECRET
+- a running queue worker
+- and npm run build.
