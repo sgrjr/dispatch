@@ -92,3 +92,34 @@ test('a scoped-down session is forbidden from every verb outside its grant', fun
     $this->withToken($token)->postJson('api/dispatch/agent/add', ['title' => 'x'])->assertStatus(403);
     $this->withToken($token)->postJson('api/dispatch/agent/done', ['code' => 'X'])->assertStatus(403);
 });
+
+test('scopes requested over HTTP flow through to approval (a scoped request grants only those verbs)', function () {
+    $bootstrap = $this->postJson('api/dispatch/agent/session', [
+        'agent_name' => 'scoped-agent',
+        'scopes' => ['next'],
+    ])->assertCreated()->json();
+
+    $session = AgentSession::where('public_id', $bootstrap['public_id'])->firstOrFail();
+    app(AgentSessionService::class)->approve($session, dispatchMakeUser(97100)->id);
+    $token = app(AgentSessionService::class)->poll($bootstrap['public_id'], $bootstrap['device_code'])['token'];
+
+    $this->withToken($token)->getJson('api/dispatch/agent/next')->assertOk();
+    $this->withToken($token)->getJson('api/dispatch/agent/queue')->assertStatus(403);
+});
+
+test('an explicit empty scopes request means deny-all, not the full allowlist', function () {
+    $bootstrap = $this->postJson('api/dispatch/agent/session', [
+        'agent_name' => 'zero-scope-agent',
+        'scopes' => [],
+    ])->assertCreated()->json();
+
+    $session = AgentSession::where('public_id', $bootstrap['public_id'])->firstOrFail();
+    app(AgentSessionService::class)->approve($session, dispatchMakeUser(97200)->id);
+
+    // The approver granted nothing because the agent explicitly requested [] —
+    // not silently widened to the full allowlist (the array_filter regression).
+    expect($session->fresh()->scopes)->toBe([]);
+
+    $token = app(AgentSessionService::class)->poll($bootstrap['public_id'], $bootstrap['device_code'])['token'];
+    $this->withToken($token)->getJson('api/dispatch/agent/next')->assertStatus(403);
+});

@@ -26,10 +26,20 @@ class AgentSessionController extends Controller
             'meta' => ['nullable', 'array'],
         ]);
 
+        // Carry an explicit scopes request through to requested_meta. Preserve an
+        // explicit empty scopes:[] (= request nothing → deny-all on approve);
+        // only OMIT scopes when the key was truly absent (→ approver gets the
+        // full allowlist by default). An `array_filter` here would drop the []
+        // and silently widen an empty request to the full allowlist.
+        $meta = $v['meta'] ?? [];
+        if (array_key_exists('scopes', $v)) {
+            $meta['scopes'] = $v['scopes'] ?? [];
+        }
+
         $payload = app(AgentSessionService::class)->request(
             $v['agent_name'],
             $v['purpose'] ?? null,
-            array_filter(['scopes' => $v['scopes'] ?? null] + ($v['meta'] ?? [])),
+            $meta,
             $request->ip(),
         );
 

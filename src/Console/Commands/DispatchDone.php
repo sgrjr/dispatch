@@ -29,9 +29,12 @@ class DispatchDone extends Command
 
     public function handle(DispatchTaskService $tasks): int
     {
+        // Validate against the configured workflow vocab (Task::statuses()),
+        // not the const — so a host that adds a custom status via
+        // dispatch.workflow.statuses can use it here, matching the agent API + UI.
         $status = $this->option('status');
-        if (! in_array($status, Task::STATUSES, true)) {
-            $this->error('--status must be one of: '.implode(', ', Task::STATUSES));
+        if (! in_array($status, Task::statuses(), true)) {
+            $this->error('--status must be one of: '.implode(', ', Task::statuses()));
 
             return self::FAILURE;
         }

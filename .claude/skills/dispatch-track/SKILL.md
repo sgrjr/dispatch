@@ -142,7 +142,7 @@ dispatch:claim --json      # atomically claim it: in_progress + assigned, in
     ↓
 dispatch:note <code> "..."  # record findings / decisions as you go (repeatable)
     ↓
-dispatch:done <code> --ref=<commit-sha-or-pr>   # close it out
+dispatch:done <code> --commit=<sha> --result='{...}'   # close it out (structured completion)
     ↓
 dispatch:push              # sync local state back up, if a remote is configured
 ```
@@ -181,14 +181,15 @@ parse against that instead of guessing field names from examples.
 
 5. **`php artisan dispatch:note <code> "<finding>"`** — as you discover
    things (root cause, a decision point, a blocker), log them immediately
-   rather than only summarizing at the end. Defaults to an internal note;
-   pass `--public` if it should be visible to a submitter.
+   rather than only summarizing at the end. The note is visible to the
+   submitter by default; pass `--internal` to keep it staff-only.
 
-6. **`php artisan dispatch:done <code> --ref=<commit-sha-or-PR> [--note="..."]`**
-   — mark the task complete once the work lands. `--status=declined` or
-   `--status=verifying` are valid alternatives to `done` when that's the
-   actual outcome. Always pass `--ref` when you have a commit SHA or PR
-   number — it's the audit trail back to the change.
+6. **`php artisan dispatch:done <code> --commit=<sha> --result='{"tests":"passing"}'`**
+   — mark the task complete once the work lands. `--commit` + `--result` are
+   stored under the task's `context.result` as the audit trail back to the
+   change; always pass a commit SHA when you have one. `--status=declined` or
+   `--status=verifying` are valid alternatives to `done` when that's the actual
+   outcome. (To leave a comment, use `dispatch:note` — `done` has no note flag.)
 
 7. **`php artisan dispatch:push`** — only when the user explicitly asks to
    sync local state to a remote install. Never push automatically as a side

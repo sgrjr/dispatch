@@ -35,16 +35,18 @@ class DispatchAdd extends Command
 
     public function handle(DispatchTaskService $tasks): int
     {
+        // Validate against the configured workflow vocab (not the const) so a
+        // host's custom types/priorities are accepted, matching the agent API + UI.
         $type = $this->option('type');
-        if ($type !== null && ! in_array($type, Task::TYPES, true)) {
-            $this->error('--type must be one of: '.implode(', ', Task::TYPES));
+        if ($type !== null && ! in_array($type, Task::types(), true)) {
+            $this->error('--type must be one of: '.implode(', ', Task::types()));
 
             return self::FAILURE;
         }
 
         $priority = $this->option('priority');
-        if ($priority !== null && ! in_array($priority, Task::PRIORITIES, true)) {
-            $this->error('--priority must be one of: '.implode(', ', Task::PRIORITIES));
+        if ($priority !== null && ! in_array($priority, Task::priorities(), true)) {
+            $this->error('--priority must be one of: '.implode(', ', Task::priorities()));
 
             return self::FAILURE;
         }
