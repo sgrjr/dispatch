@@ -48,7 +48,7 @@ against production over the network as that session.
 php artisan dispatch:session:request \
   --name="<agent name>" \
   --purpose="<short reason for this session>" \
-  --scope=next --scope=claim --scope=show --scope=note --scope=done \
+  --scope=next --scope=queue --scope=claim --scope=show --scope=note --scope=done \
   [--secret=<bootstrap secret, if not already configured>]
 ```
 
@@ -98,32 +98,41 @@ Once approved, every verb takes `--remote` to route through the agent API
 against production instead of the local DB:
 
 ```bash
-php artisan dispatch:next --remote --json         # preview what's next (read-only, SUMMARY shape)
-php artisan dispatch:claim --remote --json        # atomically claim it: in_progress + assigned,
-                                                   # in one transaction — safe if other agents/humans
-                                                   # are polling the same backlog. Returns the FULL
-                                                   # shape (description + comments) — READ IT.
+php artisan dispatch:queue --remote --json         # triage: the next N candidates (read-only, SUMMARY shape)
+php artisan dispatch:next --remote --json          # or just preview the single top task (read-only, SUMMARY shape)
+php artisan dispatch:show <code> --remote --json    # read a CANDIDATE's full brief (description + comments) BEFORE claiming
+php artisan dispatch:claim --remote --json          # atomically claim it: in_progress + assigned in one txn — safe if
+                                                     # other agents/humans poll the same backlog. Returns the FULL shape
+                                                     # (description + comments) — READ IT before working.
 # ...do the actual work...
-php artisan dispatch:show <code> --remote --json   # re-read the full brief any time (description + comments)
-php artisan dispatch:note <code> "<finding>" --remote
+php artisan dispatch:note <code> "<finding>" --remote   # record findings/decisions as you go (repeatable)
+php artisan dispatch:show <code> --remote --json    # re-read the full brief at any point
 php artisan dispatch:done <code> --remote \
-  --commit=<sha> --result='{"tests":"passing"}'   # structured completion → context.result
+  --commit=<sha> --result='{"tests":"passing"}'      # structured completion → context.result
 ```
 
 Always claim before working — never assume a task is yours just because
 `dispatch:next` showed it to you; another agent (or a human) could claim it
-first. `dispatch:claim` is the atomic, race-safe pickup; `dispatch:next` is
-only a preview.
+first. `dispatch:claim` is the atomic, race-safe pickup; `dispatch:next` and
+`dispatch:queue` are only previews.
 
-**Read the human's direction before you start.** `dispatch:next`/`queue`
-return only the SUMMARY shape — title, type, labels — never the `description`
-or `comments`, which is where a human plants direction ("do X first", "don't
-touch Y"). `dispatch:claim` returns the FULL shape (description + the full
-`comments[]` thread) for exactly this reason: parse it and follow any
-direction there before touching code. To re-read a task's full brief at any
-point, `dispatch:show <code> --remote --json` (needs the `show` scope — hence
-`--scope=show` in step 1). Skipping this means working blind to what the
-commissioner actually asked for.
+**Reading the human's direction is a required step, not optional.**
+`dispatch:next` / `dispatch:queue` return only the SUMMARY shape — title,
+type, labels — never the `description` or `comments`, which is exactly where a
+human plants direction ("do X first", "don't touch Y"). Two ways to get the
+full brief, and you must use one before you start work:
+
+- **Before claiming** — to compare or vet candidates from a `next`/`queue`
+  preview, `dispatch:show <code> --remote --json` reads that task's full brief
+  (needs the `show` scope).
+- **On claim** — `dispatch:claim` deliberately returns the FULL shape
+  (description + the entire `comments[]` thread). Parse it and follow any
+  direction there before touching code.
+
+Working straight from a summary means working blind to what the commissioner
+actually asked for. The `queue` and `show` scopes requested in step 1 are what
+make this triage-then-inspect path possible — that's why they're in the
+request.
 
 `dispatch:schema` prints the frozen `TaskPresenter` JSON contract (summary +
 full-view keys, plus the timeline event vocabulary) — parse `--json` output
