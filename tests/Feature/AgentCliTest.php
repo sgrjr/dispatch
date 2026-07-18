@@ -354,6 +354,49 @@ test('dispatch:queue --remote forwards --limit as a query param', function () {
         && str_contains($request->url(), 'limit=5'));
 });
 
+// --- W4-4: dispatch:queue --count / W4-8: dispatch:next --status -------------
+
+test('dispatch:queue --count emits totals by status (W4-4)', function () {
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'o1', 'status' => 'open']);
+    $svc->create(['title' => 'o2', 'status' => 'open']);
+    $svc->create(['title' => 't1', 'status' => 'triage']);
+
+    Artisan::call('dispatch:queue', ['--count' => true, '--json' => true]);
+    $out = json_decode(Artisan::output(), true);
+
+    expect($out['total'])->toBe(3)
+        ->and($out['by_status']['open'])->toBe(2)
+        ->and($out['by_status']['triage'])->toBe(1);
+});
+
+test('dispatch:next --status restricts to a single status (W4-8)', function () {
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'triage hi', 'status' => 'triage', 'priority' => 'high']);
+    $open = $svc->create(['title' => 'open lo', 'status' => 'open', 'priority' => 'low']);
+
+    Artisan::call('dispatch:next', ['--status' => 'open', '--json' => true]);
+    $out = json_decode(Artisan::output(), true);
+
+    expect($out['code'])->toBe($open->code);
+});
+
+test('dispatch:queue --remote --count forwards count=1 and prints the returned envelope', function () {
+    Http::fake([
+        'agent.example.test/*' => Http::response(['total' => 5, 'by_status' => ['open' => 3, 'triage' => 2]], 200),
+    ]);
+
+    $exit = Artisan::call('dispatch:queue', ['--remote' => true, '--count' => true, '--json' => true]);
+    expect($exit)->toBe(0);
+
+    $out = json_decode(Artisan::output(), true);
+    expect($out['total'])->toBe(5)
+        ->and($out['by_status']['open'])->toBe(3);
+
+    Http::assertSent(fn ($request) => str_contains($request->url(), '/api/dispatch/agent/queue')
+        && str_contains($request->url(), 'count=1'));
+});
+
 test('dispatch:show renders an Agent run section from stamped context.result.metrics', function () {
     $task = app(DispatchTaskService::class)->create(['title' => 'agent-worked task']);
     $task->context = ['result' => ['commit' => 'abc1234', 'metrics' => [

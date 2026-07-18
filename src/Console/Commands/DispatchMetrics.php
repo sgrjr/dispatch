@@ -7,8 +7,8 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
+use Sgrjr\Dispatch\Support\AgentMetrics;
 use Sgrjr\Dispatch\Support\TranscriptLocator;
-use Sgrjr\Dispatch\Support\TranscriptMetrics;
 
 /**
  * Compute agent-run metrics (tokens, cost, tool usage, duration) for a task from
@@ -79,40 +79,19 @@ class DispatchMetrics extends Command
             $since = $claim?->created_at;
         }
 
-        $loc = $locator->locate(
-            $this->option('transcript') ?: null,
-            $this->option('session') ?: null,
-            $this->option('project-dir') ?: null,
-            config('dispatch.metrics.session_file'),
-            config('dispatch.metrics.transcript_root'),
+        $metrics = AgentMetrics::collect(
+            $locator,
+            $since,
+            $until,
+            $this->option('since') ? 'since-option' : ($claim ? 'claimed_at' : 'unbounded'),
+            [
+                'transcript' => $this->option('transcript') ?: null,
+                'session' => $this->option('session') ?: null,
+                'projectDir' => $this->option('project-dir') ?: null,
+            ],
         );
 
-        $files = [];
-        if ($loc['main'] !== null) {
-            $files[] = ['path' => $loc['main'], 'subagent' => false];
-        }
-        foreach ($loc['subagents'] as $sub) {
-            $files[] = ['path' => $sub, 'subagent' => true];
-        }
-
-        $svc = new TranscriptMetrics((array) config('dispatch.metrics.pricing', []));
-        $computed = $svc->summarize($files, $since?->getTimestamp(), $until?->getTimestamp());
-
-        $metrics = array_merge([
-            'window' => [
-                'from' => optional($since)->toIso8601String(),
-                'to' => $until->toIso8601String(),
-                'basis' => $this->option('since') ? 'since-option' : ($claim ? 'claimed_at' : 'unbounded'),
-            ],
-            'duration_s' => $since !== null ? max(0, $until->getTimestamp() - $since->getTimestamp()) : null,
-            'transcript' => [
-                'source' => $loc['source'],
-                'main' => $loc['main'],
-                'subagent_files' => count($loc['subagents']),
-            ],
-        ], $computed);
-
-        if ($loc['main'] === null && ! $json) {
+        if ($metrics['transcript']['main'] === null && ! $json) {
             $this->warn('No transcript located — token metrics are zero. Pass --transcript=, --session=, or install the SessionStart capture hook.');
         }
 

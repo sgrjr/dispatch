@@ -129,6 +129,14 @@ never spin in a tight loop.
 
 ### 5. Drive the `--remote` verb loop
 
+**The status vocabulary** (a task moves left → right): `triage` (filed, unvetted) →
+`open` (triaged & **greenlit** — a human decided it's ready to work) → `in_progress`
+(claimed, being worked) → `verifying` (work complete, **awaiting human confirmation**) →
+`done` (closed) · `declined` (won't-do). Two of these are load-bearing for an agent and
+each has its own trap: **`open` vs `triage`** decides *what to survey* (§5c — "open" is
+overloaded), and **`verifying` vs `done`** decides *how to close* (§5d — "done" is the
+reflex trap).
+
 Once approved, every verb takes `--remote` to route through the agent API
 against production instead of the local DB:
 
@@ -144,6 +152,7 @@ php artisan dispatch:note <code> "<finding>" --remote   # record findings/decisi
 php artisan dispatch:show <code> --remote --json    # re-read the full brief at any point
 php artisan dispatch:done <code> --remote \
   --commit=<sha> --result='{"tests":"passing"}'      # structured completion → context.result
+                                                     # choose --status: done vs verifying — see §5d
 ```
 
 Always claim before working — never assume a task is yours just because
@@ -151,7 +160,11 @@ Always claim before working — never assume a task is yours just because
 first. `dispatch:claim` is the atomic, race-safe pickup; `dispatch:next` and
 `dispatch:queue` are only previews. Scope to agent-appropriate work with
 `--type` / `--label` on `next`/`queue`/`claim` (e.g. `--label=agent:ok`) so you
-only pick up tasks a human has cleared for an agent.
+only pick up tasks a human has cleared for an agent. **`dispatch:queue` also takes
+`--status=<one status>`** to restrict to a single state — `--status=open` for just
+the greenlit items, `--status=in_progress` for what's mid-flight; with no `--status`
+it returns the whole non-done set (`open + in_progress + triage`). This is the filter
+that maps directly to "work the open items" (§5c).
 
 **Reading the human's direction is a required step, not optional.**
 `dispatch:next` / `dispatch:queue` return only the SUMMARY shape — title,
@@ -272,18 +285,39 @@ build a plan"), do **not** claim them up front — that marks every task
 `in_progress`, assigns them to you, blocks other agents, and you can still only
 work one at a time. The pipeline shape is **survey → plan → claim-as-you-go**:
 
-1. **Survey (read-only).** Pull the open backlog as the SUMMARY shape, capped so
-   you don't drag the whole board over the wire — the queue is already
-   priority-sorted:
+**First, disambiguate "open"** — it has two readings (see the §5 status glossary),
+very different in size:
+
+- the **literal `status:open`** set — triaged & greenlit tasks, often a batch a human
+  bulk-moved `triage → open` to mean "these, now" (`--status=open`); versus
+- the **colloquial "everything not done"** — the whole `open + in_progress + triage`
+  backlog (the `dispatch:queue` default).
+
+If which one the operator means isn't obvious, **ask, or state your reading** ("working
+the N literal `status:open` items") before you plan — don't silently pick the whole
+backlog when they meant the greenlit few, or vice-versa.
+
+1. **Survey (read-only).** Pull the backlog as the SUMMARY shape, capped so you
+   don't drag the whole board over the wire — the queue is already priority-sorted.
+   Match the `--status` to the reading you settled on above:
 
    ```bash
-   php artisan dispatch:queue --remote --limit=50 --json
-   php artisan dispatch:queue --remote --label=agent:ok --limit=50 --json  # scope to agent-cleared work
+   php artisan dispatch:queue --remote --status=open --limit=50 --json       # the literal greenlit `status:open` items
+   php artisan dispatch:queue --remote --limit=50 --json                     # the whole non-done backlog (open+in_progress+triage)
+   php artisan dispatch:queue --remote --label=agent:ok --limit=50 --json    # scope to agent-cleared work (combine with --status)
    ```
 
-2. **Read direction before planning.** Any candidate with `comment_count > 0`
-   carries human notes the summary hides — `dispatch:show <code> --remote --json`
-   each of those so the plan reflects what was actually asked, not just titles.
+2. **Vet each candidate before planning it as work** — two things the summary can't
+   tell you:
+   - **Read the human's direction.** Any candidate with `comment_count > 0` carries
+     notes the summary hides — `dispatch:show <code> --remote --json` each of those so
+     the plan reflects what was actually asked, not just the title.
+   - **Confirm it isn't already done.** A backfilled / imported task can describe a
+     change that *already shipped* — the migration can't know it landed, so a real
+     fraction of an imported backlog is pre-resolved. Before planning one as work,
+     grep/inspect the described change in the tree; if it's already present, don't
+     plan it — `claim` it, `note` the evidence (`file:line` + the landing commit), and
+     `done` it as **already-implemented**. (This is cheap and saves planning phantom work.)
 
 3. **Build + share the plan.** Order by priority, call out dependencies, and put
    the plan in front of the human. If they want it memorialized on the board (not
@@ -312,6 +346,35 @@ work one at a time. The pipeline shape is **survey → plan → claim-as-you-go*
 This is the multi-task generalization of §5a: §5a claims one *named* task; here you
 plan across the whole open set and claim them **serially**, never all at once.
 
+### 5d. Closing a task — `done` vs `verifying` (vs `declined`)
+
+`dispatch:done` sets the *final* status, and `--status=done` is the default — which is
+exactly the trap. You "did what was asked," so `done` *feels* right every time. But
+`done` means **closed: nothing more for a human to do**, and plenty of work can't
+honestly claim that yet. Pick the status by **who still has to act**, not by whether
+*your* part is finished:
+
+| Status | Choose it when |
+|---|---|
+| `done` | You **verified the change end-to-end yourself** — ran it / exercised the actual flow, tests pass — **and** it's self-contained and low-risk. Nothing is left for a human to check. This is still the common case; don't be shy about it when you truly verified. |
+| `verifying` | The work is complete but **something you can't do yourself must happen before it's truly closed**: a human-eyes / visual / UX check, a deploy or migration to run, a device / credential / prod-data check you don't have, or the task or its comments explicitly asked for sign-off. Also use it when the blast radius is high (auth, billing, migrations, data integrity) and a human should bless it even though your checks passed. |
+| `declined` | The task won't be done — obsolete, wrong, or already solved another way. Say why in the result / a `note`. |
+
+```bash
+php artisan dispatch:done <code> --remote --commit=<sha> --status=verifying \
+  --result-file=result.json      # complete, but handing off a specific check to a human
+```
+
+**The balance — keep `verifying` meaningful, not noise.** It is *not* a reflexive hedge
+you stamp on everything "to be safe." If you genuinely verified a self-contained change,
+it's `done`. Reserve `verifying` for the real hand-off cases above — and when you use it,
+**name the exact check you're handing off** in the `--result` (or a `note`): *"needs a
+visual pass of the board on mobile"*, *"run the pending migration in prod before
+closing"*, *"confirm against real submitter data"*. A bare `verifying` with no stated ask
+is the noisy kind — the human can't tell what they're being asked to confirm. Rule of
+thumb: if you can't articulate what a human must verify, the honest status is `done` (or
+you haven't finished — keep it `in_progress`).
+
 ### 6. Handle a mid-session `401`
 
 Every `--remote` verb can fail with `401` if the session was revoked or
@@ -323,20 +386,41 @@ to resume.
 
 ### 7. Record run metrics (optional)
 
-To memorialize what the session cost the commissioner — tokens, cost, tool
-usage, duration — compute them from the **local** transcript and attach them
-to the remote task via `done`'s result field. The task lives on production
-(not in the local DB), so pass the claim timestamp as the window and let
-`dispatch:metrics` run in compute-only mode:
+To memorialize what the session cost the commissioner — tokens, cost, tool usage,
+duration — fold them into the **closing `done`** with **`--with-metrics`**. It computes
+the metrics from the **local** transcript and nests them under `context.result.metrics`
+— the exact key-path that lights the staff "Agent run" panel (a flat metrics blob does
+**not** render). It's **status-agnostic**: pair it with `--status=done` OR
+`--status=verifying` — both mean "the agent finished and is about to release the token,"
+the right moment to stamp.
+
+The task lives on production (not the local DB), so pass the **claim timestamp** as the
+window start (`--since`) — grab it from the `created_at` of the `claimed` event in the
+`comments[]` of your `dispatch:claim` / `dispatch:show` response (there's no local claim
+event to default from on a remote task):
 
 ```bash
-php artisan dispatch:done <code> --remote \
-  --result="$(php artisan dispatch:metrics <code> --since=<claim-iso8601> --json)"
+php artisan dispatch:done <code> --remote --commit=<sha> \
+  --with-metrics --since=<claim-iso8601>            # metrics land at context.result.metrics
 ```
 
-Metrics always come from the transcript, never your own estimate — you can't
-read your own token usage. (`--stamp`/`--note` are local-DB only and don't
-apply to a remote task.)
+Keep your own structured summary too — pass it as `--result` / `--result-file` in the
+SAME call, and `--with-metrics` folds the metrics in alongside it (under the `metrics`
+key) without clobbering it:
+
+```bash
+php artisan dispatch:done <code> --remote --commit=<sha> --status=verifying \
+  --result-file=result.json --with-metrics --since=<claim-iso8601>
+```
+
+- **Ordering trap — stamp in the closing `done`, BEFORE `session:end` (§8).** Ending the
+  session surrenders the token; after that no `--remote` write is possible and the window
+  to attach metrics is gone.
+- Metrics always come from the transcript, never your own estimate — you can't read your
+  own token usage. `dispatch:metrics --stamp` / `--note` are **local-DB only** and don't
+  reach a remote task, which is exactly why `--with-metrics` on `done` exists as the remote
+  path. If you ever need a bespoke result shape, `dispatch:metrics <code> --since=… --json`
+  prints the same object to nest by hand under a `metrics` key of your `--result-file`.
 
 ### 8. End the session when the work is done
 
@@ -370,6 +454,14 @@ expire.
   could assemble one manifest and `dispatch:batch --remote` it (§5b).
 - ❌ Force a partially-done task to `done` in a batch just to close it. Set its
   real status (`in_progress`, `verifying`) — batch exists to memorialize honestly.
+- ❌ Reflexively close every task `done` because "I did the work." If the change
+  needs a check only a human can do (visual/UX, a deploy, prod data, high blast
+  radius), set `verifying` and name the check (§5d). Equally, don't stamp `verifying`
+  on everything as a hedge — a self-contained change you actually verified is `done`.
+- ❌ Treat *"the open items"* as unambiguous. It can mean the literal `status:open`
+  set or the whole non-done backlog — disambiguate before planning (§5c).
+- ❌ Plan an imported/backfilled task as fresh work without checking the tree — it may
+  describe a change that already shipped. Verify, then close it as already-implemented (§5c).
 - ❌ Request only the read/claim/close scopes and then discover mid-run you need
   `add` (or `batch`). Scopes freeze at approval — request everything you might
   need up front (step 1), or you'll have to end and re-commission.

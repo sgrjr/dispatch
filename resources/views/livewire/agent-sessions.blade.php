@@ -80,6 +80,16 @@
                             approved {{ $session->approved_at?->diffForHumans() }}
                             &middot; expires {{ $session->expires_at?->diffForHumans() }}
                         </div>
+                        @php($m = $metrics[$session->id] ?? ['worked' => 0, 'with_metrics' => 0])
+                        @if ($m['worked'] > 0 && $m['with_metrics'] === 0)
+                            <div style="margin-top:0.4rem;">
+                                <span class="dispatch-badge is-warning" title="This session closed {{ $m['worked'] }} task(s) but recorded no agent-run metrics — no dispatch:done --with-metrics.">metrics: none recorded</span>
+                            </div>
+                        @elseif ($m['with_metrics'] > 0)
+                            <div style="margin-top:0.4rem;">
+                                <span class="dispatch-badge is-success" title="Agent-run metrics captured on {{ $m['with_metrics'] }} of {{ $m['worked'] }} closed task(s).">metrics &check; {{ $m['with_metrics'] }}/{{ $m['worked'] }}</span>
+                            </div>
+                        @endif
                     </div>
                     <div class="dispatch-agent-actions">
                         <button type="button" wire:click="revoke({{ $session->id }})" wire:confirm="Revoke this agent session?" class="dispatch-btn is-secondary">Revoke</button>

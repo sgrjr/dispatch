@@ -258,3 +258,58 @@ test('dispatch:metrics:capture writes the session sidecar', function () {
 
     unlink($path);
 });
+
+// --- dispatch:done --with-metrics (W4-1/W4-2: the remote-friendly fold) --------
+
+test('dispatch:done --with-metrics folds metrics under context.result.metrics and preserves the summary (status-agnostic)', function () {
+    $svc = app(DispatchTaskService::class);
+    $task = $svc->create(['title' => 'close me', 'status' => 'in_progress']);
+
+    $dir = sys_get_temp_dir().'/dispatch-metrics-'.uniqid();
+    $main = $dir.'/sess.jsonl';
+    writeJsonl($main, mainRecords());
+
+    $exit = Artisan::call('dispatch:done', [
+        'code' => $task->code,
+        '--status' => 'verifying',                 // NOT done — metrics must still fold
+        '--commit' => 'def5678',
+        '--result' => json_encode(['summary' => 'did the thing', 'tests' => 'green']),
+        '--with-metrics' => true,
+        '--since' => '2026-01-01T00:00:00Z',
+        '--transcript' => $main,
+    ]);
+    expect($exit)->toBe(0);
+
+    $fresh = $task->fresh();
+    expect($fresh->status)->toBe('verifying');
+    $result = $fresh->context['result'];
+    expect($result['summary'])->toBe('did the thing')          // hand-authored summary preserved
+        ->and($result['tests'])->toBe('green')
+        ->and($result['commit'])->toBe('def5678')
+        ->and($result['metrics']['tokens']['total'])->toBe(3690)   // main-only transcript
+        ->and($result['metrics']['window']['basis'])->toBe('since-option');
+
+    unlink($main);
+});
+
+test('dispatch:done --with-metrics defaults the window to the local claim time when --since is omitted', function () {
+    $svc = app(DispatchTaskService::class);
+    $task = $svc->create(['title' => 'claimed then closed', 'status' => 'in_progress']);
+    $task->recordEvent(\Sgrjr\Dispatch\Models\TaskComment::EVENT_CLAIMED, null, []);
+
+    $dir = sys_get_temp_dir().'/dispatch-metrics-'.uniqid();
+    $main = $dir.'/sess.jsonl';
+    writeJsonl($main, mainRecords());
+
+    Artisan::call('dispatch:done', [
+        'code' => $task->code,
+        '--commit' => 'aaa111',
+        '--with-metrics' => true,
+        '--transcript' => $main,
+    ]);
+
+    $result = $task->fresh()->context['result'];
+    expect($result['metrics']['window']['basis'])->toBe('claimed_at');   // defaulted from the claim event
+
+    unlink($main);
+});

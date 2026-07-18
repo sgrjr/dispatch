@@ -291,3 +291,79 @@ test('the AgentSessions Livewire approve action approves a pending session for a
     expect($fresh->status)->toBe('approved')
         ->and($fresh->approved_by_user_id)->toBe($staff->id);
 });
+
+// --- W4-4: GET queue?count / W4-8: GET next?status --------------------------
+
+test('GET queue?count returns totals by status instead of the task list (W4-4)', function () {
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'o1', 'status' => 'open']);
+    $svc->create(['title' => 'o2', 'status' => 'open']);
+    $svc->create(['title' => 't1', 'status' => 'triage']);
+
+    $token = agentApiToken();
+
+    $this->withToken($token)->getJson('api/dispatch/agent/queue?count=1')
+        ->assertOk()
+        ->assertJsonMissingPath('tasks')
+        ->assertJsonPath('total', 3)
+        ->assertJsonPath('by_status.open', 2)
+        ->assertJsonPath('by_status.triage', 1);
+});
+
+test('GET next?status restricts to a single status (W4-8)', function () {
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'a triage task', 'status' => 'triage', 'priority' => 'high']);
+    $open = $svc->create(['title' => 'an open task', 'status' => 'open', 'priority' => 'low']);
+
+    $token = agentApiToken();
+
+    // Even though the triage task is higher priority, ?status=open must return the open one.
+    $this->withToken($token)->getJson('api/dispatch/agent/next?status=open')
+        ->assertOk()
+        ->assertJsonPath('task.code', $open->code);
+});
+
+// --- W4-9: AgentSessions "metrics recorded?" badge --------------------------
+
+test('AgentSessions flags an active session that closed work but recorded no metrics (W4-9)', function () {
+    $this->actingAs(dispatchMakeUser(8100));
+
+    $svc = app(AgentSessionService::class);
+    $req = $svc->request('metrics-less agent', 'work');
+    $session = AgentSession::where('public_id', $req['public_id'])->firstOrFail();
+    $svc->approve($session, dispatchMakeUser(8101)->id);
+
+    // A task this session closed (result recorded) but with NO metrics stamped.
+    $task = app(DispatchTaskService::class)->create(['title' => 'closed no metrics', 'status' => 'done']);
+    $task->recordEvent(
+        \Sgrjr\Dispatch\Models\TaskComment::EVENT_STATUS_CHANGE,
+        null,
+        ['agent_session_id' => $session->public_id, 'agent_name' => 'metrics-less agent'],
+        'done',
+    );
+    app(DispatchTaskService::class)->recordResult($task, ['summary' => 'done'], 'abc123');
+
+    Livewire::test(AgentSessions::class)->assertSee('metrics: none recorded');
+});
+
+test('AgentSessions does NOT flag an active session that recorded metrics (W4-9)', function () {
+    $this->actingAs(dispatchMakeUser(8110));
+
+    $svc = app(AgentSessionService::class);
+    $req = $svc->request('metrics agent', 'work');
+    $session = AgentSession::where('public_id', $req['public_id'])->firstOrFail();
+    $svc->approve($session, dispatchMakeUser(8111)->id);
+
+    $task = app(DispatchTaskService::class)->create(['title' => 'closed with metrics', 'status' => 'done']);
+    $task->recordEvent(
+        \Sgrjr\Dispatch\Models\TaskComment::EVENT_STATUS_CHANGE,
+        null,
+        ['agent_session_id' => $session->public_id, 'agent_name' => 'metrics agent'],
+        'done',
+    );
+    app(DispatchTaskService::class)->recordResult($task, ['metrics' => ['tokens' => ['total' => 100]]], 'abc123');
+
+    Livewire::test(AgentSessions::class)
+        ->assertSee('Agent-run metrics captured on')     // the success badge's title
+        ->assertDontSee('metrics: none recorded');
+});

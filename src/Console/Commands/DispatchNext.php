@@ -17,6 +17,7 @@ class DispatchNext extends Command
     use TalksToAgentApi;
 
     protected $signature = 'dispatch:next
+        {--status= : Restrict to a single status (default: open, in_progress, triage)}
         {--type= : Filter to a single type}
         {--label=* : Filter to tasks carrying any of these labels}
         {--remote : Act on the configured remote agent API instead of the local DB}
@@ -28,6 +29,7 @@ class DispatchNext extends Command
     {
         if ($this->option('remote')) {
             $r = $this->agentGet('next', array_filter([
+                'status' => $this->option('status'),
                 'type' => $this->option('type'),
                 'label' => $this->option('label'),
             ]));
@@ -53,7 +55,11 @@ class DispatchNext extends Command
         $task = $taskModel::query()
             ->with('labels')
             ->withCount(['comments as comment_count' => fn ($q) => $q->where('event_type', TaskComment::EVENT_COMMENT)])
-            ->whereIn('status', ['open', 'in_progress', 'triage'])
+            ->when(
+                $this->option('status'),
+                fn ($q, $status) => $q->where('status', $status),
+                fn ($q) => $q->whereIn('status', ['open', 'in_progress', 'triage'])
+            )
             ->when($type, fn ($q) => $q->where('type', $type))
             ->when($labels, fn ($q) => $q->whereHas('labels', fn ($lq) => $lq->whereIn('name', (array) $labels)))
             ->orderByRaw("CASE WHEN status IN ('open', 'in_progress') THEN 0 ELSE 1 END")

@@ -37,7 +37,11 @@ class AgentController extends Controller
         $task = $taskModel::query()
             ->with(['labels', 'submitter', 'assignee'])
             ->withCount(['comments as comment_count' => fn ($q) => $q->where('event_type', TaskComment::EVENT_COMMENT)])
-            ->whereIn('status', ['open', 'in_progress', 'triage'])
+            ->when(
+                $request->query('status'),
+                fn ($q, $status) => $q->where('status', $status),
+                fn ($q) => $q->whereIn('status', ['open', 'in_progress', 'triage'])
+            )
             ->when($request->query('type'), fn ($q, $type) => $q->where('type', $type))
             ->when($request->query('label'), fn ($q, $label) => $q->whereHas(
                 'labels',
@@ -59,22 +63,43 @@ class AgentController extends Controller
         /** @var class-string<Task> $taskModel */
         $taskModel = config('dispatch.models.task');
 
-        $query = $taskModel::query()
-            ->with(['labels', 'submitter', 'assignee'])
-            ->withCount(['comments as comment_count' => fn ($q) => $q->where('event_type', TaskComment::EVENT_COMMENT)]);
+        // Shared status/type/label filter — applied identically by the count and
+        // the list paths so `--count` reports the size of exactly what the list
+        // would return.
+        $applyFilters = function ($q) use ($request) {
+            if ($status = $request->query('status')) {
+                $q->where('status', $status);
+            } else {
+                $q->whereIn('status', ['open', 'in_progress', 'triage']);
+            }
 
-        if ($status = $request->query('status')) {
-            $query->where('status', $status);
-        } else {
-            $query->whereIn('status', ['open', 'in_progress', 'triage']);
+            return $q
+                ->when($request->query('type'), fn ($qq, $type) => $qq->where('type', $type))
+                ->when($request->query('label'), fn ($qq, $label) => $qq->whereHas(
+                    'labels',
+                    fn ($lq) => $lq->whereIn('name', (array) $label)
+                ));
+        };
+
+        // ?count — return {total, by_status} instead of the task list, so an
+        // agent learns the true backlog size without probing --limit (W4-4).
+        if ($request->boolean('count')) {
+            $byStatus = $applyFilters($taskModel::query())
+                ->selectRaw('status, COUNT(*) as c')
+                ->groupBy('status')
+                ->pluck('c', 'status')
+                ->map(fn ($v) => (int) $v)
+                ->all();
+
+            return response()->json([
+                'total' => array_sum($byStatus),
+                'by_status' => $byStatus,
+            ]);
         }
 
-        $query
-            ->when($request->query('type'), fn ($q, $type) => $q->where('type', $type))
-            ->when($request->query('label'), fn ($q, $label) => $q->whereHas(
-                'labels',
-                fn ($lq) => $lq->whereIn('name', (array) $label)
-            ))
+        $query = $applyFilters($taskModel::query())
+            ->with(['labels', 'submitter', 'assignee'])
+            ->withCount(['comments as comment_count' => fn ($q) => $q->where('event_type', TaskComment::EVENT_COMMENT)])
             ->orderByRaw("CASE priority WHEN 'blocker' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 99 END")
             ->orderBy('position')
             ->orderBy('id');

@@ -22,6 +22,7 @@ class DispatchQueue extends Command
         {--type= : Filter to a single type}
         {--label=* : Filter to tasks carrying any of these labels}
         {--limit= : Cap the number of tasks returned, top of the priority order (default: all). For the single-task case use dispatch:next.}
+        {--count : Emit counts by status (total + by_status) instead of the task list — tells you the true backlog size without probing --limit.}
         {--remote : Act on the configured remote agent API instead of the local DB}
         {--json : Emit machine-readable JSON instead of a human table}';
 
@@ -45,10 +46,17 @@ class DispatchQueue extends Command
                 'type' => $this->option('type'),
                 'label' => $this->option('label'),
                 'limit' => $limit,
+                'count' => $this->option('count') ? 1 : null,
             ]));
 
             if ($r === null) {
                 return self::FAILURE;
+            }
+
+            if ($this->option('count')) {
+                $this->renderCount((int) ($r['total'] ?? 0), (array) ($r['by_status'] ?? []));
+
+                return self::SUCCESS;
             }
 
             $this->line(json_encode($r['tasks'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
@@ -58,6 +66,27 @@ class DispatchQueue extends Command
 
         /** @var class-string<Task> $taskModel */
         $taskModel = config('dispatch.models.task');
+
+        if ($this->option('count')) {
+            $countQuery = $taskModel::query();
+            if ($status = $this->option('status')) {
+                $countQuery->where('status', $status);
+            } else {
+                $countQuery->whereIn('status', ['open', 'in_progress', 'triage']);
+            }
+            $byStatus = $countQuery
+                ->when($this->option('type'), fn ($q, $type) => $q->where('type', $type))
+                ->when($this->option('label'), fn ($q, $label) => $q->whereHas('labels', fn ($lq) => $lq->whereIn('name', (array) $label)))
+                ->selectRaw('status, COUNT(*) as c')
+                ->groupBy('status')
+                ->pluck('c', 'status')
+                ->map(fn ($v) => (int) $v)
+                ->all();
+
+            $this->renderCount(array_sum($byStatus), $byStatus);
+
+            return self::SUCCESS;
+        }
 
         $query = $taskModel::query()
             ->with('labels')
@@ -105,5 +134,27 @@ class DispatchQueue extends Command
         );
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Render the --count envelope: JSON `{total, by_status}` for machines, a
+     * small table for humans. Shared by the local and --remote count paths.
+     *
+     * @param  array<string,int>  $byStatus
+     */
+    private function renderCount(int $total, array $byStatus): void
+    {
+        if ($this->option('json')) {
+            $this->line(json_encode(['total' => $total, 'by_status' => $byStatus], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+            return;
+        }
+
+        $rows = [];
+        foreach ($byStatus as $status => $count) {
+            $rows[] = [$status, $count];
+        }
+        $this->table(['Status', 'Count'], $rows);
+        $this->info("total: {$total}");
     }
 }

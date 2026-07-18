@@ -387,19 +387,24 @@ dispatch:add    {title} ... {--description=} {--description-file=} {--key=} {--r
                   creating a duplicate. --description-file=PATH (or `-` for
                   stdin) reads a long body from a file instead of inline
 
-dispatch:next   {--type=} {--label=*} {--json} {--remote}
-dispatch:queue  {--status=} {--type=} {--label=*} {--limit=} {--json} {--remote}
+dispatch:next   {--status=} {--type=} {--label=*} {--json} {--remote}
+dispatch:queue  {--status=} {--type=} {--label=*} {--limit=} {--count} {--json} {--remote}
                 → filter to only agent-appropriate work, e.g. --label agent:ok;
                   --limit=N caps the rows to the top N of the priority order so
-                  a triage preview needn't pull the whole backlog
+                  a triage preview needn't pull the whole backlog; --count returns
+                  {total, by_status} instead of the list — the true backlog size
+                  without probing --limit
 
-dispatch:done   {code} {--status=} {--commit=} {--result=} {--result-file=} {--json} {--remote}
+dispatch:done   {code} {--status=} {--commit=} {--result=} {--result-file=}
+                {--with-metrics} {--since=} {--json} {--remote}
                 → record a structured completion: --commit=<sha> plus
                   --result='{...}' land under context.result, tying the task
                   to the exact code change and verification that closed it.
                   For a large result blob, --result-file=PATH (or `-` for stdin)
                   reads the JSON from a file instead of inline — no multi-line
-                  quoting on one command line
+                  quoting on one command line. --with-metrics folds agent-run
+                  metrics under context.result.metrics (any --status; --since=<claim
+                  time> windows a remote task) — see "Agent run metrics"
 
 dispatch:show   {code} {--json} {--remote}
 dispatch:note   {code} {body?} {--body-file=} {--internal} {--remote}
@@ -613,17 +618,21 @@ dispatch:metrics {code} {--since=} {--until=} {--transcript=} {--session=}
                    models — for the claim→now window
 ```
 
-The intended use is to fold it into the same `dispatch:done` call so the
-numbers land under `context.result.metrics` alongside the commit:
+The intended use is to fold the numbers into the same `dispatch:done` call with
+**`--with-metrics`**, so they land under `context.result.metrics` alongside the
+commit — the exact key-path the staff "Agent run" panel reads:
 
 ```bash
-php artisan dispatch:done TASK-042 --commit=abc1234 \
-  --result="$(php artisan dispatch:metrics TASK-042 --json)"
+php artisan dispatch:done TASK-042 --commit=abc1234 --with-metrics
 ```
 
-`--stamp` deep-merges the metrics into `context.result.metrics` directly, and
-`--note` posts a one-line internal summary on the timeline. Raw token counts
-are stored durably; **cost is derived** from the per-model rate table in
+`--with-metrics` is **status-agnostic** (pair it with `--status=done` OR
+`verifying`) and merges the metrics under the result's `metrics` key, so any
+`--result` / `--result-file` summary you pass in the same call is preserved.
+Standalone, `dispatch:metrics --stamp` deep-merges the metrics into
+`context.result.metrics` directly, and `--note` posts a one-line internal summary
+on the timeline. Raw token counts are stored durably; **cost is derived** from the
+per-model rate table in
 `config/dispatch.php` (`metrics.pricing`), so edit those rates rather than
 trusting a baked-in dollar figure — cache writes default to the 5-minute-TTL
 rate (1.25× input).
@@ -647,9 +656,10 @@ on stdin and writes a sidecar the command prefers):
 
 The hook is optional — discovery falls back to the newest transcript for the
 project without it. Metrics against a **remote** (production) task work too:
-pass `--since=<claim time>` and `--json` and pipe into `dispatch:done --remote
---result` (the task lives on production, so `--stamp`/`--note`, which write the
-local DB, don't apply).
+`dispatch:done --remote --with-metrics --since=<claim time>` computes them from
+the local transcript and folds them under `context.result.metrics` on the
+production task in one call (the task lives on production, so `--stamp`/`--note`,
+which write the local DB, don't apply — `--with-metrics` is the remote path).
 
 **Where stamped metrics show up.** Once a run is stamped under
 `context.result.metrics`, two staff-facing surfaces render it — so the panel's
