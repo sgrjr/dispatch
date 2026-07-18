@@ -23,7 +23,11 @@ class VerifyBootstrapSecret
 {
     public function handle(Request $request, Closure $next): Response
     {
-        $configured = config('dispatch.agent.bootstrap_secret');
+        // Read defensively: a host that published config/dispatch.php before the
+        // `agent` block existed has no `bootstrap_secret` key, and shallow
+        // mergeConfigFrom won't add it — so fall back to the env var directly
+        // rather than treating the endpoint as unconfigured (GAP-3 trap).
+        $configured = config('dispatch.agent.bootstrap_secret') ?? env('DISPATCH_AGENT_BOOTSTRAP_SECRET');
 
         if ($configured === null || $configured === false || $configured === '') {
             if (app()->environment('production')) {

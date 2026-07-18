@@ -269,7 +269,9 @@ class AgentController extends Controller
             'dry_run' => ['nullable', 'boolean'],
         ]);
 
-        $max = (int) config('dispatch.agent.batch.max_operations', 200);
+        // env-aware default so a host that set DISPATCH_AGENT_BATCH_MAX keeps it
+        // even under a stale published config missing the key (GAP-3).
+        $max = (int) config('dispatch.agent.batch.max_operations', (int) env('DISPATCH_AGENT_BATCH_MAX', 200));
         abort_if($max > 0 && count($v['operations']) > $max, 422, "Batch too large: {$max} operations max.");
 
         $dryRun = (bool) ($v['dry_run'] ?? false);

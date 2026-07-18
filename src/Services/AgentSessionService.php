@@ -75,7 +75,11 @@ class AgentSessionService
      */
     public function approve(AgentSession $session, int $userId, ?int $ttl = null, ?array $scopes = null): AgentSession
     {
-        $allowed = (array) config('dispatch.agent.verbs', []);
+        // Default to the package's KNOWN_VERBS (not []) when the host's published
+        // config omits `agent.verbs` — otherwise a stale published config would
+        // make the null-request grant path (below) grant nothing at all. A host
+        // that HAS configured verbs still gets exactly that array (GAP-3 trap).
+        $allowed = (array) config('dispatch.agent.verbs', self::KNOWN_VERBS);
 
         $requested = $scopes ?? ($session->requested_meta['scopes'] ?? null);
 

@@ -171,7 +171,10 @@ class DispatchServiceProvider extends ServiceProvider
         // Off unless explicitly enabled AND its controllers exist (they land in
         // Wave 1); per-route security middleware is declared in routes/agent.php.
         $agent = __DIR__.'/../routes/agent.php';
-        if (config('dispatch.agent.enabled', false)
+        // env() fallback so the master switch survives a stale published config
+        // that predates the `agent` block (GAP-3): a host with DISPATCH_AGENT=true
+        // shouldn't silently lose the whole agent surface for not re-publishing.
+        if (config('dispatch.agent.enabled', env('DISPATCH_AGENT', false))
             && file_exists($agent)
             && class_exists(\Sgrjr\Dispatch\Http\Controllers\AgentSessionController::class)) {
             $this->app['router']

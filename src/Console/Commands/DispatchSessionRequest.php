@@ -38,7 +38,11 @@ class DispatchSessionRequest extends Command
             return self::FAILURE;
         }
 
-        $secret = $this->option('secret') ?: config('dispatch.agent.bootstrap_secret');
+        // Fall back to the env var when the published config lacks the key
+        // (GAP-3), mirroring the server-side VerifyBootstrapSecret read.
+        $secret = $this->option('secret')
+            ?: config('dispatch.agent.bootstrap_secret')
+            ?: env('DISPATCH_AGENT_BOOTSTRAP_SECRET');
 
         $name = $this->option('name') ?: 'agent';
         $purpose = $this->option('purpose');

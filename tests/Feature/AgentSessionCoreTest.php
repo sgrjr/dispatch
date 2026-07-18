@@ -84,6 +84,21 @@ test('approve with no requested scopes grants the full allowlist; explicit [] gr
     expect($empty->fresh()->scopes)->toBe([]);
 });
 
+test('approve falls back to KNOWN_VERBS when the host config omits agent.verbs entirely (GAP-3)', function () {
+    // A host that published config/dispatch.php before the `agent` block gained
+    // `verbs` has the key ABSENT (not present-null) — shallow mergeConfigFrom
+    // won't re-add it. The null-request grant path must then default to the
+    // shipped verb set, not [] (which would grant nothing at all).
+    $agent = config('dispatch.agent');
+    unset($agent['verbs']);
+    config(['dispatch.agent' => $agent]);
+
+    $noReq = AgentSession::where('public_id', agentSvc()->request('a', null)['public_id'])->firstOrFail();
+    agentSvc()->approve($noReq, 1);
+
+    expect($noReq->fresh()->scopes)->toBe(AgentSessionService::KNOWN_VERBS);
+});
+
 test('approve grants an explicitly-requested KNOWN verb even when the published allowlist is stale (GAP-3)', function () {
     // Simulate a host whose *published* config.verbs predates `batch` being shipped.
     config(['dispatch.agent.verbs' => ['next', 'claim', 'done']]);
