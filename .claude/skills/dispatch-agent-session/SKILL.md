@@ -1,6 +1,6 @@
 ---
 name: dispatch-agent-session
-description: PROACTIVELY use when asked to work the PRODUCTION Dispatch backlog from outside the deploy — "work the live/prod backlog", "run as a remote agent", "commission an agent session", "pick up real tasks remotely", "work this against production" — or whenever context makes clear the target is the authoritative (production) Dispatch instance rather than local dev. Drives the human-commissioned session protocol (`dispatch:session:request` → human approval → `dispatch:session:status`) and then the `--remote` verb loop (`dispatch:next --remote` → `dispatch:claim --remote` → work → `dispatch:note --remote` → `dispatch:done --remote`), OR the batch "memorialize" path (`dispatch:batch --remote`) that commits a whole run of add/update ops in one hit instead of a verb call per task. Also use when a session goes stale (401 mid-loop, denied, revoked, expired) and needs graceful handling. Do NOT use for local dev work against the app's own database — see `dispatch-track` for that.
+description: PROACTIVELY use when asked to work the PRODUCTION Dispatch backlog from outside the deploy — "work the live/prod backlog", "run as a remote agent", "commission an agent session", "pick up real tasks remotely", "work this against production", "work/claim all the open production items", "plan and complete the production backlog" — or whenever context makes clear the target is the authoritative (production) Dispatch instance rather than local dev. Drives the human-commissioned session protocol (`dispatch:session:request` → human approval → `dispatch:session:status`) and then the `--remote` verb loop (`dispatch:next --remote` → `dispatch:claim --remote` → work → `dispatch:note --remote` → `dispatch:done --remote`), the batch "memorialize" path (`dispatch:batch --remote`) that commits a whole run of add/update ops in one hit, OR the plan-then-work-the-whole-open-queue recipe (§5c — survey the queue, plan, then claim tasks serially rather than all at once). Also use when a session goes stale (401 mid-loop, denied, revoked, expired) and needs graceful handling. Do NOT use for local dev work against the app's own database — see `dispatch-track` for that.
 ---
 
 # Dispatch remote agent session & `--remote` verb loop
@@ -265,6 +265,53 @@ re-request a session that includes `--scope=batch`.
 `todo.md`-style file, the `dispatch-batch-migrate` skill converts it into a
 valid `operations[]` manifest for you.
 
+### 5c. Plan-then-work the whole open queue
+
+When the human says *"work **all** the open items"* (or "claim everything and
+build a plan"), do **not** claim them up front — that marks every task
+`in_progress`, assigns them to you, blocks other agents, and you can still only
+work one at a time. The pipeline shape is **survey → plan → claim-as-you-go**:
+
+1. **Survey (read-only).** Pull the open backlog as the SUMMARY shape, capped so
+   you don't drag the whole board over the wire — the queue is already
+   priority-sorted:
+
+   ```bash
+   php artisan dispatch:queue --remote --limit=50 --json
+   php artisan dispatch:queue --remote --label=agent:ok --limit=50 --json  # scope to agent-cleared work
+   ```
+
+2. **Read direction before planning.** Any candidate with `comment_count > 0`
+   carries human notes the summary hides — `dispatch:show <code> --remote --json`
+   each of those so the plan reflects what was actually asked, not just titles.
+
+3. **Build + share the plan.** Order by priority, call out dependencies, and put
+   the plan in front of the human. If they want it memorialized on the board (not
+   just in chat), drop a `dispatch:note` on a tracking task, or assemble the whole
+   set of intended updates as one `dispatch:batch` manifest (§5b) — record the
+   plan honestly, never fabricate a `done`.
+
+4. **Work the loop — one task at a time**, in plan order:
+
+   ```bash
+   php artisan dispatch:claim <code> --remote --json     # atomic pickup — only when you START this one
+   # ...do the work...
+   php artisan dispatch:note <code> "<progress>" --remote
+   php artisan dispatch:done <code> --remote --commit=<sha> --result-file=result.json
+   ```
+
+   **Claim each item only when you start it**, not before. The backlog is
+   **live** — other agents and humans work it too — so re-run `dispatch:queue`
+   between items rather than trusting your first snapshot: a task you planned may
+   already be claimed, closed, or reprioritized. If a `claim <code>` comes back
+   empty (non-zero), someone else has it — skip it and move to the next.
+
+5. **Stop cleanly.** When the queue is empty (or the plan is complete), end the
+   session (§8) — don't leave the token idling.
+
+This is the multi-task generalization of §5a: §5a claims one *named* task; here you
+plan across the whole open set and claim them **serially**, never all at once.
+
 ### 6. Handle a mid-session `401`
 
 Every `--remote` verb can fail with `401` if the session was revoked or
@@ -328,6 +375,10 @@ expire.
   need up front (step 1), or you'll have to end and re-commission.
 - ❌ Claim a human-named task by guessing `--type`/`--label` and hoping you got
   the right one. Use `dispatch:claim <code>` — it targets that exact task (§5a).
+- ❌ Claim every open task up front to "reserve" the queue when asked to work
+  them all. Survey with `dispatch:queue`, plan, then claim each as you START it
+  (§5c) — claiming all at once marks them `in_progress`, blocks other agents, and
+  you can still only work one at a time.
 - ❌ Inline a large `--result` JSON or a multi-line `note`/`add` body and fight
   shell quoting. Use `--result-file` / `--body-file` / `--description-file` (or
   `-` for stdin).
