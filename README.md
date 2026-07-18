@@ -413,6 +413,13 @@ dispatch:batch  {path} {--remote} {--dry-run} {--json}
 
 dispatch:schema → dumps the documented --json shape (the frozen
                   TaskPresenter contract) — parse against this, not a guess
+
+dispatch:doctor {--strict} {--json}
+                → diagnose agent config drift: compares the live/published
+                  dispatch.agent.* against the package defaults and flags a
+                  missing verb, an absent bootstrap_secret / remote target, or a
+                  stale config cache — the stale-published-config trap, surfaced
+                  before it 403s/401s a real call (see UPGRADING.md)
 ```
 
 A compact verb loop, claiming a task labeled for agent work and closing it

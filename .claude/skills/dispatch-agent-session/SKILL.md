@@ -350,6 +350,21 @@ If `dispatch.agent.remote.url` is unset, every command in this skill fails
 fast with an instructive error rather than falling back to local — that's by
 design; see "Do NOT use when" above.
 
+**Diagnose config trouble with `dispatch:doctor`.** When a session request `503`s,
+approval never grants a scope you asked for, or a `--remote` verb `403`s
+"not scoped", it's almost always **config drift** — a stale published config on
+one side. `php artisan dispatch:doctor` names the drift directly instead of
+leaving you to infer it:
+
+- **On the box you drive from** (this checkout): confirms `remote.url` is set and
+  HTTPS. A red `remote.url` line is why `--remote` fails fast.
+- **On the production instance** (the operator runs it there): flags a
+  `bootstrap_secret` unset in prod (→ `503` on request), a verb missing from the
+  published `agent.verbs` (→ `403 not scoped` — the classic `batch` case), or a
+  still-cached config after a rotate/upgrade. Server-side drift is the operator's
+  to fix (re-publish + `optimize:clear`), not something the agent works around —
+  so when you hit one of those symptoms, ask them to run `dispatch:doctor` on prod.
+
 ---
 
 ## See also
@@ -360,3 +375,5 @@ design; see "Do NOT use when" above.
 - `.claude/skills/dispatch-track/SKILL.md` — local dev capture + verb loop,
   and the production/remote pointer back to this skill
 - `php artisan dispatch:schema` — the authoritative `--json` shape
+- `php artisan dispatch:doctor` — agent config-drift diagnostic (run it when a
+  request `503`s or a verb `403`s "not scoped"); `UPGRADING.md` covers the caches

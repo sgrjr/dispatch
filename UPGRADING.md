@@ -12,6 +12,20 @@ php artisan optimize:clear   # clears config + route + compiled/view/event cache
 php artisan config:cache && php artisan route:cache
 ```
 
+Then, on any host that serves or drives the agent API, **verify the agent config
+resolved as intended**:
+
+```bash
+php artisan dispatch:doctor        # add --strict to fail CI on warnings; --json for machines
+```
+
+`dispatch:doctor` compares the live/published `dispatch.agent.*` against the
+package defaults and names exactly the drift the cache layers below cause — a
+verb missing from `agent.verbs`, an absent `bootstrap_secret` / `remote.*`, a
+still-cached config — so you catch it here instead of via a downstream
+`403 not scoped` / `401` / `503`. It exits non-zero on an error (e.g. no
+bootstrap_secret in production).
+
 Three cache layers can each **silently mask** a dispatch upgrade. The agent API
 (`§20`) is especially prone to it, because both its routes/middleware and its
 `bootstrap_secret` are cache-frozen:
@@ -35,6 +49,9 @@ Quick diagnosis:
 - An agent route whose middleware seems unchanged after an upgrade is a **stale
   route cache** (or OPcache) — `php artisan route:clear`, then recycle the app
   pool if it persists.
+- Not sure which layer bit you? `php artisan dispatch:doctor` names the drift
+  directly (missing verb, unset secret, still-cached config) instead of leaving
+  you to infer it from a `403`/`401`/`503`.
 
 ## Enabling the batch verb (`dispatch:batch --remote` / `POST agent/batch`)
 
@@ -43,6 +60,7 @@ you **published `config/dispatch.php` before this verb existed**, your host's
 `agent` block wins wholesale over the package default (shallow `mergeConfigFrom`,
 the same trap as GAP 3), so `batch` is absent from `agent.verbs` and **no session
 can ever be granted the `batch` scope** — a `--remote` batch call will `403`.
+(`php artisan dispatch:doctor` flags exactly this as a `verbs` warning.)
 
 To enable it on the server, either re-publish the config and re-apply your
 customizations:
