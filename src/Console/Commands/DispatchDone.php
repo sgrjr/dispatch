@@ -24,7 +24,7 @@ class DispatchDone extends Command
 
     protected $signature = 'dispatch:done
         {code : The task code, e.g. TASK-042}
-        {--status=done : Final status, e.g. done | declined | verifying}
+        {--status=done : Target status — ANY configured workflow status, not just terminal (done | declined | verifying, or e.g. open to greenlight a triaged task)}
         {--commit= : SHA of the code change}
         {--result= : JSON blob stored under context.result}
         {--result-file= : Read the JSON result from a file (or `-` for stdin) instead of inline --result — avoids the multi-line-quoting hazard}

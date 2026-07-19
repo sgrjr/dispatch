@@ -65,7 +65,7 @@ grantable verbs and their scopes:
 | `show` | read | a candidate's full brief (description + comments) before claiming |
 | `claim` | work | atomically pick up a task (→ `in_progress` + assigned) |
 | `note` | write | append a comment to a task's timeline |
-| `done` | write | set final status + structured result |
+| `done` | write | record a status transition — ANY configured status, not just terminal (incl. `--status=open` to greenlight, §5) — + structured result |
 | `add` | write | **file a NEW task** — request it the moment you might create one (e.g. a bug you find while working). Its omission is the classic "had to re-commission" trap. |
 | `batch` | write | memorialize a whole run of add/update ops in one hit (§5b) |
 
@@ -136,6 +136,15 @@ never spin in a tight loop.
 each has its own trap: **`open` vs `triage`** decides *what to survey* (§5c — "open" is
 overloaded), and **`verifying` vs `done`** decides *how to close* (§5d — "done" is the
 reflex trap).
+
+**Greenlighting (`triage → open`) when the commission asks for it:** there is no
+separate `promote` verb — the path is **`dispatch:done <CODE> --remote --status=open`**.
+Despite its name, `done` records ANY status transition (`--status` accepts every
+configured workflow status, not just terminal ones) and needs only the `done` scope.
+Never `claim`-then-close a task just to move it — that mutates it to
+`in_progress` + assigned as a side effect. **Policy:** self-greenlight only when the
+commission *explicitly* delegates it ("triage these and move them to open"); otherwise
+promotion is a human call (that's what `open` *means*) — leave items in `triage` and ask.
 
 Once approved, every verb takes `--remote` to route through the agent API
 against production instead of the local DB:
@@ -305,6 +314,7 @@ backlog when they meant the greenlit few, or vice-versa.
    php artisan dispatch:queue --remote --status=open --limit=50 --json       # the literal greenlit `status:open` items
    php artisan dispatch:queue --remote --limit=50 --json                     # the whole non-done backlog (open+in_progress+triage)
    php artisan dispatch:queue --remote --label=agent:ok --limit=50 --json    # scope to agent-cleared work (combine with --status)
+   php artisan dispatch:queue --remote --status=verifying --json             # parked awaiting human sign-off — not workable, skip in planning (§5d)
    ```
 
 2. **Vet each candidate before planning it as work** — two things the summary can't
@@ -315,7 +325,10 @@ backlog when they meant the greenlit few, or vice-versa.
    - **Confirm it isn't already done.** A backfilled / imported task can describe a
      change that *already shipped* — the migration can't know it landed, so a real
      fraction of an imported backlog is pre-resolved. Before planning one as work,
-     grep/inspect the described change in the tree; if it's already present, don't
+     grep/inspect the described change in the tree — and **vet by the identifier the
+     wiring actually uses** (route name, config/registry key, event name), not the
+     feature's display or component name: a near-miss grep produces a false "not done"
+     and plans phantom work. If it's already present, don't
      plan it — `claim` it, `note` the evidence (`file:line` + the landing commit), and
      `done` it as **already-implemented**. (This is cheap and saves planning phantom work.)
 
@@ -375,6 +388,15 @@ is the noisy kind — the human can't tell what they're being asked to confirm. 
 thumb: if you can't articulate what a human must verify, the honest status is `done` (or
 you haven't finished — keep it `in_progress`).
 
+**Seeing your hand-off pile.** A task parked in `verifying` drops out of the default
+`dispatch:queue` view (its no-`--status` set is `open + in_progress + triage`), so a
+session that closes several tasks to `verifying` has no listed surface for "what am I
+waiting on a human for?" unless it asks explicitly:
+
+```bash
+php artisan dispatch:queue --remote --status=verifying --json   # everything handed off for sign-off
+```
+
 ### 6. Handle a mid-session `401`
 
 Every `--remote` verb can fail with `401` if the session was revoked or
@@ -395,13 +417,19 @@ the metrics from the **local** transcript and nests them under `context.result.m
 the right moment to stamp.
 
 The task lives on production (not the local DB), so pass the **claim timestamp** as the
-window start (`--since`) — grab it from the `created_at` of the `claimed` event in the
-`comments[]` of your `dispatch:claim` / `dispatch:show` response (there's no local claim
-event to default from on a remote task):
+window start (`--since`) — grab it from the claim event in the `comments[]` of your
+`dispatch:claim` / `dispatch:show` response: the entry whose **`event_type` field is
+`"claimed"`** (that's the discriminator — the timeline vocabulary is listed under
+`event_types` in `dispatch:schema`). There's no local claim event to default from on a
+remote task, so capture it at claim time:
 
 ```bash
+claim_iso=$(php artisan dispatch:claim <code> --remote --json \
+  | jq -r '[.comments[] | select(.event_type=="claimed")] | last | .created_at')
+# `last`: a re-opened task can carry more than one claim event — you want yours.
+
 php artisan dispatch:done <code> --remote --commit=<sha> \
-  --with-metrics --since=<claim-iso8601>            # metrics land at context.result.metrics
+  --with-metrics --since="$claim_iso"               # metrics land at context.result.metrics
 ```
 
 Keep your own structured summary too — pass it as `--result` / `--result-file` in the
