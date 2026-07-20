@@ -31,7 +31,8 @@ class DispatchAdd extends Command
         {--label=* : Label name(s) to attach; auto-created if missing. Repeatable.}
         {--public : Mark visible outside staff (default: private)}
         {--key= : Idempotency key; returns the existing task with this key instead of creating a duplicate}
-        {--remote : Act on the configured remote agent API instead of the local DB}
+        {--remote : Act on the configured remote agent API (the default while an agent session token is active)}
+        {--local : Act on the local DB even while an agent session token is active (overrides sticky-remote)}
         {--json : Emit machine-readable JSON instead of human text}';
 
     protected $description = 'Create a new task via DispatchTaskService.';
@@ -73,7 +74,7 @@ class DispatchAdd extends Command
             return self::FAILURE;
         }
 
-        if ($this->option('remote')) {
+        if ($this->targetsRemote()) {
             $r = $this->agentPost('add', array_filter([
                 'title' => $this->argument('title'),
                 'type' => $type,

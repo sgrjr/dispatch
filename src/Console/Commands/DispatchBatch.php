@@ -38,7 +38,8 @@ class DispatchBatch extends Command
 
     protected $signature = 'dispatch:batch
         {path : JSON manifest file (an {"operations":[…]} object, or a bare […] array)}
-        {--remote : Apply against the configured remote agent API instead of the local DB}
+        {--remote : Apply against the configured remote agent API (the default while an agent session token is active)}
+        {--local : Apply against the local DB even while an agent session token is active (overrides sticky-remote)}
         {--dry-run : Validate + report what would change without writing}
         {--no-notify : Suppress per-add create notifications + reactive automation (local bulk memorialize)}
         {--json : Emit machine-readable JSON instead of human text}';
@@ -76,7 +77,7 @@ class DispatchBatch extends Command
 
         $dryRun = (bool) $this->option('dry-run');
 
-        return $this->option('remote')
+        return $this->targetsRemote()
             ? $this->applyRemote($operations, $dryRun)
             : $this->applyLocal($batch, $operations, $dryRun);
     }

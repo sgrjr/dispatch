@@ -20,14 +20,15 @@ class DispatchShow extends Command
 
     protected $signature = 'dispatch:show
         {code : The task code, e.g. TASK-042}
-        {--remote : Act on the configured remote agent API instead of the local DB}
+        {--remote : Act on the configured remote agent API (the default while an agent session token is active)}
+        {--local : Act on the local DB even while an agent session token is active (overrides sticky-remote)}
         {--json : Emit machine-readable JSON}';
 
     protected $description = 'Show full detail for a task including its comment timeline.';
 
     public function handle(): int
     {
-        if ($this->option('remote')) {
+        if ($this->targetsRemote()) {
             $r = $this->agentGet('show/'.$this->argument('code'));
 
             if ($r === null) {

@@ -33,7 +33,8 @@ class DispatchDone extends Command
         {--transcript= : Explicit transcript path for --with-metrics (skips discovery)}
         {--session= : Claude Code session id for --with-metrics}
         {--project-dir= : Project dir whose transcripts to search for --with-metrics (default: base_path())}
-        {--remote : Act on the configured remote agent API instead of the local DB}
+        {--remote : Act on the configured remote agent API (the default while an agent session token is active)}
+        {--local : Act on the local DB even while an agent session token is active (overrides sticky-remote)}
         {--json : Emit machine-readable JSON instead of human text}';
 
     protected $description = "Set a task's status and record the transition on its timeline.";
@@ -96,7 +97,7 @@ class DispatchDone extends Command
             $result['metrics'] = $metrics;
         }
 
-        if ($this->option('remote')) {
+        if ($this->targetsRemote()) {
             $r = $this->agentPost('done', array_filter([
                 'code' => $this->argument('code'),
                 'status' => $status,
@@ -109,6 +110,12 @@ class DispatchDone extends Command
             }
 
             $this->line(json_encode($r['task'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+            // Point-of-need reminder replacing memorized doctrine: metrics can
+            // only be attached while the session token still exists.
+            if (! $this->option('with-metrics')) {
+                $this->sideNote('tip: no metrics on this close — on the LAST done before dispatch:session:end, add --with-metrics --since=<claimed_at from claim> so the run cost lands on the task (after session:end the token is gone).');
+            }
 
             return self::SUCCESS;
         }
@@ -171,7 +178,7 @@ class DispatchDone extends Command
             } catch (\Throwable $e) {
                 return [null, 'Invalid --since: '.$e->getMessage()];
             }
-        } elseif (! $this->option('remote')) {
+        } elseif (! $this->targetsRemote()) {
             /** @var class-string<Task> $taskModel */
             $taskModel = config('dispatch.models.task');
             $task = $taskModel::query()->where('code', $this->argument('code'))->first();

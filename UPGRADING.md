@@ -53,6 +53,33 @@ Quick diagnosis:
   directly (missing verb, unset secret, still-cached config) instead of leaving
   you to infer it from a `403`/`401`/`503`.
 
+## v0.6.0 — sticky remote + one-shot commissioning (client behavior changes)
+
+Two client-side defaults changed so an agent needs less ceremony (and less
+doc) to drive the pipeline. Both have escape hatches; neither changes the
+server surface, so mixed v0.5.x/v0.6.0 client-server pairs keep working
+(`claimed_at` in the claim envelope and the zero-filled `queue --count`
+census are additive).
+
+- **Sticky remote.** While an approved agent-session token exists (the dotfile
+  is created at approval and deleted on `session:end`/`401`), the eight loop
+  verbs (`next/queue/show/claim/add/note/done/batch`) target the **remote by
+  default** — no `--remote` flag needed. Every sticky call announces
+  `→ remote: <host>` on stderr, and `--local` overrides per call. If a stray
+  token ever surprises you, `dispatch:session:end` clears it; opt out
+  host-wide with `dispatch.agent.remote.sticky=false`
+  (`DISPATCH_AGENT_STICKY=false`). With no token present nothing changes —
+  verbs act locally exactly as before.
+- **`dispatch:session:request` with no `--scope` now really requests the full
+  allowlist.** The client used to always send the `scopes` key, so omitting
+  `--scope` posted `scopes: []` — which the server (correctly) treats as
+  request-NOTHING, i.e. a deny-all session. Fixed: an omitted `--scope` omits
+  the key, and the approver grants the host allowlist — what the option help
+  always claimed. Pass `--scope=...` only to deliberately narrow a session.
+- **`dispatch:session:request --wait`** folds request → show code → poll →
+  collect-token into one command (it delegates to the `session:status --wait`
+  loop on your behalf).
+
 ## Enabling the batch verb (`dispatch:batch --remote` / `POST agent/batch`)
 
 The batch memorialize verb is gated by the server's `agent.verbs` allowlist. If

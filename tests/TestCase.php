@@ -37,5 +37,15 @@ abstract class TestCase extends Orchestra
         // this is a harmless no-op in Wave 0). Individual tests set the
         // bootstrap_secret at request time to exercise VerifyBootstrapSecret.
         $app['config']->set('dispatch.agent.enabled', true);
+
+        // Isolate the agent-token dotfile from the developer's real ~/.dispatch:
+        // with sticky-remote, a live commissioned session on this machine would
+        // otherwise flip every local-verb test to the remote target (and leak a
+        // real bearer into the suite). Tests that exercise the dotfile manage
+        // files under this temp path and clean up after themselves.
+        $app['config']->set(
+            'dispatch.agent.remote.token_path',
+            sys_get_temp_dir().DIRECTORY_SEPARATOR.'dispatch-tests-'.getmypid().DIRECTORY_SEPARATOR.'agent-token.json'
+        );
     }
 }

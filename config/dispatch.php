@@ -325,6 +325,12 @@ return [
         'remote' => [
             'url' => env('DISPATCH_AGENT_REMOTE_URL'),
             'token_path' => env('DISPATCH_AGENT_TOKEN_PATH'),
+            // Sticky remote: while an approved session token exists (the dotfile
+            // is created at approval and deleted on session:end/401), the verbs
+            // default to the remote — a loud target line names the host on every
+            // call, and --local overrides per call. Set false to require the
+            // explicit --remote flag on every call instead.
+            'sticky' => env('DISPATCH_AGENT_STICKY', true),
         ],
     ],
 

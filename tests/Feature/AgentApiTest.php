@@ -310,6 +310,47 @@ test('GET queue?count returns totals by status instead of the task list (W4-4)',
         ->assertJsonPath('by_status.triage', 1);
 });
 
+test('GET queue?count zero-fills the non-terminal census incl. verifying (W5-2)', function () {
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'o1', 'status' => 'open']);
+    $svc->create(['title' => 'v1', 'status' => 'verifying']);
+    $svc->create(['title' => 'd1', 'status' => 'done']); // terminal — stays OUT of the census
+
+    $token = agentApiToken();
+
+    $this->withToken($token)->getJson('api/dispatch/agent/queue?count=1')
+        ->assertOk()
+        ->assertJsonPath('total', 2)
+        ->assertJsonPath('by_status.open', 1)
+        ->assertJsonPath('by_status.in_progress', 0)   // zero-filled, not absent
+        ->assertJsonPath('by_status.triage', 0)
+        ->assertJsonPath('by_status.verifying', 1)
+        ->assertJsonMissingPath('by_status.done');
+});
+
+test('POST claim echoes claimed_at top-level for zero-parse reuse as --since', function () {
+    app(DispatchTaskService::class)->create(['title' => 'stamp me', 'status' => 'open']);
+
+    $token = agentApiToken();
+
+    $response = $this->withToken($token)->postJson('api/dispatch/agent/claim')->assertOk();
+
+    $claimedAt = $response->json('claimed_at');
+    expect($claimedAt)->toBeString()
+        // ISO-8601, parseable straight into dispatch:done --since=
+        ->and(strtotime($claimedAt))->not->toBeFalse();
+});
+
+test('a scope 403 carries the recovery instructions in its message', function () {
+    $token = agentApiToken(['next']);
+
+    $this->withToken($token)->postJson('api/dispatch/agent/claim')
+        ->assertStatus(403)
+        ->assertJsonPath('message', fn ($m) => str_contains($m, "not scoped for 'claim'")
+            && str_contains($m, 'granted: next')
+            && str_contains($m, 'dispatch:session:end'));
+});
+
 test('GET next?status restricts to a single status (W4-8)', function () {
     $svc = app(DispatchTaskService::class);
     $svc->create(['title' => 'a triage task', 'status' => 'triage', 'priority' => 'high']);

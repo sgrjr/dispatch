@@ -23,7 +23,13 @@ class EnsureAgentScope
         // rather than running as an un-scoped principal.
         abort_if($session === null, 401);
 
-        abort_unless(in_array($verb, (array) $session->scopes, true), 403, "Agent session is not scoped for '{$verb}'.");
+        // The message IS the documentation: it names the grant, the constraint,
+        // and both recovery paths, so the CLI can surface it verbatim and the
+        // driving agent needs no doc lookup to know what to do next.
+        abort_unless(in_array($verb, (array) $session->scopes, true), 403,
+            "Agent session is not scoped for '{$verb}' (granted: ".implode(', ', (array) $session->scopes).'). '
+            .'Scopes are fixed at approval — either record the intended change in a note/batch for later, '
+            .'or run dispatch:session:end and request a fresh session (requesting with no --scope asks for the full allowlist).');
 
         return $next($request);
     }

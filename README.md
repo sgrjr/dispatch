@@ -368,10 +368,17 @@ the deploy entirely, via a human-commissioned session. Every verb below
 supports `--json`, a stable, documented machine contract (not a
 best-effort dump).
 
+**Target resolution (sticky remote).** While an approved agent-session token
+exists (see "The remote agent seam"), every verb below targets the **remote by
+default** — each call announces `→ remote: <host>` (on stderr, so `--json`
+stdout stays pure) and `--local` overrides per call. No token → verbs act on
+the local DB, exactly as before. Hosts opt out with
+`dispatch.agent.remote.sticky=false` (`DISPATCH_AGENT_STICKY`).
+
 ### Agent-CLI verbs
 
 ```
-dispatch:claim  {code?} {--type=} {--label=*} {--assignee=} {--json} {--remote}
+dispatch:claim  {code?} {--type=} {--label=*} {--assignee=} {--json} {--remote} {--local}
                 → atomically claim an actionable task: marks it in_progress +
                   assigns it in one transaction, so two agents (or an agent and
                   a human) never grab the same task. With no argument it claims
@@ -381,22 +388,24 @@ dispatch:claim  {code?} {--type=} {--label=*} {--assignee=} {--json} {--remote}
                   task still never steals in-flight work. A named-but-unclaimable
                   code exits non-zero.
 
-dispatch:add    {title} ... {--description=} {--description-file=} {--key=} {--remote}
+dispatch:add    {title} ... {--description=} {--description-file=} {--key=} {--remote} {--local}
                 → idempotent create: pass --key=<dedupe key> and a re-run
                   with the same key returns the existing task instead of
                   creating a duplicate. --description-file=PATH (or `-` for
                   stdin) reads a long body from a file instead of inline
 
-dispatch:next   {--status=} {--type=} {--label=*} {--json} {--remote}
-dispatch:queue  {--status=} {--type=} {--label=*} {--limit=} {--count} {--json} {--remote}
+dispatch:next   {--status=} {--type=} {--label=*} {--json} {--remote} {--local}
+dispatch:queue  {--status=} {--type=} {--label=*} {--limit=} {--count} {--json} {--remote} {--local}
                 → filter to only agent-appropriate work, e.g. --label agent:ok;
                   --limit=N caps the rows to the top N of the priority order so
                   a triage preview needn't pull the whole backlog; --count returns
-                  {total, by_status} instead of the list — the true backlog size
-                  without probing --limit
+                  {total, by_status} instead of the list — with no --status it
+                  censuses the whole non-terminal board (open/in_progress/triage/
+                  verifying, zero-filled, so an empty verifying bucket still
+                  prints) — the true backlog size without probing --limit
 
 dispatch:done   {code} {--status=} {--commit=} {--result=} {--result-file=}
-                {--with-metrics} {--since=} {--json} {--remote}
+                {--with-metrics} {--since=} {--json} {--remote} {--local}
                 → record a structured completion: --commit=<sha> plus
                   --result='{...}' land under context.result, tying the task
                   to the exact code change and verification that closed it.
@@ -406,12 +415,12 @@ dispatch:done   {code} {--status=} {--commit=} {--result=} {--result-file=}
                   metrics under context.result.metrics (any --status; --since=<claim
                   time> windows a remote task) — see "Agent run metrics"
 
-dispatch:show   {code} {--json} {--remote}
-dispatch:note   {code} {body?} {--body-file=} {--internal} {--remote}
+dispatch:show   {code} {--json} {--remote} {--local}
+dispatch:note   {code} {body?} {--body-file=} {--internal} {--remote} {--local}
                 → --body-file=PATH (or `-` for stdin) supplies a long/multi-line
                   comment body instead of the inline argument
 
-dispatch:batch  {path} {--remote} {--dry-run} {--json}
+dispatch:batch  {path} {--remote} {--local} {--dry-run} {--json}
                 → apply a whole manifest of add/update ops in ONE transaction:
                   work the backlog offline, then memorialize the run in a single
                   hit instead of a verb call per task (see "Batch memorialize")
@@ -681,19 +690,23 @@ API so an agent can work the **authoritative production backlog** from
 somewhere else — a laptop, a different CI job, another project entirely —
 **without a standing credential**. It's an RFC-8628 device-flow shape:
 
-1. The agent requests a session: `dispatch:session:request --name=... --purpose=... [--scope=next --scope=claim --scope=show]`. This prints a short `user_code`.
+1. The agent requests a session: `dispatch:session:request --name=... --purpose=... --wait`.
+   This prints a short `user_code` and (with `--wait`) blocks in-process until a
+   human decides, then stores the token — the whole commissioning in **one
+   command**. With no `--scope` it requests the **full grantable verb set** (the
+   approver sees and controls the actual grant); pass `--scope=...` only to
+   deliberately narrow a session.
 2. A human approves or denies it in production's "Agent Sessions" UI — a
    staff-gated Livewire page at `/dispatch/agent-sessions` — confirming the
    `user_code` matches what the agent displayed.
-3. The agent polls with `dispatch:session:status` (async + human-gated —
-   back off, don't spin). On approval, a short-TTL bearer token is stored in
-   a dotfile outside the repo, owner-only (`0600`).
-4. The agent then drives the same verb loop with `--remote` appended —
-   `dispatch:next --remote`, `dispatch:claim --remote`,
-   `dispatch:note --remote`, `dispatch:done --remote`, etc. — which routes
-   through the agent API to production instead of the local DB. A `401`
-   mid-session means the session was revoked or expired: the local token is
-   cleared automatically and the agent should stop.
+3. (Only without `--wait`:) the agent polls with `dispatch:session:status --wait`
+   (async + human-gated — back off, don't spin). On approval, a short-TTL bearer
+   token is stored in a dotfile outside the repo, owner-only (`0600`).
+4. The agent then drives the same verb loop — while the token is active the
+   verbs target production **by default** (sticky remote: each call announces
+   `→ remote: <host>`, and `--local` overrides). A `401` mid-session means the
+   session was revoked or expired: the local token is cleared automatically and
+   the agent should stop.
 5. When the work is done, the agent ends its session with
    `dispatch:session:end` — a bearer-authed call that revokes its **own**
    session server-side (no id param, so it can only ever end itself) and
@@ -713,6 +726,7 @@ block in `config/dispatch.php`:
     'remote' => [
         'url' => env('DISPATCH_AGENT_REMOTE_URL'),
         'token_path' => env('DISPATCH_AGENT_TOKEN_PATH'),
+        'sticky' => env('DISPATCH_AGENT_STICKY', true), // active token ⇒ verbs default --remote
     ],
     // ...
 ],

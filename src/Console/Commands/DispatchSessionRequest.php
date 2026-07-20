@@ -24,7 +24,8 @@ class DispatchSessionRequest extends Command
     protected $signature = 'dispatch:session:request
         {--name= : Agent name to identify this session as}
         {--purpose= : Short human-readable purpose for the session}
-        {--scope=* : Requested scope(s)/verb(s). Repeatable. Omit to request the full allowlist.}
+        {--scope=* : Narrow the requested verb set. Repeatable. OMIT to request the full grantable allowlist (the recommended default — the approver sees and controls the grant).}
+        {--wait=0 : After showing the user_code, block in-process for approval for up to N seconds (bare --wait ≈60s) and collect the token — the whole commissioning in ONE command. Omit for the two-step flow (poll with dispatch:session:status).}
         {--secret= : Bootstrap secret; falls back to dispatch.agent.bootstrap_secret}';
 
     protected $description = 'Request a new agent session from the remote Dispatch agent API.';
@@ -48,15 +49,24 @@ class DispatchSessionRequest extends Command
         $purpose = $this->option('purpose');
         $scopes = array_values(array_filter(array_map('trim', (array) $this->option('scope')), fn ($s) => $s !== ''));
 
+        // Only send `scopes` when the caller deliberately narrowed them. The
+        // server treats an ABSENT key as "approver grants the full allowlist"
+        // but an explicit [] as request-nothing/deny-all (AgentSessionController
+        // preserves that distinction on purpose) — so unconditionally sending
+        // the key used to turn the no---scope default into a deny-all request.
+        $payload = [
+            'agent_name' => $name,
+            'purpose' => $purpose,
+        ];
+        if ($scopes !== []) {
+            $payload['scopes'] = $scopes;
+        }
+
         try {
             $response = Http::acceptJson()
                 ->timeout((int) config('dispatch.sync.timeout', 30))
                 ->withHeaders(array_filter(['X-Dispatch-Bootstrap' => $secret]))
-                ->post($base.'/session', [
-                    'agent_name' => $name,
-                    'purpose' => $purpose,
-                    'scopes' => $scopes,
-                ]);
+                ->post($base.'/session', $payload);
         } catch (ConnectionException $e) {
             $this->reportConnectionFailure($e);
 
@@ -87,9 +97,24 @@ class DispatchSessionRequest extends Command
 
         $this->newLine();
         $this->line('Show this code to the approver: <fg=cyan;options=bold>'.($data['user_code'] ?? '?').'</>');
+        $this->line($scopes === []
+            ? 'Requested: the full grantable verb set (narrow next time with --scope=… if needed).'
+            : 'Requested scopes: '.implode(', ', $scopes));
         $this->newLine();
+
+        // One-shot commissioning: with --wait, fall straight into the approval
+        // poll (same loop as dispatch:session:status --wait) so a single command
+        // shows the code, blocks, and returns holding the token.
+        $budget = $this->resolveWaitBudget();
+        if ($budget > 0) {
+            $this->line("Ask a human to approve it in the Agent Sessions UI — waiting up to {$budget}s…");
+
+            return $this->call('dispatch:session:status', ['--wait' => (string) $budget]);
+        }
+
         $this->line('Ask a human to approve this session in the Agent Sessions UI, then run:');
-        $this->line('  <fg=gray>php artisan dispatch:session:status</>');
+        $this->line('  <fg=gray>php artisan dispatch:session:status --wait</>');
+        $this->line('(Tip: next time pass --wait here to request + collect the token in one command.)');
 
         return self::SUCCESS;
     }

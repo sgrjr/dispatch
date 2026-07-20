@@ -47,7 +47,7 @@ class DispatchSessionStatus extends Command
             return self::FAILURE;
         }
 
-        $budget = $this->waitBudget();
+        $budget = $this->resolveWaitBudget();
         $deadline = microtime(true) + $budget;
         $announced = false;
 
@@ -129,7 +129,13 @@ class DispatchSessionStatus extends Command
                         'token' => $body['token'],
                         'expires_at' => $body['expires_at'] ?? ($data['expires_at'] ?? null),
                     ]));
-                    $this->info('Approved — token stored; run the verbs with --remote.');
+                    // Say what the token CHANGES (sticky-remote) and what to run
+                    // next, so the loop starts from this output, not from a doc.
+                    $this->info($this->stickyRemoteEnabled()
+                        ? 'Approved — token stored. dispatch verbs now target the remote by default while this session is active (pass --local for the local DB).'
+                        : 'Approved — token stored; run the verbs with --remote.');
+                    $this->line('Start with:  <fg=gray>php artisan dispatch:queue --count</>   then claim what you\'ll work: <fg=gray>dispatch:claim <CODE></>');
+                    $this->line('When all work is closed out:  <fg=gray>php artisan dispatch:session:end</>');
                 } else {
                     $this->info('Already approved (token issued earlier).');
                 }
@@ -151,20 +157,6 @@ class DispatchSessionStatus extends Command
         }
     }
 
-    /**
-     * Resolve the wait budget in seconds from `--wait`:
-     *   omitted        -> 0   (single poll, backward-compatible default)
-     *   bare `--wait`  -> 60  (VALUE_OPTIONAL yields null when passed with no value)
-     *   `--wait=N`     -> N
-     */
-    private function waitBudget(): int
-    {
-        $opt = $this->option('wait');
-
-        if ($opt === null) {
-            return 60;
-        }
-
-        return max(0, (int) $opt);
-    }
+    // --wait budget resolution lives in TalksToAgentApi::resolveWaitBudget(),
+    // shared with dispatch:session:request's one-shot mode.
 }

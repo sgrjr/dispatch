@@ -19,6 +19,95 @@ use Illuminate\Support\Facades\Http;
  */
 trait TalksToAgentApi
 {
+    /**
+     * Memoized target resolution, so the banner prints once per command even
+     * when targetsRemote() is consulted more than once (e.g. done + metrics).
+     */
+    private ?bool $resolvedRemoteTarget = null;
+
+    /**
+     * Resolve whether this invocation acts on the remote agent API.
+     *
+     * Explicit flags always win: --remote forces remote, --local forces local.
+     * Otherwise STICKY REMOTE applies: an active agent session (token dotfile
+     * present) plus a configured remote URL defaults the verb to remote. The
+     * token's lifecycle IS the session — created at approval, deleted on
+     * session:end/401 — so token-present means "mid-commissioned-run" and the
+     * production backlog is almost certainly the intended target. A loud
+     * target line names the host on every sticky call (STDERR, so a --json
+     * stdout stays contract-pure); hosts opt out via
+     * dispatch.agent.remote.sticky=false (DISPATCH_AGENT_STICKY).
+     */
+    protected function targetsRemote(): bool
+    {
+        if ($this->resolvedRemoteTarget !== null) {
+            return $this->resolvedRemoteTarget;
+        }
+
+        if ($this->hasOption('remote') && $this->option('remote')) {
+            return $this->resolvedRemoteTarget = true;
+        }
+
+        if ($this->hasOption('local') && $this->option('local')) {
+            return $this->resolvedRemoteTarget = false;
+        }
+
+        if (! $this->stickyRemoteEnabled()) {
+            return $this->resolvedRemoteTarget = false;
+        }
+
+        $base = $this->agentBaseUrl();
+        if ($base === null || $this->agentToken() === null) {
+            return $this->resolvedRemoteTarget = false;
+        }
+
+        $this->sideNote("<comment>→ remote: {$base} (active agent session; pass --local for the local DB)</comment>");
+
+        return $this->resolvedRemoteTarget = true;
+    }
+
+    /**
+     * Sticky-remote config read, honoring the never-republish doctrine: a host
+     * whose published config predates `agent.remote.sticky` (shallow
+     * mergeConfigFrom) falls back to the env var, then to on-by-default.
+     */
+    protected function stickyRemoteEnabled(): bool
+    {
+        $raw = config('dispatch.agent.remote.sticky');
+        if ($raw === null) {
+            $raw = env('DISPATCH_AGENT_STICKY', true);
+        }
+
+        return filter_var($raw, FILTER_VALIDATE_BOOL);
+    }
+
+    /**
+     * Informational side-channel: target banners and next-step hints go to
+     * STDERR so a piped/captured stdout (--json) stays exactly the frozen
+     * contract. In a terminal they still render inline with the output.
+     */
+    protected function sideNote(string $message): void
+    {
+        $this->output->getErrorStyle()->writeln($message);
+    }
+
+    /**
+     * Resolve a `--wait` budget in seconds (shared by the session commands):
+     *   omitted (default "0") -> 0   (single shot, backward-compatible)
+     *   bare `--wait`         -> 60  (VALUE_OPTIONAL yields null with no value)
+     *   `--wait=N`            -> N
+     */
+    protected function resolveWaitBudget(): int
+    {
+        $opt = $this->option('wait');
+
+        if ($opt === null) {
+            return 60;
+        }
+
+        return max(0, (int) $opt);
+    }
+
     protected function agentBaseUrl(): ?string
     {
         // Fall back to the raw env var when the merged config lacks the nested
@@ -146,7 +235,17 @@ trait TalksToAgentApi
 
         if ($response->status() === 401) {
             $this->forgetToken();
-            $this->error('Agent session was revoked or expired (401). Local token cleared — request a new session.');
+            $this->error('Agent session was revoked or expired (401). Local token cleared — stop the loop and report it; a human decides whether to commission a new session.');
+
+            return null;
+        }
+
+        // 403 = the token is fine, the VERB is outside this session's grant.
+        // The server's message carries the recovery steps — surface it whole
+        // instead of a truncated raw body.
+        if ($response->status() === 403) {
+            $msg = (string) ($response->json('message') ?: substr($response->body(), 0, 300));
+            $this->error('Agent API 403: '.$msg);
 
             return null;
         }

@@ -22,7 +22,8 @@ class DispatchNote extends Command
         {body? : The comment body (markdown ok). Omit and use --body-file for a long/multi-line body.}
         {--body-file= : Read the comment body from a file (or `-` for stdin) instead of the inline body argument}
         {--internal : Mark the comment internal (default: public)}
-        {--remote : Act on the configured remote agent API instead of the local DB}';
+        {--remote : Act on the configured remote agent API (the default while an agent session token is active)}
+        {--local : Act on the local DB even while an agent session token is active (overrides sticky-remote)}';
 
     protected $description = 'Append a comment to a task\'s discussion timeline.';
 
@@ -41,7 +42,7 @@ class DispatchNote extends Command
             return self::FAILURE;
         }
 
-        if ($this->option('remote')) {
+        if ($this->targetsRemote()) {
             $r = $this->agentPost('note', array_filter([
                 'code' => $this->argument('code'),
                 'body' => $body,

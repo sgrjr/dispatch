@@ -22,8 +22,9 @@ class DispatchQueue extends Command
         {--type= : Filter to a single type}
         {--label=* : Filter to tasks carrying any of these labels}
         {--limit= : Cap the number of tasks returned, top of the priority order (default: all). For the single-task case use dispatch:next.}
-        {--count : Emit counts by status (total + by_status) instead of the task list — tells you the true backlog size without probing --limit.}
-        {--remote : Act on the configured remote agent API instead of the local DB}
+        {--count : Emit counts by status (total + by_status) instead of the task list. With no --status it censuses the whole non-terminal board (open/in_progress/triage/verifying), zero-filled — an empty bucket (e.g. verifying) still prints as 0.}
+        {--remote : Act on the configured remote agent API (the default while an agent session token is active)}
+        {--local : Act on the local DB even while an agent session token is active (overrides sticky-remote)}
         {--json : Emit machine-readable JSON instead of a human table}';
 
     protected $description = 'List the actionable backlog in priority order.';
@@ -40,7 +41,7 @@ class DispatchQueue extends Command
             $limit = (int) $limit;
         }
 
-        if ($this->option('remote')) {
+        if ($this->targetsRemote()) {
             $r = $this->agentGet('queue', array_filter([
                 'status' => $this->option('status'),
                 'type' => $this->option('type'),
@@ -68,13 +69,16 @@ class DispatchQueue extends Command
         $taskModel = config('dispatch.models.task');
 
         if ($this->option('count')) {
-            $countQuery = $taskModel::query();
-            if ($status = $this->option('status')) {
-                $countQuery->where('status', $status);
-            } else {
-                $countQuery->whereIn('status', ['open', 'in_progress', 'triage']);
-            }
-            $byStatus = $countQuery
+            // The no-`--status` census spans the whole NON-TERMINAL board —
+            // including `verifying`, which the actionable LIST default
+            // deliberately excludes (claim only takes open/triage) — and
+            // zero-fills every bucket so an empty state prints as 0 instead of
+            // silently vanishing (W5-2). done/declined stay out so a backfilled
+            // archive doesn't pollute "backlog size".
+            $census = ($status = $this->option('status')) ? [$status] : ['open', 'in_progress', 'triage', 'verifying'];
+
+            $grouped = $taskModel::query()
+                ->whereIn('status', $census)
                 ->when($this->option('type'), fn ($q, $type) => $q->where('type', $type))
                 ->when($this->option('label'), fn ($q, $label) => $q->whereHas('labels', fn ($lq) => $lq->whereIn('name', (array) $label)))
                 ->selectRaw('status, COUNT(*) as c')
@@ -82,6 +86,8 @@ class DispatchQueue extends Command
                 ->pluck('c', 'status')
                 ->map(fn ($v) => (int) $v)
                 ->all();
+
+            $byStatus = array_replace(array_fill_keys($census, 0), $grouped);
 
             $this->renderCount(array_sum($byStatus), $byStatus);
 

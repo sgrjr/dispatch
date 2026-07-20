@@ -15,22 +15,21 @@ use Sgrjr\Dispatch\Services\DispatchTaskService;
  * --json path here) resolves the submitter/assignee relations, and Testbench
  * has no App\Models\User by default.
  *
- * The --remote tests point dispatch.agent.remote.url at a fake host and seed
- * a token file so TalksToAgentApi's requireToken guard doesn't short-circuit
- * before Http::fake ever sees a request.
+ * The --remote tests point dispatch.agent.remote.url at a fake host, and each
+ * one seeds its own token file (seedAgentToken) so TalksToAgentApi's
+ * requireToken guard doesn't short-circuit before Http::fake sees a request.
+ * The token is deliberately NOT ambient fixture state: under sticky remote a
+ * present token flips bare verbs to the remote target, so the local tests
+ * here run token-less — exactly the real "no active session" state.
  */
 
 beforeEach(function () {
     dispatchFakeUsers();
 
-    $tokenPath = sys_get_temp_dir().'/dispatch-agent-cli-test-'.uniqid().'.json';
-
     config([
         'dispatch.agent.remote.url' => 'https://agent.example.test/api/dispatch/agent',
-        'dispatch.agent.remote.token_path' => $tokenPath,
+        'dispatch.agent.remote.token_path' => sys_get_temp_dir().'/dispatch-agent-cli-test-'.uniqid().'.json',
     ]);
-
-    file_put_contents($tokenPath, json_encode(['token' => 'test-remote-token']));
 });
 
 afterEach(function () {
@@ -305,6 +304,7 @@ test('dispatch:add rejects both --description and --description-file', function 
 // --- --remote: one case per AGENT API JSON CONTRACT pattern -----------------
 
 test('dispatch:next --remote calls GET next and prints the returned task', function () {
+    seedAgentToken();
     Http::fake([
         'agent.example.test/*' => Http::response(['task' => ['code' => 'TASK-900', 'title' => 'remote next']], 200),
     ]);
@@ -323,6 +323,7 @@ test('dispatch:next --remote calls GET next and prints the returned task', funct
 });
 
 test('dispatch:queue --remote calls GET queue and prints the returned tasks', function () {
+    seedAgentToken();
     Http::fake([
         'agent.example.test/*' => Http::response(['tasks' => [
             ['code' => 'TASK-901', 'title' => 'remote task one'],
@@ -342,6 +343,7 @@ test('dispatch:queue --remote calls GET queue and prints the returned tasks', fu
 });
 
 test('dispatch:queue --remote forwards --limit as a query param', function () {
+    seedAgentToken();
     Http::fake([
         'agent.example.test/*' => Http::response(['tasks' => []], 200),
     ]);
@@ -382,6 +384,7 @@ test('dispatch:next --status restricts to a single status (W4-8)', function () {
 });
 
 test('dispatch:queue --remote --count forwards count=1 and prints the returned envelope', function () {
+    seedAgentToken();
     Http::fake([
         'agent.example.test/*' => Http::response(['total' => 5, 'by_status' => ['open' => 3, 'triage' => 2]], 200),
     ]);
@@ -436,6 +439,7 @@ test('dispatch:show omits the Agent run section when no metrics are stamped', fu
 });
 
 test('dispatch:show --remote calls GET show/{code} and prints the returned task', function () {
+    seedAgentToken();
     Http::fake([
         'agent.example.test/*' => Http::response(['task' => ['code' => 'TASK-902', 'title' => 'remote show', 'comments' => []]], 200),
     ]);
@@ -451,6 +455,7 @@ test('dispatch:show --remote calls GET show/{code} and prints the returned task'
 });
 
 test('dispatch:add --remote posts add and prints the returned task without touching the local DB', function () {
+    seedAgentToken();
     Http::fake([
         'agent.example.test/*' => Http::response(['task' => ['code' => 'TASK-903', 'title' => 'remote add']], 200),
     ]);
@@ -480,6 +485,7 @@ test('dispatch:add --remote posts add and prints the returned task without touch
 });
 
 test('dispatch:note --remote posts note and prints the task plus comment_id', function () {
+    seedAgentToken();
     Http::fake([
         'agent.example.test/*' => Http::response([
             'task' => ['code' => 'TASK-904', 'title' => 'noted'],
@@ -509,6 +515,7 @@ test('dispatch:note --remote posts note and prints the task plus comment_id', fu
 });
 
 test('dispatch:done --remote posts done and prints the returned task without touching the local DB', function () {
+    seedAgentToken();
     Http::fake([
         'agent.example.test/*' => Http::response(['task' => ['code' => 'TASK-905', 'title' => 'done remote', 'status' => 'done']], 200),
     ]);
@@ -521,7 +528,8 @@ test('dispatch:done --remote posts done and prints the returned task without tou
     ]);
     expect($exit)->toBe(0);
 
-    $decoded = json_decode(Artisan::output(), true);
+    // dispatchJson: the metrics tip rides the side-channel after the JSON.
+    $decoded = dispatchJson(Artisan::output());
     expect($decoded['code'])->toBe('TASK-905');
 
     Http::assertSent(function ($request) {
@@ -542,4 +550,98 @@ test('dispatch:next --remote fails cleanly when no remote is configured', functi
 
     expect($exit)->toBe(1)
         ->and(Artisan::output())->toContain('No agent remote configured');
+});
+
+// --- sticky remote: an active session token defaults bare verbs to remote ---
+
+test('sticky remote: an active token targets bare verbs at the remote, with a banner', function () {
+    seedAgentToken();
+    Http::fake([
+        'agent.example.test/*' => Http::response(['task' => null], 200),
+    ]);
+
+    $exit = Artisan::call('dispatch:next'); // no --remote flag at all
+    expect($exit)->toBe(0)
+        ->and(Artisan::output())->toContain('→ remote: https://agent.example.test');
+
+    Http::assertSent(fn ($request) => str_contains($request->url(), '/api/dispatch/agent/next'));
+});
+
+test('sticky remote: --local overrides back to the local DB', function () {
+    seedAgentToken();
+    Http::fake();
+    app(DispatchTaskService::class)->create(['title' => 'local task', 'status' => 'open']);
+
+    Artisan::call('dispatch:queue', ['--local' => true, '--json' => true]);
+    $out = dispatchJson(Artisan::output());
+
+    expect($out)->toHaveCount(1)
+        ->and($out[0]['title'])->toBe('local task');
+    Http::assertNothingSent();
+});
+
+test('sticky remote: disabled via config keeps bare verbs local even with a token', function () {
+    seedAgentToken();
+    config(['dispatch.agent.remote.sticky' => false]);
+    Http::fake();
+
+    Artisan::call('dispatch:queue', ['--json' => true]);
+
+    Http::assertNothingSent();
+});
+
+test('sticky remote: without a token, bare verbs stay local (no banner)', function () {
+    Http::fake();
+
+    Artisan::call('dispatch:queue', ['--json' => true]);
+
+    expect(Artisan::output())->not->toContain('→ remote:');
+    Http::assertNothingSent();
+});
+
+// --- W5-2: the --count census zero-fills the non-terminal board --------------
+
+test('dispatch:queue --count zero-fills the non-terminal census incl. verifying (W5-2)', function () {
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'o1', 'status' => 'open']);
+    $svc->create(['title' => 'v1', 'status' => 'verifying']);
+
+    Artisan::call('dispatch:queue', ['--count' => true, '--json' => true]);
+    $out = json_decode(Artisan::output(), true);
+
+    expect($out['total'])->toBe(2)
+        ->and($out['by_status'])->toBe(['open' => 1, 'in_progress' => 0, 'triage' => 0, 'verifying' => 1]);
+});
+
+test('dispatch:queue --count --status=verifying reports that single bucket, zero-filled', function () {
+    Artisan::call('dispatch:queue', ['--count' => true, '--status' => 'verifying', '--json' => true]);
+    $out = json_decode(Artisan::output(), true);
+
+    expect($out['total'])->toBe(0)
+        ->and($out['by_status'])->toBe(['verifying' => 0]);
+});
+
+// --- the claim → close bridge: claimed_at + a pre-filled closing command -----
+
+test('dispatch:claim prints claimed_at and the pre-filled closing command', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'bridge me', 'status' => 'open']);
+
+    Artisan::call('dispatch:claim', ['--json' => true]);
+    $out = Artisan::output();
+
+    expect(dispatchJson($out)['code'])->toBe($task->code)
+        ->and($out)->toContain('claimed_at: ')
+        ->and($out)->toContain("dispatch:done {$task->code} --status=done|verifying")
+        ->and($out)->toContain('--with-metrics --since="');
+});
+
+test('dispatch:done --remote without --with-metrics prints the metrics tip', function () {
+    seedAgentToken();
+    Http::fake([
+        'agent.example.test/*' => Http::response(['task' => ['code' => 'TASK-906', 'status' => 'done']], 200),
+    ]);
+
+    Artisan::call('dispatch:done', ['code' => 'TASK-906', '--remote' => true]);
+
+    expect(Artisan::output())->toContain('tip: no metrics on this close');
 });

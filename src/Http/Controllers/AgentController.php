@@ -63,16 +63,9 @@ class AgentController extends Controller
         /** @var class-string<Task> $taskModel */
         $taskModel = config('dispatch.models.task');
 
-        // Shared status/type/label filter — applied identically by the count and
-        // the list paths so `--count` reports the size of exactly what the list
-        // would return.
-        $applyFilters = function ($q) use ($request) {
-            if ($status = $request->query('status')) {
-                $q->where('status', $status);
-            } else {
-                $q->whereIn('status', ['open', 'in_progress', 'triage']);
-            }
-
+        // Shared type/label narrowing; the STATUS default deliberately differs
+        // between the two modes (see the count branch below).
+        $typeLabel = function ($q) use ($request) {
             return $q
                 ->when($request->query('type'), fn ($qq, $type) => $qq->where('type', $type))
                 ->when($request->query('label'), fn ($qq, $label) => $qq->whereHas(
@@ -83,13 +76,25 @@ class AgentController extends Controller
 
         // ?count — return {total, by_status} instead of the task list, so an
         // agent learns the true backlog size without probing --limit (W4-4).
+        // The no-`status` census spans the whole NON-TERMINAL board — including
+        // `verifying`, which the actionable LIST default deliberately excludes
+        // (claim only takes open/triage) — and zero-fills every bucket so an
+        // empty state reports 0 instead of silently vanishing (W5-2).
+        // done/declined stay out so a backfilled archive doesn't pollute
+        // "backlog size".
         if ($request->boolean('count')) {
-            $byStatus = $applyFilters($taskModel::query())
+            $census = ($status = $request->query('status'))
+                ? [$status]
+                : ['open', 'in_progress', 'triage', 'verifying'];
+
+            $grouped = $typeLabel($taskModel::query()->whereIn('status', $census))
                 ->selectRaw('status, COUNT(*) as c')
                 ->groupBy('status')
                 ->pluck('c', 'status')
                 ->map(fn ($v) => (int) $v)
                 ->all();
+
+            $byStatus = array_replace(array_fill_keys($census, 0), $grouped);
 
             return response()->json([
                 'total' => array_sum($byStatus),
@@ -97,7 +102,11 @@ class AgentController extends Controller
             ]);
         }
 
-        $query = $applyFilters($taskModel::query())
+        $query = $typeLabel(
+            ($status = $request->query('status'))
+                ? $taskModel::query()->where('status', $status)
+                : $taskModel::query()->whereIn('status', ['open', 'in_progress', 'triage'])
+        )
             ->with(['labels', 'submitter', 'assignee'])
             ->withCount(['comments as comment_count' => fn ($q) => $q->where('event_type', TaskComment::EVENT_COMMENT)])
             ->orderByRaw("CASE priority WHEN 'blocker' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 99 END")
@@ -151,13 +160,21 @@ class AgentController extends Controller
         // needs the human's direction (which lives in the description/comments,
         // invisible in the summary shape that next/queue return). Load the
         // relations the full presenter reads so it doesn't lazy-load per row.
+        $task?->load('labels', 'submitter', 'assignee', 'comments.user');
+
+        // The claim timestamp rides top-level (beside `task`) for zero-parse
+        // reuse as `--since` on the closing `done --with-metrics`. It also
+        // exists inside comments[] as the event_type=claimed entry — this is
+        // the ergonomic copy, so a client needs no timeline dig.
+        $claimedAt = $task
+            ? optional(
+                $task->comments->where('event_type', TaskComment::EVENT_CLAIMED)->max('created_at')
+            )->toIso8601String()
+            : null;
+
         return response()->json([
-            'task' => $task
-                ? TaskPresenter::toArray(
-                    $task->load('labels', 'submitter', 'assignee', 'comments.user'),
-                    true,
-                )
-                : null,
+            'task' => $task ? TaskPresenter::toArray($task, true) : null,
+            'claimed_at' => $claimedAt,
         ]);
     }
 

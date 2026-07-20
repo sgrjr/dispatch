@@ -120,9 +120,14 @@ until the user explicitly asks to sync.
 > checkout. If you're working the **real, production backlog** instead —
 > i.e. the authoritative task list lives on a different, deployed instance —
 > stop and use `.claude/skills/dispatch-agent-session/SKILL.md` instead: it
-> commissions a human-approved session and drives the same verbs with
-> `--remote` against production. Don't run the plain (non-`--remote`) verbs
-> below and assume they touched the real backlog — they didn't.
+> commissions a human-approved session, after which the verbs target
+> production automatically (sticky remote).
+>
+> **Sticky-remote caveat:** while a commissioned agent-session token is
+> ACTIVE on this machine, the plain verbs below default to the REMOTE
+> (each call announces `→ remote: <host>`). For local tracking during an
+> active session, pass `--local` — or end the session first
+> (`dispatch:session:end`).
 
 When the user asks "what should I work on next", or you're about to start a
 unit of work that should be tracked end-to-end, drive Dispatch's CLI verbs in
@@ -245,12 +250,12 @@ peer.
 
 That's different from **working the real, authoritative backlog directly on
 production** from somewhere else (no local checkout of the prod DB at all).
-For that, every verb needs `--remote` and a human-commissioned session
-first — see `.claude/skills/dispatch-agent-session/SKILL.md` for the full
-`dispatch:session:request` → approval → `dispatch:session:status` → `next
---remote` / `claim --remote` / `note --remote` / `done --remote` protocol.
-Never assume the plain (non-`--remote`) verbs above reached production —
-they didn't.
+For that, commission a human-approved session first — see
+`.claude/skills/dispatch-agent-session/SKILL.md` for the one-shot
+`dispatch:session:request --wait` → approval flow. While that session's token
+is active, the verbs target production **by default** (sticky remote — each
+call announces `→ remote: <host>`; `--local` overrides); with no active
+session, the plain verbs above never reach production.
 
 ### See also
 

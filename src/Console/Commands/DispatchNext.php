@@ -20,14 +20,15 @@ class DispatchNext extends Command
         {--status= : Restrict to a single status (default: open, in_progress, triage)}
         {--type= : Filter to a single type}
         {--label=* : Filter to tasks carrying any of these labels}
-        {--remote : Act on the configured remote agent API instead of the local DB}
+        {--remote : Act on the configured remote agent API (the default while an agent session token is active)}
+        {--local : Act on the local DB even while an agent session token is active (overrides sticky-remote)}
         {--json : Emit machine-readable JSON instead of human text}';
 
     protected $description = 'Show the single highest-priority actionable task to pick up next.';
 
     public function handle(): int
     {
-        if ($this->option('remote')) {
+        if ($this->targetsRemote()) {
             $r = $this->agentGet('next', array_filter([
                 'status' => $this->option('status'),
                 'type' => $this->option('type'),

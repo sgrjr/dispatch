@@ -4,6 +4,7 @@ namespace Sgrjr\Dispatch\Console\Commands;
 
 use Illuminate\Console\Command;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
+use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
 use Sgrjr\Dispatch\Support\TaskPresenter;
 
@@ -25,7 +26,8 @@ class DispatchClaim extends Command
         {--label=* : Restrict to tasks carrying ALL of these labels. Repeatable. (ignored when a code is given)}
         {--assignee= : User id to assign the claimed task to}
         {--json : Emit machine-readable JSON instead of human text}
-        {--remote : Claim via the remote agent API instead of the local DB}';
+        {--remote : Claim via the remote agent API (the default while an agent session token is active)}
+        {--local : Claim on the local DB even while an agent session token is active (overrides sticky-remote)}';
 
     protected $description = 'Atomically claim an actionable task — the next candidate, or a specific one by code (marks it in_progress + assigns it).';
 
@@ -38,7 +40,7 @@ class DispatchClaim extends Command
 
         $code = $this->argument('code');
 
-        if ($this->option('remote')) {
+        if ($this->targetsRemote()) {
             return $this->claimRemote($filters, $code);
         }
 
@@ -50,14 +52,21 @@ class DispatchClaim extends Command
             return $this->reportNothingClaimed($code);
         }
 
+        $task->loadMissing('labels', 'submitter', 'assignee', 'comments.user');
+        $claimedAt = optional(
+            $task->comments->where('event_type', TaskComment::EVENT_CLAIMED)->max('created_at')
+        )->toIso8601String();
+
         if ($this->option('json')) {
             // Full shape on claim (description + context + comments) — same as the
             // remote `claim` verb — so a claiming agent sees the human's direction,
             // not just the summary fields. Mirrors AgentController::claim.
             $this->line(json_encode(
-                TaskPresenter::toArray($task->load('labels', 'submitter', 'assignee', 'comments.user'), true),
+                TaskPresenter::toArray($task, true),
                 JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES,
             ));
+
+            $this->emitClaimFollowUp($task->code, $claimedAt);
 
             return self::SUCCESS;
         }
@@ -66,7 +75,28 @@ class DispatchClaim extends Command
         $this->line("  title: {$task->title}");
         $this->line("  type: {$task->type}  ·  priority: {$task->priority}  ·  status: {$task->status}");
 
+        $this->emitClaimFollowUp($task->code, $claimedAt);
+
         return self::SUCCESS;
+    }
+
+    /**
+     * The claim → close bridge, printed at the exact moment the values exist so
+     * closing needs zero recall (and zero doc lookup): the code and the claim
+     * timestamp (--since for --with-metrics) are pre-filled. Emitted via the
+     * STDERR side channel so a piped --json stdout stays contract-pure.
+     */
+    protected function emitClaimFollowUp(?string $code, ?string $claimedAt): void
+    {
+        if ($code === null) {
+            return;
+        }
+
+        $since = $claimedAt !== null ? ' --with-metrics --since="'.$claimedAt.'"' : '';
+
+        $this->sideNote("claimed_at: ".($claimedAt ?? 'unknown'));
+        $this->sideNote("→ when finished: php artisan dispatch:done {$code} --status=done|verifying --result-file=result.json{$since}");
+        $this->sideNote('   (done = you verified it yourself · verifying = a human still has a named check. Then: dispatch:session:end)');
     }
 
     /**
@@ -88,6 +118,12 @@ class DispatchClaim extends Command
         $task = $response['task'] ?? null;
 
         $this->line(json_encode($task, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+        if ($task !== null) {
+            // claimed_at rides the claim envelope top-level (beside `task`) for
+            // zero-parse reuse; fall back to nothing rather than digging.
+            $this->emitClaimFollowUp($task['code'] ?? null, $response['claimed_at'] ?? null);
+        }
 
         // A NAMED code that came back unclaimed is a failure — mirror the local
         // path so `dispatch:claim TASK-003 --remote` is scriptable the same way.
