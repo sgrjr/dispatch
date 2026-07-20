@@ -58,7 +58,10 @@ test('an approved session delivers its token exactly once', function () {
     $session->refresh();
     expect($session->approved_by_user_id)->toBe(42)
         ->and($session->token_hash)->toBe(hash('sha256', $first['token']))
-        ->and($session->token_delivered_at)->not->toBeNull();
+        ->and($session->token_delivered_at)->not->toBeNull()
+        // No explicit TTL → the config default: the 3h backstop.
+        ->and($session->expires_at->timestamp - now()->timestamp)->toBeGreaterThan(10700)
+        ->and($session->expires_at->timestamp - now()->timestamp)->toBeLessThanOrEqual(10800);
 });
 
 test('approve intersects requested scopes with the server allowlist', function () {

@@ -5,8 +5,10 @@ namespace Sgrjr\Dispatch\Support;
 /**
  * Shapes the agent-run metrics an agent stamps under `context.result.metrics`
  * (see dispatch:metrics --stamp / {@see TranscriptMetrics}) into a display-ready
- * array for the staff task view. Pure/DB-free so it unit-tests against a plain
- * array and the blade stays logic-light.
+ * array for the staff task view. DB-free — the only lookup is the
+ * `dispatch.metrics.touch_time` config block (the formula itself stays
+ * container-free in {@see TouchTime}), so it unit-tests against a plain array
+ * and the blade stays logic-light.
  *
  * present() returns null when a task carries no stamped metrics — the caller
  * uses that to decide whether to render the panel at all, so the panel's mere
@@ -16,9 +18,10 @@ class MetricsPresenter
 {
     /**
      * @param  array<string,mixed>|null  $context  A task's `context` attribute.
+     * @param  ?string  $taskType  The task's `type`, for the touch-time base coefficient.
      * @return array<string,mixed>|null
      */
-    public static function present(?array $context): ?array
+    public static function present(?array $context, ?string $taskType = null): ?array
     {
         $result = is_array($context['result'] ?? null) ? $context['result'] : [];
         $metrics = $result['metrics'] ?? null;
@@ -47,8 +50,20 @@ class MetricsPresenter
             ? (int) $metrics['duration_s']
             : null;
 
+        // Derived at read time, never stamped — hidden entirely (null keys)
+        // when the host's published config lacks the touch_time block.
+        $touchCfg = (array) (config('dispatch.metrics.touch_time') ?? []);
+        $touchMinutes = TouchTime::estimateMinutes($metrics, $taskType, $touchCfg);
+        $touchVersion = $touchMinutes !== null ? (string) $touchCfg['version'] : null;
+
         return [
             'duration' => self::duration($duration),
+            'touch_time' => $touchMinutes !== null ? '~'.self::duration($touchMinutes * 60) : null,
+            'touch_time_minutes' => $touchMinutes,
+            'touch_time_version' => $touchVersion,
+            'touch_time_title' => $touchMinutes !== null
+                ? "Modeled focused human touch-time for the same workflow — no queue latency, not a measurement. Formula {$touchVersion}, derived at read time from task type + tool/subagent/duration signals; tune the coefficients in config/dispatch.php (metrics.touch_time)."
+                : null,
             'total_tokens' => self::compactTokens((int) ($tokens['total'] ?? 0)),
             'total_tokens_full' => number_format((int) ($tokens['total'] ?? 0)),
             'cache_pct' => number_format($cacheRatio * 100, 1).'%',

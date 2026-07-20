@@ -100,10 +100,13 @@ class DispatchShow extends Command
         // Agent run metrics (parity with the staff "Agent run" panel). Present
         // only once a run has been stamped under context.result.metrics — same
         // MetricsPresenter shaping, so the CLI and the web view read identically.
-        if (($m = MetricsPresenter::present($task->context)) !== null) {
+        if (($m = MetricsPresenter::present($task->context, $task->type)) !== null) {
             $this->newLine();
             $this->line('<fg=gray># Agent run</>');
             $this->line("  tokens: {$m['total_tokens']} ({$m['cache_pct']} cached)  ·  cost: {$m['cost']}  ·  duration: {$m['duration']}");
+            if ($m['touch_time'] !== null) {
+                $this->line("  est. human time ({$m['touch_time_version']}): {$m['touch_time']}");
+            }
             $this->line("  turns: {$m['turns']}  ·  tool calls: {$m['tool_calls']}  ·  subagents: {$m['subagents']}  ·  errors: {$m['errors']}");
             $this->line("  input {$m['tokens']['input']} · output {$m['tokens']['output']} · cache read {$m['tokens']['cache_read']} · cache write {$m['tokens']['cache_creation']}");
             if (! empty($m['tools'])) {

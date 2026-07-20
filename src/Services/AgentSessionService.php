@@ -103,7 +103,7 @@ class AgentSessionService
         $session->scopes = $granted;
         $session->save();
 
-        $session->approve($userId, $ttl ?? (int) config('dispatch.agent.session_ttl', 3600));
+        $session->approve($userId, $ttl ?? (int) config('dispatch.agent.session_ttl', 10800));
 
         return $session;
     }

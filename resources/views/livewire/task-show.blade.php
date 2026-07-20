@@ -154,7 +154,7 @@
         the panel's presence is the confirmation that metrics are captured and
         stored — its absence means nothing has been stamped for this task yet.
     --}}
-    @php($agentMetrics = \Sgrjr\Dispatch\Support\MetricsPresenter::present($task->context))
+    @php($agentMetrics = \Sgrjr\Dispatch\Support\MetricsPresenter::present($task->context, $task->type))
     @if ($this->canEdit() && $agentMetrics !== null)
         <section class="dispatch-card" style="margin-top: 1rem;">
             <h2 class="dispatch-section-title">Agent run</h2>
@@ -172,6 +172,12 @@
                     <div class="dispatch-stat-value">{{ $agentMetrics['duration'] }}</div>
                     <div class="dispatch-stat-label">duration</div>
                 </div>
+                @if ($agentMetrics['touch_time'] !== null)
+                    <div class="dispatch-stat">
+                        <div class="dispatch-stat-value" title="{{ $agentMetrics['touch_time_title'] }}">{{ $agentMetrics['touch_time'] }}</div>
+                        <div class="dispatch-stat-label">est. human time ({{ $agentMetrics['touch_time_version'] }})</div>
+                    </div>
+                @endif
                 <div class="dispatch-stat">
                     <div class="dispatch-stat-value">{{ $agentMetrics['tool_calls'] }}</div>
                     <div class="dispatch-stat-label">tool calls</div>

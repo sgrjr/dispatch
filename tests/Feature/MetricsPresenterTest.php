@@ -69,6 +69,53 @@ test('present() marks a partial cost and tolerates an unknown (null) cost', func
         ->toBe('unknown');
 });
 
+test('present() derives est. human touch-time from the stamped signals', function () {
+    // Pin the coefficients so exact-math assertions survive retunes of the
+    // shipped defaults (the tuning-friendly path is the whole point).
+    config(['dispatch.metrics.touch_time' => [
+        'version' => 'v1',
+        'base_minutes' => [
+            'default' => 10, 'bug' => 15, 'feature' => 20,
+            'chore' => 5, 'debt' => 15, 'verify' => 10,
+        ],
+        'per_tool_minutes' => ['mutate' => 4.0, 'bash' => 1.5, 'other' => 0.5],
+        'mutate_tools' => ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'],
+        'bash_tools' => ['Bash', 'PowerShell'],
+        'category_cap_minutes' => ['mutate' => 240, 'bash' => 90, 'other' => 60],
+        'per_subagent_minutes' => 5,
+        'subagent_cap_minutes' => 60,
+        'duration_weight' => 0.15,
+        'duration_cap_minutes' => 20,
+    ]]);
+
+    $p = MetricsPresenter::present(sampleMetricsContext());
+
+    expect($p['touch_time'])->toBe('~57m')
+        ->and($p['touch_time_minutes'])->toBe(57)
+        ->and($p['touch_time_version'])->toBe('v1')
+        ->and($p['touch_time_title'])->toContain('Modeled')
+        ->and($p['touch_time_title'])->toContain('v1');
+
+    expect(MetricsPresenter::present(sampleMetricsContext(), 'feature')['touch_time'])->toBe('~1h 7m');
+});
+
+test('present() derives a touch-time from the shipped default coefficients', function () {
+    expect(MetricsPresenter::present(sampleMetricsContext())['touch_time'])->toMatch('/^~\d/');
+});
+
+test('present() hides touch-time when the config block is absent (stale published config)', function () {
+    config(['dispatch.metrics.touch_time' => null]);
+
+    $p = MetricsPresenter::present(sampleMetricsContext());
+
+    expect($p['touch_time'])->toBeNull()
+        ->and($p['touch_time_minutes'])->toBeNull()
+        ->and($p['touch_time_version'])->toBeNull()
+        ->and($p['touch_time_title'])->toBeNull()
+        ->and($p['duration'])->toBe('12m 34s')
+        ->and($p['cost'])->toBe('$0.1234');
+});
+
 test('duration() humanizes seconds and handles null', function () {
     expect(MetricsPresenter::duration(null))->toBe('—')
         ->and(MetricsPresenter::duration(45))->toBe('45s')

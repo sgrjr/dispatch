@@ -682,6 +682,19 @@ absence means nothing has been stamped for that task yet:
 - **`dispatch:show TASK-042`** — the same figures as a `# Agent run` block in
   the CLI, for parity with the web view.
 
+**Estimated human touch-time (derived, v1).** Both surfaces also show an
+estimate of the focused human minutes the same workflow would have taken —
+a modeled index rendered in hours, **not a measurement**: it assumes the same
+workflow, counts no queue latency, and carries its formula version in the
+label ("est. human time (v1)"). Unlike the raw figures it is **never stamped**:
+it's derived at read time from the stored signals (task type, tool mix,
+subagents, and a capped low-weight wall-clock term), so historical tasks
+re-derive whenever you tune the coefficients in `config/dispatch.php`
+(`metrics.touch_time`) — edit those coefficients rather than trusting the
+baked-in numbers, and bump `version` when you retune so readers can see the
+formula changed. Hosts with a previously published config must add the block
+(or re-publish) to see the figure; when it's absent the tile simply hides.
+
 **Session-anchored metrics (the load-bearing default).** Per-task
 `--with-metrics` is voluntary — an agent deep in a run can forget it — so the
 **whole-session** totals are recorded structurally instead: `dispatch:session:end`
@@ -734,7 +747,7 @@ block in `config/dispatch.php`:
 'agent' => [
     'enabled' => env('DISPATCH_AGENT', false),
     'bootstrap_secret' => env('DISPATCH_AGENT_BOOTSTRAP_SECRET'),
-    'session_ttl' => (int) env('DISPATCH_AGENT_SESSION_TTL', 3600),
+    'session_ttl' => (int) env('DISPATCH_AGENT_SESSION_TTL', 10800),
     'verbs' => ['next', 'queue', 'show', 'add', 'note', 'done', 'claim'],
     'remote' => [
         'url' => env('DISPATCH_AGENT_REMOTE_URL'),

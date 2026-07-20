@@ -94,6 +94,22 @@ census are additive).
   now the load-bearing default. A v0.6.0 client against a v0.5.x server keeps
   working — the extra `metrics` key on `session/end` is simply ignored there
   (`$request->validate` tolerates it; nothing is stored).
+- **Estimated human touch-time (derived, v1).** The "Agent run" card and the
+  `dispatch:show` block gain an "est. human time (v1)" figure — a deterministic,
+  versioned estimate of the focused human minutes the run's workflow would have
+  taken, derived at **read time** from the stamped signals (task type, tool mix,
+  subagents, capped wall-clock). It is never stored, so historical tasks
+  re-derive whenever you tune the coefficients in `metrics.touch_time`. **Hosts
+  with a previously published `config/dispatch.php` must add that block (or
+  re-publish) to see it** — absent config hides the figure and nothing errors
+  (shallow `mergeConfigFrom`, the same trap as GAP 3/6).
+- **Agent session TTL default is now 3 hours (was 1).** The 1h default
+  force-expired legitimate long sessions, and an expiry mid-run `401`s the
+  closing `dispatch:session:end` call — so the longest runs were exactly the
+  ones that lost their session metrics. The TTL is a backstop, not the
+  lifecycle (`session:end` is how sessions are meant to end); stricter hosts
+  set `DISPATCH_AGENT_SESSION_TTL` as before, and a published config's
+  `session_ttl` value still wins wholesale.
 
 ## Enabling the batch verb (`dispatch:batch --remote` / `POST agent/batch`)
 

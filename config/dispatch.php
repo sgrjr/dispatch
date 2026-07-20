@@ -298,7 +298,10 @@ return [
         'enabled' => env('DISPATCH_AGENT', false),
         'middleware' => ['api'],
         'bootstrap_secret' => env('DISPATCH_AGENT_BOOTSTRAP_SECRET'),
-        'session_ttl' => (int) env('DISPATCH_AGENT_SESSION_TTL', 3600),  // approved token TTL (s)
+        // Approved token TTL (s). A backstop, not the lifecycle — sessions end
+        // via dispatch:session:end; expiry mid-run 401s that closing call and
+        // loses the session's stamped metrics, so keep this generous.
+        'session_ttl' => (int) env('DISPATCH_AGENT_SESSION_TTL', 10800),
         'request_ttl' => (int) env('DISPATCH_AGENT_REQUEST_TTL', 900),   // pending-approval window (s)
         'poll_interval' => (int) env('DISPATCH_AGENT_POLL_INTERVAL', 5),
         'request_throttle' => env('DISPATCH_AGENT_REQUEST_THROTTLE', '10,1'),
@@ -355,6 +358,14 @@ return [
     | a baked-in dollar figure. `cache_write` defaults to the 5-minute-TTL rate
     | (1.25x input); Claude Code may use the 1-hour TTL (2x) — adjust if that
     | matters for your accounting.
+    |
+    | `touch_time` powers a derived "estimated human touch-time" figure — a
+    | deterministic, versioned estimate of the focused human minutes the same
+    | workflow would have taken. Like cost, it is computed at READ time from the
+    | stamped signals (never stored), so historical tasks re-derive whenever you
+    | tune these coefficients — edit them rather than trusting the baked-in
+    | numbers, and bump `version` when you retune (it renders in the label).
+    | Delete or null the block to hide the figure everywhere.
     */
     'metrics' => [
         'session_file' => storage_path('app/dispatch/agent-session.json'),
@@ -365,6 +376,43 @@ return [
             'claude-sonnet-5' => ['input' => 3.00, 'output' => 15.00, 'cache_write' => 3.75, 'cache_read' => 0.30],
             'claude-haiku-4-5' => ['input' => 1.00, 'output' => 5.00, 'cache_write' => 1.25, 'cache_read' => 0.10],
             'claude-fable-5' => ['input' => 10.00, 'output' => 50.00, 'cache_write' => 12.50, 'cache_read' => 1.00],
+        ],
+
+        // Estimated human touch-time — modeled focused touch-time for the same
+        // workflow (no queue latency), NOT a measurement. See the banner above.
+        'touch_time' => [
+            'version' => 'v1',
+
+            // Orientation + reading the task + commit/PR overhead a human pays
+            // once per task, by task type; 'default' covers unknown/null types.
+            'base_minutes' => [
+                'default' => 10,
+                'bug' => 15,
+                'feature' => 20,
+                'chore' => 5,
+                'debt' => 15,
+                'verify' => 10,
+            ],
+
+            // Minutes per tool call by category. The lists map raw stamped tool
+            // names (PascalCase, as they appear in the tools histogram) into
+            // categories; any unlisted name counts as 'other'.
+            'per_tool_minutes' => ['mutate' => 4.0, 'bash' => 1.5, 'other' => 0.5],
+            'mutate_tools' => ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'],
+            'bash_tools' => ['Bash', 'PowerShell'],
+
+            // Per-category ceilings so huge sweeps (500 Edits) don't produce
+            // absurd totals: each category contributes min(count × rate, cap).
+            'category_cap_minutes' => ['mutate' => 240, 'bash' => 90, 'other' => 60],
+
+            // Parallel subagent work a human would have done serially.
+            'per_subagent_minutes' => 5,
+            'subagent_cap_minutes' => 60,
+
+            // Wall-clock enters only as + min(duration_minutes × weight, cap) —
+            // a capped, low-weight term, never a multiplier on the whole run.
+            'duration_weight' => 0.15,
+            'duration_cap_minutes' => 20,
         ],
     ],
 ];

@@ -418,6 +418,14 @@ test('dispatch:show renders an Agent run section from stamped context.result.met
     ]]];
     $task->save();
 
+    // Pin the touch-time coefficients (code fallbacks cover the rest) so the
+    // exact figure survives retunes. Task type is 'feature' by service default:
+    // 20 + (10×1.5) + (8×0.5) + (2×5) + (754/60 × 0.15) = 50.885 → ~51m.
+    config(['dispatch.metrics.touch_time' => [
+        'version' => 'v1',
+        'base_minutes' => ['default' => 10, 'feature' => 20],
+    ]]);
+
     Artisan::call('dispatch:show', ['code' => $task->code]);
     $out = Artisan::output();
 
@@ -425,6 +433,7 @@ test('dispatch:show renders an Agent run section from stamped context.result.met
         ->and($out)->toContain('11k (72.7% cached)')
         ->and($out)->toContain('duration: 12m 34s')
         ->and($out)->toContain('cost: $0.1234')
+        ->and($out)->toContain('est. human time (v1): ~51m')
         ->and($out)->toContain('Bash · 10')
         ->and($out)->toContain('claude-opus-4-8')
         ->and($out)->toContain('commit: abc1234');

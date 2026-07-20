@@ -65,14 +65,39 @@ test('the Agent run panel renders the stamped metrics for staff', function () {
     ]]];
     $task->save();
 
+    // Pin the touch-time coefficients (code fallbacks cover the rest) so the
+    // exact figure survives retunes. Task type is 'feature' by service default:
+    // 20 + (10×1.5) + (8×0.5) + (2×5) + (754/60 × 0.15) = 50.885 → ~51m.
+    config(['dispatch.metrics.touch_time' => [
+        'version' => 'v1',
+        'base_minutes' => ['default' => 10, 'feature' => 20],
+    ]]);
+
     Livewire::test(TaskShow::class, ['task' => $task])
         ->assertSee('Agent run')
         ->assertSee('11k')            // compact total tokens
         ->assertSee('12m 34s')        // humanized duration
         ->assertSee('$0.1234')        // cost
+        ->assertSee('est. human time (v1)')
+        ->assertSee('~51m')           // derived touch-time
         ->assertSee('Bash · 10')      // top tool
         ->assertSee('claude-opus-4-8')
         ->assertSee('abc1234');       // commit from context.result
+});
+
+test('the Agent run panel omits the touch-time tile when the config block is absent', function () {
+    $staff = dispatchMakeUser(42);
+    $this->actingAs($staff);
+
+    $task = app(DispatchTaskService::class)->create(['title' => 'agent-worked task']);
+    $task->context = ['result' => ['metrics' => ['tokens' => ['total' => 500], 'duration_s' => 60]]];
+    $task->save();
+
+    config(['dispatch.metrics.touch_time' => null]);
+
+    Livewire::test(TaskShow::class, ['task' => $task])
+        ->assertSee('Agent run')
+        ->assertDontSee('est. human time');
 });
 
 test('the Agent run panel is absent when a task has no stamped metrics', function () {
