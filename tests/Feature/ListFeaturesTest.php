@@ -165,6 +165,64 @@ test('the stale filter returns only non-terminal tasks past the staleness thresh
         ->assertDontSee($staleButDone->code);
 });
 
+test('the updated filter buckets tasks into today / past week / past month / older windows', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    /** @var class-string<Task> $taskClass */
+    $taskClass = config('dispatch.models.task');
+    $service = app(DispatchTaskService::class);
+
+    $today = $service->create(['title' => 'Touched today', 'status' => 'open']);
+    $thisWeek = $service->create(['title' => 'Touched this week', 'status' => 'open']);
+    $thisMonth = $service->create(['title' => 'Touched this month', 'status' => 'open']);
+    $ancient = $service->create(['title' => 'Touched long ago', 'status' => 'open']);
+
+    // Bypass Eloquent's auto-touch so updated_at actually lands in the past.
+    $taskClass::whereKey($thisWeek->id)->update(['updated_at' => now()->subDays(3)]);
+    $taskClass::whereKey($thisMonth->id)->update(['updated_at' => now()->subDays(20)]);
+    $taskClass::whereKey($ancient->id)->update(['updated_at' => now()->subDays(90)]);
+
+    Livewire::test(TaskList::class)
+        ->set('updatedFilter', 'today')
+        ->assertSee($today->code)
+        ->assertDontSee($thisWeek->code)
+        ->assertDontSee($ancient->code)
+        ->set('updatedFilter', 'week')
+        ->assertSee($today->code)
+        ->assertSee($thisWeek->code)
+        ->assertDontSee($thisMonth->code)
+        ->set('updatedFilter', 'month')
+        ->assertSee($thisMonth->code)
+        ->assertDontSee($ancient->code)
+        ->set('updatedFilter', 'older')
+        ->assertSee($ancient->code)
+        ->assertDontSee($today->code)
+        ->assertDontSee($thisMonth->code);
+});
+
+test('sorting by updated_desc and updated_asc orders tasks by updated_at', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    /** @var class-string<Task> $taskClass */
+    $taskClass = config('dispatch.models.task');
+    $service = app(DispatchTaskService::class);
+
+    $recent = $service->create(['title' => 'Recently touched', 'status' => 'open']);
+    $middle = $service->create(['title' => 'Touched a while ago', 'status' => 'open']);
+    $oldest = $service->create(['title' => 'Untouched forever', 'status' => 'open']);
+
+    $taskClass::whereKey($middle->id)->update(['updated_at' => now()->subDays(10)]);
+    $taskClass::whereKey($oldest->id)->update(['updated_at' => now()->subDays(30)]);
+
+    Livewire::test(TaskList::class)
+        ->set('sort', 'updated_desc')
+        ->assertSeeInOrder([$recent->code, $middle->code, $oldest->code])
+        ->set('sort', 'updated_asc')
+        ->assertSeeInOrder([$oldest->code, $middle->code, $recent->code]);
+});
+
 test('the stale filter is not offered when dispatch.staleness.enabled is false', function () {
     $staff = dispatchMakeUser(1);
     $this->actingAs($staff);

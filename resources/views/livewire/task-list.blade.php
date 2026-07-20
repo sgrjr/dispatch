@@ -73,6 +73,16 @@
                     @foreach ($labels as $l) <option value="{{ $l->name }}">{{ $l->name }}</option> @endforeach
                 </select>
             </div>
+            <div>
+                <label class="dispatch-label">Updated</label>
+                <select wire:model.live="updatedFilter" class="dispatch-select">
+                    <option value="">Any time</option>
+                    <option value="today">Today</option>
+                    <option value="week">Past week</option>
+                    <option value="month">Past month</option>
+                    <option value="older">Older</option>
+                </select>
+            </div>
         </div>
 
         <div class="dispatch-list-toolbar">
@@ -83,6 +93,8 @@
                     <option value="status">Status</option>
                     <option value="newest">Newest</option>
                     <option value="oldest">Oldest</option>
+                    <option value="updated_desc">Recently updated</option>
+                    <option value="updated_asc">Least recently updated</option>
                     <option value="code">Code</option>
                     <option value="title">Title</option>
                 </select>

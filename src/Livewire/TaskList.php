@@ -38,6 +38,10 @@ class TaskList extends Component
     #[Url(as: 'label', except: '')]
     public string $labelFilter = '';
 
+    /** Updated-at window: '', 'today', 'week', 'month', or 'older'. */
+    #[Url(as: 'updated', except: '')]
+    public string $updatedFilter = '';
+
     #[Url(as: 'sort', except: 'priority')]
     public string $sort = 'priority';
 
@@ -63,7 +67,7 @@ class TaskList extends Component
 
     public function updating($name): void
     {
-        if (in_array($name, ['search', 'statusFilter', 'typeFilter', 'priorityFilter', 'labelFilter'], true)) {
+        if (in_array($name, ['search', 'statusFilter', 'typeFilter', 'priorityFilter', 'labelFilter', 'updatedFilter'], true)) {
             $this->resetPage();
             $this->selected = [];
         }
@@ -71,7 +75,7 @@ class TaskList extends Component
 
     public function clearFilters(): void
     {
-        $this->reset(['search', 'statusFilter', 'typeFilter', 'priorityFilter', 'labelFilter']);
+        $this->reset(['search', 'statusFilter', 'typeFilter', 'priorityFilter', 'labelFilter', 'updatedFilter']);
         $this->resetPage();
         $this->selected = [];
     }
@@ -296,6 +300,15 @@ class TaskList extends Component
             $query->whereHas('labels', fn (Builder $q) => $q->where('name', $label));
         }
 
+        // Cumulative windows (today ⊂ week ⊂ month); 'older' is the remainder.
+        match ($this->updatedFilter) {
+            'today' => $query->where('updated_at', '>=', now()->startOfDay()),
+            'week' => $query->where('updated_at', '>=', now()->subWeek()),
+            'month' => $query->where('updated_at', '>=', now()->subMonth()),
+            'older' => $query->where('updated_at', '<', now()->subMonth()),
+            default => null,
+        };
+
         $query = $this->applySort($query);
 
         return view('dispatch::livewire.task-list', [
@@ -317,6 +330,8 @@ class TaskList extends Component
         return match ($this->sort) {
             'newest' => $query->orderByDesc('created_at'),
             'oldest' => $query->orderBy('created_at'),
+            'updated_desc' => $query->orderByDesc('updated_at'),
+            'updated_asc' => $query->orderBy('updated_at'),
             'code' => $query->orderBy('code'),
             'title' => $query->orderBy('title'),
             'status' => $query->orderByRaw($taskClass::statusSql())->orderByDesc('updated_at'),
