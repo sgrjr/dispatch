@@ -65,4 +65,33 @@ class AgentMetrics
             ],
         ], $computed);
     }
+
+    /**
+     * One-line human summary of a collected metrics object — shared by the
+     * `dispatch:metrics --note` timeline comment, the `session:end` receipt,
+     * and the Agent Sessions "recently ended" row, so the run reads the same
+     * everywhere it's memorialized.
+     *
+     * @param  array<string,mixed>  $m
+     */
+    public static function summaryLine(array $m): string
+    {
+        $t = is_array($m['tokens'] ?? null) ? $m['tokens'] : [];
+        $dur = isset($m['duration_s']) && $m['duration_s'] !== null
+            ? MetricsPresenter::duration((int) $m['duration_s'])
+            : '—';
+        $cachePct = (int) round(((float) ($t['cache_hit_ratio'] ?? 0)) * 100);
+        $cost = ($m['cost_usd'] ?? null) !== null ? '~$'.number_format((float) $m['cost_usd'], 2) : '~$?';
+
+        return sprintf(
+            '📊 Agent metrics — ⏱ %s · %s tok (%d%% cached) · %s · %d tools · %d subagents · %d turns',
+            $dur,
+            number_format((int) ($t['total'] ?? 0)),
+            $cachePct,
+            $cost,
+            (int) ($m['tool_calls'] ?? 0),
+            (int) ($m['subagents'] ?? 0),
+            (int) ($m['turns'] ?? 0),
+        );
+    }
 }

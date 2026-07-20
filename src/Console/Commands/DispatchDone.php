@@ -111,10 +111,11 @@ class DispatchDone extends Command
 
             $this->line(json_encode($r['task'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
-            // Point-of-need reminder replacing memorized doctrine: metrics can
-            // only be attached while the session token still exists.
+            // Point-of-need reminder replacing memorized doctrine: per-task
+            // metrics ride EVERY done (the claim bridge pre-fills the flags);
+            // session totals are recorded automatically at session:end.
             if (! $this->option('with-metrics')) {
-                $this->sideNote('tip: no metrics on this close — on the LAST done before dispatch:session:end, add --with-metrics --since=<claimed_at from claim> so the run cost lands on the task (after session:end the token is gone).');
+                $this->sideNote('tip: no metrics on this close — metrics ride EVERY done: add --with-metrics --since=<claimed_at from claim> so this task shows its own run cost. (Session totals still land automatically at dispatch:session:end.)');
             }
 
             return self::SUCCESS;

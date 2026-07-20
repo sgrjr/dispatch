@@ -70,10 +70,25 @@ class AgentSessions extends Component
             ->orderByDesc('approved_at')
             ->get();
 
+        // Recently ended: sessions that were actually commissioned (approved_at
+        // set — a denied request never ran) and have since been revoked/expired.
+        // This is where the session-anchored metrics verdict lives — the badge
+        // on an ACTIVE row can only ever say "pending", because the load-bearing
+        // stamp happens at session:end. Without this section the outcome
+        // vanished with the row the moment the run finished.
+        $ended = AgentSession::query()
+            ->whereIn('status', [AgentSession::STATUS_REVOKED, AgentSession::STATUS_EXPIRED])
+            ->whereNotNull('approved_at')
+            ->orderByDesc('ended_at')
+            ->orderByDesc('updated_at')
+            ->limit(10)
+            ->get();
+
         return view('dispatch::livewire.agent-sessions', [
             'pending' => $pending,
             'active' => $active,
-            'metrics' => $this->metricsSummary($active),
+            'ended' => $ended,
+            'metrics' => $this->metricsSummary($active->concat($ended)),
         ])->layout('dispatch::components.layout');
     }
 
@@ -82,6 +97,8 @@ class AgentSessions extends Component
      * a RESULT on (`worked`), and how many of those carry stamped metrics
      * (`with_metrics`). Lets the view flag a session that closed work but captured
      * no agent-run metrics — visible at a glance instead of drilling into a task.
+     * Computed for active AND recently-ended sessions; the session-level metrics
+     * object itself (recorded at session:end) lives on the row (`->metrics`).
      *
      * The link is the attribution an agent write stamps
      * (TaskComment.meta.agent_session_id = session.public_id, see

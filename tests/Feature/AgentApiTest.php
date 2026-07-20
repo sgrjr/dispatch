@@ -364,9 +364,9 @@ test('GET next?status restricts to a single status (W4-8)', function () {
         ->assertJsonPath('task.code', $open->code);
 });
 
-// --- W4-9: AgentSessions "metrics recorded?" badge --------------------------
+// --- W4-9 + session-anchored metrics: AgentSessions badges ------------------
 
-test('AgentSessions flags an active session that closed work but recorded no metrics (W4-9)', function () {
+test('AgentSessions marks an active session with work but no per-task metrics as PENDING session end (W4-9, softened)', function () {
     $this->actingAs(dispatchMakeUser(8100));
 
     $svc = app(AgentSessionService::class);
@@ -375,6 +375,8 @@ test('AgentSessions flags an active session that closed work but recorded no met
     $svc->approve($session, dispatchMakeUser(8101)->id);
 
     // A task this session closed (result recorded) but with NO metrics stamped.
+    // Mid-run that's the NORMAL state now — the load-bearing stamp happens at
+    // session:end — so the active row informs rather than warns.
     $task = app(DispatchTaskService::class)->create(['title' => 'closed no metrics', 'status' => 'done']);
     $task->recordEvent(
         \Sgrjr\Dispatch\Models\TaskComment::EVENT_STATUS_CHANGE,
@@ -384,10 +386,12 @@ test('AgentSessions flags an active session that closed work but recorded no met
     );
     app(DispatchTaskService::class)->recordResult($task, ['summary' => 'done'], 'abc123');
 
-    Livewire::test(AgentSessions::class)->assertSee('metrics: none recorded');
+    Livewire::test(AgentSessions::class)
+        ->assertSee('metrics: pending session end')
+        ->assertDontSee('metrics: none recorded');
 });
 
-test('AgentSessions does NOT flag an active session that recorded metrics (W4-9)', function () {
+test('AgentSessions does NOT flag an active session that recorded per-task metrics (W4-9)', function () {
     $this->actingAs(dispatchMakeUser(8110));
 
     $svc = app(AgentSessionService::class);
@@ -406,5 +410,92 @@ test('AgentSessions does NOT flag an active session that recorded metrics (W4-9)
 
     Livewire::test(AgentSessions::class)
         ->assertSee('Agent-run metrics captured on')     // the success badge's title
-        ->assertDontSee('metrics: none recorded');
+        ->assertDontSee('metrics: pending session end');
+});
+
+// --- Session-anchored metrics: POST session/end + the "Recently ended" panel -
+
+test('POST session/end stores the metrics payload on the session row with ended_at', function () {
+    $token = agentApiToken();
+
+    $this->withToken($token)->postJson('api/dispatch/agent/session/end', [
+        'metrics' => ['window' => ['basis' => 'session-token'], 'tokens' => ['total' => 1234], 'cost_usd' => 0.05],
+    ])->assertOk()
+        ->assertJsonPath('ended', true)
+        ->assertJsonPath('metrics_recorded', true);
+
+    $session = AgentSession::where('token_hash', hash('sha256', $token))->firstOrFail();
+    expect($session->status)->toBe(AgentSession::STATUS_REVOKED)
+        ->and($session->metrics['tokens']['total'])->toBe(1234)
+        ->and($session->ended_at)->not->toBeNull();
+});
+
+test('POST session/end without metrics still ends the session (metrics_recorded false)', function () {
+    $token = agentApiToken();
+
+    $this->withToken($token)->postJson('api/dispatch/agent/session/end')
+        ->assertOk()
+        ->assertJsonPath('metrics_recorded', false);
+
+    $session = AgentSession::where('token_hash', hash('sha256', $token))->firstOrFail();
+    expect($session->metrics)->toBeNull()
+        ->and($session->ended_at)->not->toBeNull();   // ended_at rides every revoke
+});
+
+test('POST session/end rejects an oversized metrics blob (422) and does NOT end the session', function () {
+    $token = agentApiToken();
+
+    $this->withToken($token)->postJson('api/dispatch/agent/session/end', [
+        'metrics' => ['blob' => str_repeat('x', 20000)],
+    ])->assertStatus(422);
+
+    $session = AgentSession::where('token_hash', hash('sha256', $token))->firstOrFail();
+    expect($session->status)->toBe(AgentSession::STATUS_APPROVED)
+        ->and($session->metrics)->toBeNull();
+});
+
+test('AgentSessions lists a recently ended session with its session-end metrics summary', function () {
+    $this->actingAs(dispatchMakeUser(8120));
+
+    $svc = app(AgentSessionService::class);
+    $req = $svc->request('finished agent', 'work');
+    $session = AgentSession::where('public_id', $req['public_id'])->firstOrFail();
+    $svc->approve($session, dispatchMakeUser(8121)->id);
+
+    $session->metrics = [
+        'duration_s' => 125,
+        'tokens' => ['total' => 54321, 'cache_hit_ratio' => 0.5],
+        'cost_usd' => 1.23,
+        'tool_calls' => 7,
+        'subagents' => 1,
+        'turns' => 9,
+    ];
+    $svc->revoke($session);   // persists metrics + stamps ended_at in one save
+
+    Livewire::test(AgentSessions::class)
+        ->assertSee('Recently ended')
+        ->assertSee('session metrics')          // the success badge
+        ->assertSee('54,321 tok');              // the shared summary line
+});
+
+test('AgentSessions flags an ENDED session that closed work but recorded nothing — the real none-recorded verdict', function () {
+    $this->actingAs(dispatchMakeUser(8130));
+
+    $svc = app(AgentSessionService::class);
+    $req = $svc->request('silent agent', 'work');
+    $session = AgentSession::where('public_id', $req['public_id'])->firstOrFail();
+    $svc->approve($session, dispatchMakeUser(8131)->id);
+
+    $task = app(DispatchTaskService::class)->create(['title' => 'closed silently', 'status' => 'done']);
+    $task->recordEvent(
+        \Sgrjr\Dispatch\Models\TaskComment::EVENT_STATUS_CHANGE,
+        null,
+        ['agent_session_id' => $session->public_id, 'agent_name' => 'silent agent'],
+        'done',
+    );
+    app(DispatchTaskService::class)->recordResult($task, ['summary' => 'done'], 'abc123');
+
+    $svc->revoke($session);   // ended with neither session nor per-task metrics
+
+    Livewire::test(AgentSessions::class)->assertSee('metrics: none recorded');
 });

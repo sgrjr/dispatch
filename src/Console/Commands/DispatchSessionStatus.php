@@ -128,6 +128,9 @@ class DispatchSessionStatus extends Command
                     $this->storeToken(array_merge($data, [
                         'token' => $body['token'],
                         'expires_at' => $body['expires_at'] ?? ($data['expires_at'] ?? null),
+                        // Session-start marker: session:end's default metrics
+                        // window opens here (token delivery = session begins).
+                        'stored_at' => now()->toIso8601String(),
                     ]));
                     // Say what the token CHANGES (sticky-remote) and what to run
                     // next, so the loop starts from this output, not from a doc.

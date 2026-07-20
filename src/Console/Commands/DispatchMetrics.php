@@ -129,21 +129,7 @@ class DispatchMetrics extends Command
      */
     private function summaryLine(array $m): string
     {
-        $t = $m['tokens'];
-        $dur = $m['duration_s'] !== null ? $this->humanDuration((int) $m['duration_s']) : '—';
-        $cachePct = (int) round(((float) ($t['cache_hit_ratio'] ?? 0)) * 100);
-        $cost = $m['cost_usd'] !== null ? '~$'.number_format((float) $m['cost_usd'], 2) : '~$?';
-
-        return sprintf(
-            '📊 Agent metrics — ⏱ %s · %s tok (%d%% cached) · %s · %d tools · %d subagents · %d turns',
-            $dur,
-            number_format((int) $t['total']),
-            $cachePct,
-            $cost,
-            (int) $m['tool_calls'],
-            (int) $m['subagents'],
-            (int) $m['turns'],
-        );
+        return AgentMetrics::summaryLine($m);
     }
 
     private function humanDuration(int $s): string

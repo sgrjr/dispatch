@@ -83,7 +83,7 @@
                         @php($m = $metrics[$session->id] ?? ['worked' => 0, 'with_metrics' => 0])
                         @if ($m['worked'] > 0 && $m['with_metrics'] === 0)
                             <div style="margin-top:0.4rem;">
-                                <span class="dispatch-badge is-warning" title="This session closed {{ $m['worked'] }} task(s) but recorded no agent-run metrics — no dispatch:done --with-metrics.">metrics: none recorded</span>
+                                <span class="dispatch-badge is-info" title="This session closed {{ $m['worked'] }} task(s) with no per-task --with-metrics yet — session totals are recorded automatically at dispatch:session:end.">metrics: pending session end</span>
                             </div>
                         @elseif ($m['with_metrics'] > 0)
                             <div style="margin-top:0.4rem;">
@@ -93,6 +93,51 @@
                     </div>
                     <div class="dispatch-agent-actions">
                         <button type="button" wire:click="revoke({{ $session->id }})" wire:confirm="Revoke this agent session?" class="dispatch-btn is-secondary">Revoke</button>
+                    </div>
+                </div>
+            @endforeach
+        @endif
+    </section>
+
+    {{-- Recently ended — where the session-anchored metrics verdict lives. The
+         run summary is stamped by dispatch:session:end onto the session row; an
+         ended session that closed work but carries no metrics is the real
+         "none recorded" signal (on an ACTIVE row it can only ever be pending). --}}
+    <section class="dispatch-card" style="margin-top: 1rem;">
+        <h2 style="margin:0 0 0.5rem; font-size:1rem;">Recently ended</h2>
+
+        @if ($ended->isEmpty())
+            <div class="dispatch-empty">No ended agent sessions yet.</div>
+        @else
+            @foreach ($ended as $session)
+                <div class="dispatch-agent-row" wire:key="ended-{{ $session->id }}">
+                    <div style="min-width:0; flex:1;">
+                        <div>
+                            <span class="dispatch-list-title">{{ $session->agent_name }}</span>
+                            <span class="dispatch-badge">{{ $session->status === \Sgrjr\Dispatch\Models\AgentSession::STATUS_EXPIRED ? 'expired' : 'ended' }}</span>
+                        </div>
+                        <div class="dispatch-agent-meta">
+                            approved {{ $session->approved_at?->diffForHumans() }}
+                            &middot; ended {{ ($session->ended_at ?? $session->expires_at ?? $session->updated_at)?->diffForHumans() }}
+                        </div>
+                        @php($m = $metrics[$session->id] ?? ['worked' => 0, 'with_metrics' => 0])
+                        @if (is_array($session->metrics) && $session->metrics !== [])
+                            <div style="margin-top:0.4rem;">
+                                <span class="dispatch-badge is-success" title="Whole-session run metrics recorded at dispatch:session:end.">session metrics &check;</span>
+                                @if ($m['with_metrics'] > 0)
+                                    <span class="dispatch-badge is-success" title="Agent-run metrics captured on {{ $m['with_metrics'] }} of {{ $m['worked'] }} closed task(s).">tasks &check; {{ $m['with_metrics'] }}/{{ $m['worked'] }}</span>
+                                @endif
+                            </div>
+                            <div class="dispatch-agent-meta">{{ \Sgrjr\Dispatch\Support\AgentMetrics::summaryLine($session->metrics) }}</div>
+                        @elseif ($m['worked'] > 0 && $m['with_metrics'] === 0)
+                            <div style="margin-top:0.4rem;">
+                                <span class="dispatch-badge is-warning" title="This session closed {{ $m['worked'] }} task(s) but recorded no run metrics — session:end ran with --no-metrics or could not locate a transcript, and no dispatch:done carried --with-metrics.">metrics: none recorded</span>
+                            </div>
+                        @elseif ($m['with_metrics'] > 0)
+                            <div style="margin-top:0.4rem;">
+                                <span class="dispatch-badge is-success" title="Agent-run metrics captured on {{ $m['with_metrics'] }} of {{ $m['worked'] }} closed task(s).">tasks &check; {{ $m['with_metrics'] }}/{{ $m['worked'] }}</span>
+                            </div>
+                        @endif
                     </div>
                 </div>
             @endforeach

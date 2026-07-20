@@ -40,6 +40,8 @@ class AgentSession extends Model
         'expires_at',
         'last_used_at',
         'ip',
+        'metrics',
+        'ended_at',
     ];
 
     protected $casts = [
@@ -49,6 +51,8 @@ class AgentSession extends Model
         'approved_at' => 'datetime',
         'expires_at' => 'datetime',
         'last_used_at' => 'datetime',
+        'metrics' => 'array',
+        'ended_at' => 'datetime',
     ];
 
     /**
@@ -101,6 +105,10 @@ class AgentSession extends Model
         $this->save();
     }
 
+    /**
+     * Revoke covers BOTH lifecycle exits — an agent's own `session:end` and a
+     * human's revoke button — so ended_at is stamped here, once, for both.
+     */
     public function revoke(): void
     {
         if (! in_array($this->status, [self::STATUS_PENDING, self::STATUS_APPROVED], true)) {
@@ -108,6 +116,7 @@ class AgentSession extends Model
         }
 
         $this->status = self::STATUS_REVOKED;
+        $this->ended_at = now();
         $this->save();
     }
 

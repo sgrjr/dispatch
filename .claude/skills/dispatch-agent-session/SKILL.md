@@ -48,7 +48,8 @@ php artisan dispatch:done TASK-042 --status=done --commit=<sha> \
   --result-file=result.json --with-metrics --since="<claimed_at from claim>"
 
 # 7. Repeat 4–6 through the plan. When all work is closed out, surrender the
-#    credential:
+#    credential — this also records the whole session's run metrics
+#    automatically (tokens/cost/duration from your transcript):
 php artisan dispatch:session:end
 ```
 
@@ -138,9 +139,10 @@ checklist into a manifest.
 - Don't claim tasks to "reserve" them. Survey → plan → claim serially as you
   start each; claiming a pile blocks other agents and marks work in-flight that
   isn't.
-- Metrics come from the transcript (`--with-metrics`), never your own estimate —
-  and they can only be attached while the token exists, so fold them into the
-  LAST `done`, before `session:end`.
+- Metrics come from the transcript, never your own estimate. Session totals are
+  recorded automatically by `session:end`; per-task cost lands only if that
+  task's `done` carried `--with-metrics` — so paste the closing command claim
+  printed on EVERY done, not just the last one.
 
 ## Client prerequisites
 

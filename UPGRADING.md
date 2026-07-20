@@ -79,6 +79,21 @@ census are additive).
 - **`dispatch:session:request --wait`** folds request → show code → poll →
   collect-token into one command (it delegates to the `session:status --wait`
   loop on your behalf).
+- **Session-anchored metrics: `dispatch:session:end` now records whole-session
+  run metrics by default.** The client computes tokens/cost/duration from its
+  local Claude Code transcript (window: token stored → now) and folds them into
+  the end call; the server stores them on the session row (`metrics` +
+  `ended_at` columns — **run your migrations**: a new
+  `add_metrics_to_dispatch_agent_sessions_table` migration ships with this).
+  The staff Agent Sessions page gains a **"Recently ended"** section showing
+  each finished session's verdict — previously the row (and any metrics signal)
+  vanished the moment the session ended. Opt out per call with `--no-metrics`;
+  when no transcript can be located the session still ends, just without
+  metrics (a warning names the fix). Per-task `done --with-metrics` is
+  unchanged and remains the fine-grained per-task view; the session total is
+  now the load-bearing default. A v0.6.0 client against a v0.5.x server keeps
+  working — the extra `metrics` key on `session/end` is simply ignored there
+  (`$request->validate` tolerates it; nothing is stored).
 
 ## Enabling the batch verb (`dispatch:batch --remote` / `POST agent/batch`)
 

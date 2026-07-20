@@ -682,6 +682,17 @@ absence means nothing has been stamped for that task yet:
 - **`dispatch:show TASK-042`** — the same figures as a `# Agent run` block in
   the CLI, for parity with the web view.
 
+**Session-anchored metrics (the load-bearing default).** Per-task
+`--with-metrics` is voluntary — an agent deep in a run can forget it — so the
+**whole-session** totals are recorded structurally instead: `dispatch:session:end`
+computes run metrics from the local transcript by default (window: token
+stored → now, no bookkeeping to capture mid-run) and folds them into the end
+call, where the server stores them on the **session row**. The Agent Sessions
+page shows the verdict in a "Recently ended" section — the run's cost survives
+the token. `--no-metrics` opts out; if no transcript can be located the session
+still ends (metrics are never allowed to block surrendering the credential).
+Per-task stamping remains the fine-grained per-task view on top.
+
 ### The remote agent seam — working the production backlog from elsewhere
 
 An agent normally only ever sees the database of the app it's running
@@ -712,7 +723,9 @@ somewhere else — a laptop, a different CI job, another project entirely —
    session server-side (no id param, so it can only ever end itself) and
    deletes the local token. Least-privilege: surrender the credential instead
    of letting it idle to TTL. The route is not scope-gated, so an agent can
-   always end itself regardless of which verbs it was granted.
+   always end itself regardless of which verbs it was granted. By default the
+   end call also records the **whole session's run metrics** on the session row
+   (see "Session-anchored metrics" above).
 
 Enable it on the **production** (authoritative) instance via the `agent`
 block in `config/dispatch.php`:

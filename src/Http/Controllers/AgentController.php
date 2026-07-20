@@ -344,10 +344,30 @@ class AgentController extends Controller
      * usable token alive until TTL. An agent can only ever end itself. The route
      * is bearer-authed but not scope-gated, so this works regardless of which
      * verbs the session was granted.
+     *
+     * Session-anchored metrics: the request may carry a `metrics` object — the
+     * whole-session run summary the CLIENT computed from its local transcript
+     * (the server can never count tokens; the transcript lives on the agent's
+     * box). It is stored on the session row, so the run's cost survives the
+     * token: this is the metrics path with a forcing function, unlike the
+     * per-task `done --with-metrics` which is easy to drop mid-run.
      */
     public function end(Request $request): JsonResponse
     {
         $s = $this->session($request);
+
+        $v = $request->validate([
+            'metrics' => ['nullable', 'array'],
+        ]);
+
+        $metrics = $v['metrics'] ?? null;
+        if ($metrics !== null) {
+            // Size guard: the real object is ~1-2 KB; anything huge is abuse of
+            // a free-form json column, not a metrics summary.
+            abort_if(strlen((string) json_encode($metrics)) > 16384, 422, 'Metrics blob too large (16 KB max).');
+
+            $s->metrics = $metrics;   // persisted by revoke()'s save below
+        }
 
         app(AgentSessionService::class)->revoke($s);
 
@@ -355,6 +375,7 @@ class AgentController extends Controller
             'ended' => true,
             'status' => AgentSession::STATUS_REVOKED,
             'public_id' => $s->public_id,
+            'metrics_recorded' => $metrics !== null,
         ]);
     }
 

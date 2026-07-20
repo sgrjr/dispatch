@@ -192,6 +192,8 @@ test('dispatch:session:status stores the token once the session is approved', fu
     $stored = json_decode((string) file_get_contents($this->tokenPath), true);
     expect($stored['token'])->toBe('abc');
     expect($stored['public_id'])->toBe('pub-status-1');
+    // Session-start marker: session:end's default metrics window opens here.
+    expect($stored['stored_at'])->toBeString();
 });
 
 test('dispatch:session:status --wait polls in-process and collects the token when approval lands', function () {
@@ -265,6 +267,72 @@ test('dispatch:session:end with no local token is a graceful no-op (GAP 5)', fun
     Artisan::call('dispatch:session:end');
 
     expect(Artisan::output())->toContain('nothing to end');
+});
+
+test('dispatch:session:end computes session metrics from the transcript and posts them with the end call', function () {
+    file_put_contents($this->tokenPath, json_encode([
+        'public_id' => 'pub-end-m1',
+        'device_code' => str_repeat('d', 64),
+        'token' => 'live-token',
+        'stored_at' => '2026-01-01T00:00:00Z',   // session start → metrics window opens here
+    ]));
+
+    // Minimal one-message transcript INSIDE the session window.
+    $main = sys_get_temp_dir().'/dispatch-session-end-'.uniqid().'.jsonl';
+    file_put_contents($main, json_encode([
+        'type' => 'assistant',
+        'timestamp' => '2026-01-01T00:10:00Z',
+        'uuid' => 'u-end-1',
+        'message' => [
+            'role' => 'assistant',
+            'id' => 'msg_end_1',
+            'model' => 'claude-opus-4-8',
+            'stop_reason' => 'end_turn',
+            'content' => [['type' => 'text', 'text' => 'hi']],
+            'usage' => ['input_tokens' => 10, 'output_tokens' => 20, 'cache_read_input_tokens' => 0, 'cache_creation_input_tokens' => 0],
+        ],
+    ])."\n");
+
+    Http::fake([
+        '*' => Http::response(['ended' => true, 'status' => 'revoked', 'public_id' => 'pub-end-m1', 'metrics_recorded' => true], 200),
+    ]);
+
+    Artisan::call('dispatch:session:end', ['--transcript' => $main]);
+    $output = Artisan::output();
+
+    expect($output)->toContain('Session ended')
+        ->and($output)->toContain('Session metrics recorded');
+
+    // The end call carried the whole-session metrics, windowed off stored_at.
+    Http::assertSent(function ($req) {
+        $m = $req->data()['metrics'] ?? null;
+
+        return str_ends_with($req->url(), '/session/end')
+            && is_array($m)
+            && ($m['tokens']['total'] ?? 0) === 30
+            && ($m['window']['basis'] ?? null) === 'session-token';
+    });
+
+    expect(is_file($this->tokenPath))->toBeFalse();  // local token cleared
+    @unlink($main);
+});
+
+test('dispatch:session:end --no-metrics ends the session without computing or posting metrics', function () {
+    file_put_contents($this->tokenPath, json_encode([
+        'public_id' => 'pub-end-m2',
+        'device_code' => str_repeat('d', 64),
+        'token' => 'live-token',
+    ]));
+
+    Http::fake([
+        '*' => Http::response(['ended' => true, 'status' => 'revoked', 'public_id' => 'pub-end-m2', 'metrics_recorded' => false], 200),
+    ]);
+
+    Artisan::call('dispatch:session:end', ['--no-metrics' => true]);
+
+    expect(Artisan::output())->toContain('Session ended');
+    Http::assertSent(fn ($req) => str_ends_with($req->url(), '/session/end')
+        && ! array_key_exists('metrics', $req->data()));
 });
 
 test('the client falls back to DISPATCH_AGENT_REMOTE_URL when merged config lacks agent.remote (GAP 3)', function () {
