@@ -61,6 +61,21 @@ test('present() orders tools by call count, descending, capped at 8', function (
         ->and($p['tools'][2])->toBe(['name' => 'Edit', 'count' => 4]);
 });
 
+test('present() labels an accumulated multi-run window with the run count', function () {
+    $p = MetricsPresenter::present(sampleMetricsContext([
+        'window' => ['from' => '2026-07-17T00:00:00+00:00', 'to' => '2026-07-18T02:00:00+00:00', 'basis' => 'accumulated'],
+        'runs' => 2,
+    ]));
+
+    expect($p['runs'])->toBe(2)
+        ->and($p['window_basis'])->toBe('accumulated (2 runs)');
+
+    // A single (unaccumulated) run carries no runs key and keeps a bare label.
+    $single = MetricsPresenter::present(sampleMetricsContext());
+    expect($single['runs'])->toBe(1)
+        ->and($single['window_basis'])->toBe('claimed_at');
+});
+
 test('present() marks a partial cost and tolerates an unknown (null) cost', function () {
     expect(MetricsPresenter::present(sampleMetricsContext(['cost_partial' => true]))['cost'])
         ->toBe('$0.1234 (partial)');

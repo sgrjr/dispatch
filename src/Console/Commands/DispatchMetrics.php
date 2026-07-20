@@ -98,7 +98,12 @@ class DispatchMetrics extends Command
         if ($this->option('stamp')) {
             $ctx = $task->context ?? [];
             $result = $ctx['result'] ?? [];
-            $result['metrics'] = $metrics;              // merge, don't clobber sibling result keys
+            // Sibling result keys survive untouched; prior-run metrics accumulate
+            // (same-window re-stamps replace — see AgentMetrics::accumulate()).
+            $result['metrics'] = AgentMetrics::accumulate(
+                is_array($result['metrics'] ?? null) ? $result['metrics'] : null,
+                $metrics,
+            );
             $ctx['result'] = $result;
             $task->context = $ctx;
             $task->save();

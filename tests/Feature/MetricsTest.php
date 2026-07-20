@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Artisan;
 use Sgrjr\Dispatch\Console\Commands\DispatchMetricsCapture;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
+use Sgrjr\Dispatch\Support\AgentMetrics;
 use Sgrjr\Dispatch\Support\TranscriptMetrics;
 
 /*
@@ -310,6 +311,150 @@ test('dispatch:done --with-metrics defaults the window to the local claim time w
 
     $result = $task->fresh()->context['result'];
     expect($result['metrics']['window']['basis'])->toBe('claimed_at');   // defaulted from the claim event
+
+    unlink($main);
+});
+
+// --- Re-work accumulation: metrics survive and sum across runs ------------------
+//
+// A task cycled open → in_progress → verifying → open again gets stamped once
+// per run. Before AgentMetrics::accumulate() every stamp CLOBBERED the prior
+// object, so the panel showed only the LAST run's window (a 6-minute follow-up
+// hiding an hour-long first run) — and a later close without metrics erased
+// them entirely.
+
+/** A stamped-shape metrics array for accumulation tests. */
+function accMetricsRun(array $overrides = []): array
+{
+    return array_merge([
+        'window' => ['from' => '2026-01-01T00:00:00+00:00', 'to' => '2026-01-01T01:00:00+00:00', 'basis' => 'claimed_at'],
+        'duration_s' => 3600,
+        'transcript' => ['source' => 'explicit', 'main' => '/a.jsonl', 'subagent_files' => 0],
+        'tokens' => ['input' => 100, 'output' => 50, 'cache_read' => 800, 'cache_creation' => 100, 'total' => 1050, 'cache_hit_ratio' => 0.8],
+        'cost_usd' => 0.5,
+        'cost_partial' => false,
+        'turns' => 4,
+        'tool_calls' => 6,
+        'tools' => ['Read' => 4, 'Bash' => 2],
+        'subagents' => 1,
+        'errors' => 0,
+        'models' => ['claude-opus-4-8'],
+        'unpriced_models' => [],
+    ], $overrides);
+}
+
+test('AgentMetrics::accumulate sums distinct-window runs and recomputes derived fields', function () {
+    $second = accMetricsRun([
+        'window' => ['from' => '2026-01-02T00:00:00+00:00', 'to' => '2026-01-02T00:07:00+00:00', 'basis' => 'claimed_at'],
+        'duration_s' => 420,
+        'tokens' => ['input' => 10, 'output' => 5, 'cache_read' => 200, 'cache_creation' => 40, 'total' => 255, 'cache_hit_ratio' => 0.8],
+        'cost_usd' => 0.25,
+        'turns' => 2,
+        'tool_calls' => 3,
+        'tools' => ['Bash' => 2, 'Edit' => 1],
+        'subagents' => 0,
+        'errors' => 1,
+        'models' => ['claude-haiku-4-5-20251001'],
+    ]);
+
+    $m = AgentMetrics::accumulate(accMetricsRun(), $second);
+
+    expect($m['runs'])->toBe(2)
+        ->and($m['duration_s'])->toBe(4020)
+        ->and($m['tokens']['total'])->toBe(1305)
+        ->and($m['tokens']['cache_read'])->toBe(1000)
+        ->and($m['tokens']['cache_hit_ratio'])->toBe(0.8)   // 1000 / (110 + 1000 + 140)
+        ->and($m['cost_usd'])->toBe(0.75)
+        ->and($m['turns'])->toBe(6)
+        ->and($m['tool_calls'])->toBe(9)
+        ->and($m['tools'])->toBe(['Read' => 4, 'Bash' => 4, 'Edit' => 1])   // stable arsort: ties keep insertion order
+        ->and($m['subagents'])->toBe(1)
+        ->and($m['errors'])->toBe(1)
+        ->and($m['models'])->toBe(['claude-opus-4-8', 'claude-haiku-4-5-20251001'])
+        ->and($m['window']['from'])->toBe('2026-01-01T00:00:00+00:00')
+        ->and($m['window']['to'])->toBe('2026-01-02T00:07:00+00:00')
+        ->and($m['window']['basis'])->toBe('accumulated');
+
+    // A third run keeps counting.
+    $third = accMetricsRun(['window' => ['from' => '2026-01-03T00:00:00+00:00', 'to' => '2026-01-03T00:10:00+00:00', 'basis' => 'claimed_at']]);
+    expect(AgentMetrics::accumulate($m, $third)['runs'])->toBe(3);
+});
+
+test('AgentMetrics::accumulate replaces on a same-window re-stamp (no double count)', function () {
+    // Same window.from = a RE-computation of the same run (--stamp mid-run,
+    // then done --with-metrics at close): latest wins, nothing is summed.
+    $recompute = accMetricsRun([
+        'tokens' => ['input' => 120, 'output' => 60, 'cache_read' => 900, 'cache_creation' => 120, 'total' => 1200, 'cache_hit_ratio' => 0.79],
+        'cost_usd' => 0.6,
+    ]);
+
+    $m = AgentMetrics::accumulate(accMetricsRun(), $recompute);
+
+    expect($m['tokens']['total'])->toBe(1200)
+        ->and($m['cost_usd'])->toBe(0.6)
+        ->and($m['window']['basis'])->toBe('claimed_at')
+        ->and($m)->not->toHaveKey('runs');
+});
+
+test('recordResult keeps prior metrics when a later close carries none, and sums when it does', function () {
+    $svc = app(DispatchTaskService::class);
+    $task = $svc->create(['title' => 're-worked task', 'status' => 'open']);
+
+    // Run 1 closes with metrics.
+    $svc->recordResult($task, ['summary' => 'run 1', 'metrics' => accMetricsRun()], 'sha1');
+
+    // A follow-up close WITHOUT metrics must not erase them.
+    $svc->recordResult($task, ['summary' => 'human follow-up'], 'sha2');
+    $result = $task->fresh()->context['result'];
+    expect($result['summary'])->toBe('human follow-up')
+        ->and($result['commit'])->toBe('sha2')
+        ->and($result['metrics']['tokens']['total'])->toBe(1050);
+
+    // Run 2 (new claim window) closes with metrics → summed, not clobbered.
+    $svc->recordResult($task, ['summary' => 'run 2', 'metrics' => accMetricsRun([
+        'window' => ['from' => '2026-01-05T00:00:00+00:00', 'to' => '2026-01-05T00:06:07+00:00', 'basis' => 'claimed_at'],
+        'duration_s' => 367,
+    ])], 'sha3');
+    $result = $task->fresh()->context['result'];
+    expect($result['metrics']['runs'])->toBe(2)
+        ->and($result['metrics']['duration_s'])->toBe(3967)     // NOT just the 6m7s follow-up
+        ->and($result['metrics']['tokens']['total'])->toBe(2100)
+        ->and($result['metrics']['window']['basis'])->toBe('accumulated');
+});
+
+test('dispatch:metrics --stamp accumulates across re-claim windows', function () {
+    $svc = app(DispatchTaskService::class);
+    $task = $svc->create(['title' => 'stamped twice', 'status' => 'open']);
+
+    $dir = sys_get_temp_dir().'/dispatch-metrics-'.uniqid();
+    $main = $dir.'/sess.jsonl';
+    writeJsonl($main, mainRecords());
+
+    // Run 1: the first claim's window (captures msg_A only).
+    Artisan::call('dispatch:metrics', [
+        'code' => $task->code,
+        '--transcript' => $main,
+        '--since' => '2026-01-01T00:00:00Z',
+        '--until' => '2026-01-01T00:15:00Z',
+        '--stamp' => true,
+    ]);
+
+    // Run 2 after a re-claim: a disjoint later window (captures msg_B only).
+    Artisan::call('dispatch:metrics', [
+        'code' => $task->code,
+        '--transcript' => $main,
+        '--since' => '2026-01-01T00:15:00Z',
+        '--until' => '2026-01-01T01:00:00Z',
+        '--stamp' => true,
+    ]);
+
+    $m = $task->fresh()->context['result']['metrics'];
+    expect($m['runs'])->toBe(2)
+        ->and($m['tokens']['total'])->toBe(3690)     // msg_A (1650) + msg_B (2040)
+        ->and($m['duration_s'])->toBe(3600)          // 900 + 2700
+        ->and($m['window']['basis'])->toBe('accumulated')
+        ->and($m['window']['from'])->toBe('2026-01-01T00:00:00+00:00')
+        ->and($m['window']['to'])->toBe('2026-01-01T01:00:00+00:00');
 
     unlink($main);
 });

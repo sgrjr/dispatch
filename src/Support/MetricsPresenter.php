@@ -56,7 +56,12 @@ class MetricsPresenter
         $touchMinutes = TouchTime::estimateMinutes($metrics, $taskType, $touchCfg);
         $touchVersion = $touchMinutes !== null ? (string) $touchCfg['version'] : null;
 
+        // >1 means AgentMetrics::accumulate() folded several runs together — the
+        // window label carries the count so totals aren't misread as one run.
+        $runs = max(1, (int) ($metrics['runs'] ?? 1));
+
         return [
+            'runs' => $runs,
             'duration' => self::duration($duration),
             'touch_time' => $touchMinutes !== null ? '~'.self::duration($touchMinutes * 60) : null,
             'touch_time_minutes' => $touchMinutes,
@@ -80,7 +85,7 @@ class MetricsPresenter
             ],
             'tools' => $topTools,
             'models' => $models,
-            'window_basis' => (string) ($metrics['window']['basis'] ?? '—'),
+            'window_basis' => (string) ($metrics['window']['basis'] ?? '—').($runs > 1 ? " ({$runs} runs)" : ''),
             'transcript_source' => (string) ($metrics['transcript']['source'] ?? '—'),
             'commit' => is_string($result['commit'] ?? null) ? $result['commit'] : null,
         ];

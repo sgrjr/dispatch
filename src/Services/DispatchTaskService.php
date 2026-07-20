@@ -12,6 +12,7 @@ use Sgrjr\Dispatch\Contracts\TenantResolver;
 use Sgrjr\Dispatch\Models\AgentSession;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
+use Sgrjr\Dispatch\Support\AgentMetrics;
 
 /**
  * The single place Dispatch tasks are minted.
@@ -341,6 +342,12 @@ class DispatchTaskService
      * `--result` JSON plus the code `--commit` it produced, stored under
      * `context.result` so human review and audit tie a task to its change.
      *
+     * The result blob itself is replaced — a new close IS the new result — but
+     * `metrics` survives re-work: a close without metrics keeps the prior run's,
+     * and a close with metrics folds onto them via AgentMetrics::accumulate(),
+     * so a task cycled through several agent runs reports their sum, not just
+     * the last window.
+     *
      * @param  array<string,mixed>  $result
      */
     public function recordResult(Task $task, array $result, ?string $commit = null): void
@@ -350,6 +357,16 @@ class DispatchTaskService
         }
 
         $ctx = $task->context ?? [];
+
+        $existing = is_array($ctx['result'] ?? null) && is_array($ctx['result']['metrics'] ?? null)
+            ? $ctx['result']['metrics']
+            : null;
+        if ($existing !== null) {
+            $result['metrics'] = is_array($result['metrics'] ?? null)
+                ? AgentMetrics::accumulate($existing, $result['metrics'])
+                : $existing;
+        }
+
         $ctx['result'] = $result;
         $task->context = $ctx;
         $task->save();
