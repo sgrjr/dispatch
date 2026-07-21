@@ -34,8 +34,12 @@ beforeEach(function () {
 
 afterEach(function () {
     $path = config('dispatch.agent.remote.token_path');
-    if (is_string($path) && is_file($path)) {
-        @unlink($path);
+    if (is_string($path)) {
+        foreach ([$path, $path.'.dropped'] as $file) {
+            if (is_file($file)) {
+                @unlink($file);
+            }
+        }
     }
 });
 
@@ -606,6 +610,122 @@ test('sticky remote: without a token, bare verbs stay local (no banner)', functi
 
     expect(Artisan::output())->not->toContain('→ remote:');
     Http::assertNothingSent();
+});
+
+// --- dropped-session guard: a lost token fails loud, never masquerades --------
+
+test('a mid-run 401 writes the drop marker as it clears the token', function () {
+    seedAgentToken();
+    Http::fake(['agent.example.test/*' => Http::response('', 401)]);
+
+    $exit = Artisan::call('dispatch:next');
+    $out = Artisan::output();
+    $tokenPath = config('dispatch.agent.remote.token_path');
+
+    expect($exit)->toBe(1)
+        ->and($out)->toContain('revoked or expired')
+        ->and($out)->toContain('dispatch:session:refresh')
+        ->and(is_file($tokenPath))->toBeFalse()
+        ->and(is_file($tokenPath.'.dropped'))->toBeTrue();
+});
+
+test('dropped session: bare verbs fail loud instead of silently serving local data', function () {
+    file_put_contents(config('dispatch.agent.remote.token_path').'.dropped', json_encode([
+        'reason' => 'revoked or expired (agent API returned 401)',
+        'at' => '2026-07-21T00:00:00Z',
+    ]));
+    app(DispatchTaskService::class)->create(['title' => 'local throwaway', 'status' => 'open']);
+    Http::fake();
+
+    $exit = Artisan::call('dispatch:queue', ['--json' => true]);
+    $out = Artisan::output();
+
+    // The masquerade the guard exists to prevent: local tasks presented as the
+    // board would read as "production tasks vanished".
+    expect($exit)->toBe(1)
+        ->and($out)->toContain('Refusing')
+        ->and($out)->toContain('dispatch:session:refresh')
+        ->and($out)->not->toContain('local throwaway');
+    Http::assertNothingSent();
+});
+
+test('dropped session: --local is the explicit override and still works', function () {
+    file_put_contents(config('dispatch.agent.remote.token_path').'.dropped', json_encode([
+        'reason' => 'session expired', 'at' => '2026-07-21T00:00:00Z',
+    ]));
+    app(DispatchTaskService::class)->create(['title' => 'local throwaway', 'status' => 'open']);
+    Http::fake();
+
+    $exit = Artisan::call('dispatch:queue', ['--local' => true, '--json' => true]);
+
+    expect($exit)->toBe(0)
+        ->and(dispatchJson(Artisan::output())[0]['title'])->toBe('local throwaway');
+    Http::assertNothingSent();
+});
+
+test('dropped session: an explicit --remote surfaces the dropped context on the no-token error', function () {
+    file_put_contents(config('dispatch.agent.remote.token_path').'.dropped', json_encode([
+        'reason' => 'session revoked', 'at' => '2026-07-21T00:00:00Z',
+    ]));
+    Http::fake();
+
+    $exit = Artisan::call('dispatch:queue', ['--remote' => true]);
+    $out = Artisan::output();
+
+    expect($exit)->toBe(1)
+        ->and($out)->toContain('No agent session token')
+        ->and($out)->toContain('previous session was dropped')
+        ->and($out)->toContain('session revoked');
+});
+
+test('dispatch:session:end acknowledges a dropped session and restores local-by-default', function () {
+    $markerPath = config('dispatch.agent.remote.token_path').'.dropped';
+    file_put_contents($markerPath, json_encode([
+        'reason' => 'session expired', 'at' => '2026-07-21T00:00:00Z',
+    ]));
+
+    Artisan::call('dispatch:session:end');
+
+    expect(Artisan::output())->toContain('guard cleared')
+        ->and(is_file($markerPath))->toBeFalse();
+
+    // Bare verbs are quietly local again — the acknowledged state is the
+    // ordinary "no active session" state.
+    Http::fake();
+    expect(Artisan::call('dispatch:queue', ['--json' => true]))->toBe(0);
+    Http::assertNothingSent();
+});
+
+test('a 429 on a sticky verb keeps the token and names back-off, not re-commissioning', function () {
+    seedAgentToken();
+    Http::fake(['agent.example.test/*' => Http::response('Too Many Requests', 429, ['Retry-After' => '30'])]);
+
+    $exit = Artisan::call('dispatch:next');
+    $out = Artisan::output();
+    $tokenPath = config('dispatch.agent.remote.token_path');
+
+    expect($exit)->toBe(1)
+        ->and($out)->toContain('rate-limited')
+        ->and($out)->toContain('Retry-After: 30s')
+        ->and($out)->toContain('Do NOT re-request')
+        ->and(is_file($tokenPath))->toBeTrue()          // token untouched
+        ->and(is_file($tokenPath.'.dropped'))->toBeFalse(); // no drop recorded
+});
+
+test('sticky remote: a token past its expires_at warns and names the refresh pipeline before the 401 lands', function () {
+    file_put_contents(config('dispatch.agent.remote.token_path'), json_encode([
+        'token' => 'aging-token',
+        'expires_at' => now()->subMinute()->toIso8601String(),
+    ]));
+    Http::fake(['agent.example.test/*' => Http::response(['task' => null], 200)]);
+
+    $exit = Artisan::call('dispatch:next');
+    $out = Artisan::output();
+
+    expect($exit)->toBe(0)
+        ->and($out)->toContain('past its expires_at')
+        ->and($out)->toContain('dispatch:session:refresh')
+        ->and($out)->toContain('→ remote:'); // warn-only — the server stays authoritative
 });
 
 // --- W5-2: the --count census zero-fills the non-terminal board --------------

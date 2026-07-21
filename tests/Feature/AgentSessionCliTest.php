@@ -25,8 +25,12 @@ beforeEach(function () {
 });
 
 afterEach(function () {
-    if (isset($this->tokenPath) && is_file($this->tokenPath)) {
-        @unlink($this->tokenPath);
+    if (isset($this->tokenPath)) {
+        foreach ([$this->tokenPath, $this->tokenPath.'.dropped'] as $file) {
+            if (is_file($file)) {
+                @unlink($file);
+            }
+        }
     }
 });
 
@@ -333,6 +337,148 @@ test('dispatch:session:end --no-metrics ends the session without computing or po
     expect(Artisan::output())->toContain('Session ended');
     Http::assertSent(fn ($req) => str_ends_with($req->url(), '/session/end')
         && ! array_key_exists('metrics', $req->data()));
+});
+
+// --- dropped-session lifecycle: marker on involuntary death, renewal pipeline ---
+
+test('a denied session writes the drop marker with the renewal identity', function () {
+    file_put_contents($this->tokenPath, json_encode([
+        'public_id' => 'pub-deny-1',
+        'device_code' => str_repeat('a', 64),
+        'agent_name' => 'claude-prod',
+        'purpose' => 'work the board',
+        'scopes' => ['next', 'show'],
+    ]));
+    Http::fake(['*' => Http::response(['status' => 'denied'], 200)]);
+
+    $exit = Artisan::call('dispatch:session:status');
+
+    expect($exit)->toBe(1)
+        ->and(Artisan::output())->toContain('denied')
+        ->and(is_file($this->tokenPath))->toBeFalse()
+        ->and(is_file($this->tokenPath.'.dropped'))->toBeTrue();
+
+    $marker = json_decode((string) file_get_contents($this->tokenPath.'.dropped'), true);
+    expect($marker['reason'])->toBe('session denied')
+        ->and($marker['public_id'])->toBe('pub-deny-1')
+        ->and($marker['agent_name'])->toBe('claude-prod')
+        ->and($marker['scopes'])->toBe(['next', 'show']);
+});
+
+test('session:request supersedes the dotfile — never resurrects a stale token, persists the renewal identity', function () {
+    // The observed cascade: a re-request merged over the old file, the stale
+    // `token` key survived, the next verb's 401 then wiped the file INCLUDING
+    // the fresh device_code — and the poll found "no pending session".
+    file_put_contents($this->tokenPath, json_encode([
+        'public_id' => 'pub-old',
+        'token' => 'stale-token',
+    ]));
+    Http::fake(['*' => Http::response([
+        'public_id' => 'pub-new',
+        'device_code' => str_repeat('b', 64),
+        'user_code' => 'NEWCODE1',
+    ], 201)]);
+
+    Artisan::call('dispatch:session:request', ['--name' => 'claude', '--purpose' => 'work the board', '--secret' => 'shh']);
+
+    $stored = json_decode((string) file_get_contents($this->tokenPath), true);
+    expect(array_key_exists('token', $stored))->toBeFalse()
+        ->and($stored['public_id'])->toBe('pub-new')
+        ->and($stored['agent_name'])->toBe('claude')
+        ->and($stored['purpose'])->toBe('work the board')
+        ->and($stored['scopes'])->toBe([]);
+
+    // Replacing a LIVE token records the drop, so bare verbs stay loud until
+    // the new session is actually approved.
+    expect(is_file($this->tokenPath.'.dropped'))->toBeTrue()
+        ->and(Artisan::output())->toContain('supersedes');
+});
+
+test('a 429 on session:request prints the back-off hint and leaves an existing token alone', function () {
+    file_put_contents($this->tokenPath, json_encode(['token' => 'live-token']));
+    Http::fake(['*' => Http::response('Too Many Requests', 429)]);
+
+    $exit = Artisan::call('dispatch:session:request', ['--name' => 'x', '--secret' => 'shh']);
+    $output = Artisan::output();
+
+    expect($exit)->toBe(1)
+        ->and($output)->toContain('rate-limited')
+        ->and($output)->toContain('keep using it');
+
+    $stored = json_decode((string) file_get_contents($this->tokenPath), true);
+    expect($stored['token'])->toBe('live-token')
+        ->and(is_file($this->tokenPath.'.dropped'))->toBeFalse();
+});
+
+test('session:refresh renews from the drop marker: same identity/scopes, renewal-flagged purpose, token collected, guard cleared', function () {
+    file_put_contents($this->tokenPath.'.dropped', json_encode([
+        'reason' => 'revoked or expired (agent API returned 401)',
+        'at' => '2026-07-21T00:00:00Z',
+        'public_id' => 'pub-dead-1',
+        'agent_name' => 'claude-prod',
+        'purpose' => 'work the board',
+        'scopes' => ['next', 'show'],
+    ]));
+
+    // request (201) → approval poll (approved + token): refresh waits by default.
+    Http::fake(['*' => Http::sequence()
+        ->push([
+            'public_id' => 'pub-renew-1',
+            'device_code' => str_repeat('g', 64),
+            'user_code' => 'RENEWED1',
+            'poll_interval' => 1,
+        ], 201)
+        ->push(['status' => 'approved', 'token' => 'renewed-token', 'poll_interval' => 1], 200),
+    ]);
+
+    $exit = Artisan::call('dispatch:session:refresh', ['--secret' => 'shh']);
+    $output = Artisan::output();
+
+    expect($exit)->toBe(0)
+        ->and($output)->toContain('RENEWED1')   // the human approves again — new user_code shown
+        ->and($output)->toContain('Approved');
+
+    // The renewal reproduced the dropped session's request and NAMED itself.
+    Http::assertSent(function ($request) {
+        if ($request->method() !== 'POST' || ! str_ends_with($request->url(), '/session')) {
+            return false;
+        }
+        $d = $request->data();
+
+        return $d['agent_name'] === 'claude-prod'
+            && str_contains($d['purpose'], 'work the board')
+            && str_contains($d['purpose'], 'renewal of pub-dead-1')
+            && ($d['scopes'] ?? null) === ['next', 'show'];
+    });
+
+    $stored = json_decode((string) file_get_contents($this->tokenPath), true);
+    expect($stored['token'])->toBe('renewed-token')
+        ->and(is_file($this->tokenPath.'.dropped'))->toBeFalse(); // delivered token clears the guard
+});
+
+test('session:refresh with a full-allowlist original omits the scopes key on the renewal too', function () {
+    file_put_contents($this->tokenPath.'.dropped', json_encode([
+        'reason' => 'session expired',
+        'at' => '2026-07-21T00:00:00Z',
+        'public_id' => 'pub-dead-2',
+        'agent_name' => 'claude-prod',
+        'purpose' => null,
+        'scopes' => [],
+    ]));
+
+    Http::fake(['*' => Http::sequence()
+        ->push(['public_id' => 'pub-renew-2', 'device_code' => str_repeat('h', 64), 'user_code' => 'RENEWED2', 'poll_interval' => 1], 201)
+        ->push(['status' => 'approved', 'token' => 'renewed-token-2', 'poll_interval' => 1], 200),
+    ]);
+
+    $exit = Artisan::call('dispatch:session:refresh', ['--secret' => 'shh']);
+
+    expect($exit)->toBe(0);
+    // An empty scopes request must renew as full-allowlist (absent key), not
+    // deny-all (explicit []) — the E1 semantics carry through renewal.
+    Http::assertSent(fn ($request) => $request->method() === 'POST'
+        && str_ends_with($request->url(), '/session')
+        && ! array_key_exists('scopes', $request->data()));
 });
 
 test('the client falls back to DISPATCH_AGENT_REMOTE_URL when merged config lacks agent.remote (GAP 3)', function () {

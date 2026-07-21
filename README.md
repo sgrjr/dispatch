@@ -372,7 +372,12 @@ best-effort dump).
 exists (see "The remote agent seam"), every verb below targets the **remote by
 default** — each call announces `→ remote: <host>` (on stderr, so `--json`
 stdout stays pure) and `--local` overrides per call. No token → verbs act on
-the local DB, exactly as before. Hosts opt out with
+the local DB, exactly as before — **unless the token was lost involuntarily**
+(mid-run `401`, denied/revoked/expired): then a drop marker makes bare verbs
+**fail loud** instead of silently serving local data as if it were the remote
+board, until `dispatch:session:refresh --wait` renews the session (same
+identity/scopes, human approves again) or `dispatch:session:end` acknowledges
+the drop. Hosts opt out of sticky remote with
 `dispatch.agent.remote.sticky=false` (`DISPATCH_AGENT_STICKY`).
 
 ### Agent-CLI verbs
@@ -427,6 +432,12 @@ dispatch:batch  {path} {--remote} {--local} {--dry-run} {--json}
 
 dispatch:schema → dumps the documented --json shape (the frozen
                   TaskPresenter contract) — parse against this, not a guess
+
+dispatch:session:refresh {--wait=} {--secret=}
+                → renew a dropped or expiring session: re-requests with the
+                  SAME identity/scopes, flags itself as a renewal in the
+                  purpose the approver sees, and waits for the human decision
+                  (the resolution the dropped-session guard points at)
 
 dispatch:doctor {--strict} {--json}
                 → diagnose agent config drift: compares the live/published
@@ -729,8 +740,20 @@ somewhere else — a laptop, a different CI job, another project entirely —
 4. The agent then drives the same verb loop — while the token is active the
    verbs target production **by default** (sticky remote: each call announces
    `→ remote: <host>`, and `--local` overrides). A `401` mid-session means the
-   session was revoked or expired: the local token is cleared automatically and
-   the agent should stop.
+   session was revoked or expired: the local token is cleared automatically —
+   and a **drop marker** is written beside it, so the lost session is a
+   first-class state, not a silent absence. While it stands, bare verbs
+   **fail loud instead of quietly falling back to the local DB** (where
+   production tasks would look deleted and local test tasks would read as the
+   board). The baked-in resolution is `dispatch:session:refresh --wait`: it
+   re-requests a session with the **same identity and scopes**, flags itself as
+   a renewal of the dropped session in the purpose the approver sees, and
+   blocks for the human decision — approval stays the control point. The
+   escape hatches: `--local` per call, or `dispatch:session:end` to
+   acknowledge the drop and restore local-by-default. (A token past its
+   stored `expires_at` also warns and names `session:refresh` *before* the
+   401 interrupts the loop; a `429` is called out as rate-limiting — the
+   token is still valid, back off, never re-request over a throttle.)
 5. When the work is done, the agent ends its session with
    `dispatch:session:end` — a bearer-authed call that revokes its **own**
    session server-side (no id param, so it can only ever end itself) and

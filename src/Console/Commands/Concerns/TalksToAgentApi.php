@@ -4,6 +4,7 @@ namespace Sgrjr\Dispatch\Console\Commands\Concerns;
 
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 
 /**
@@ -12,8 +13,13 @@ use Illuminate\Support\Facades\Http;
  * Reused by every `--remote` verb (WS1) and the session commands (WS2) so the
  * transport, token handling, and error posture are defined once. The session
  * token lives in a dotfile OUTSIDE the repo, owner-only (0600), and is deleted
- * the moment the server says it's dead (401). Transport is HTTPS-only outside a
- * local environment — a bearer over plaintext would undo the commissioning model.
+ * the moment the server says it's dead (401) — but an INVOLUNTARY death also
+ * writes a sibling drop marker (`<token_path>.dropped`), so sessions auto-expire
+ * into a first-class state instead of a silent absence: sticky verbs fail loud
+ * rather than masquerade local data as the remote board, and
+ * `dispatch:session:refresh` renews from the marker's identity. Transport is
+ * HTTPS-only outside a local environment — a bearer over plaintext would undo
+ * the commissioning model.
  *
  * Mix into an Illuminate\Console\Command (uses $this->error/warn/line).
  */
@@ -57,13 +63,54 @@ trait TalksToAgentApi
         }
 
         $base = $this->agentBaseUrl();
+
+        // DROPPED-SESSION GUARD: token gone but a drop marker says a session
+        // WAS live (or requested) against this remote. Silently resolving to
+        // local here is the data-loss masquerade the marker exists to prevent —
+        // production tasks "vanish" and local throwaway tasks read as the
+        // board. Fail loud and name the baked-in resolution instead.
+        if ($base !== null && $this->agentToken() === null && ($drop = $this->sessionDropMarker()) !== null) {
+            $reason = $drop['reason'] ?? 'dropped';
+            $at = $drop['at'] ?? 'unknown time';
+            $this->error("Agent session dropped mid-run — {$reason} ({$at}). Bare verbs would silently fall back to the LOCAL dev DB, where production tasks look deleted and local test tasks look like the board. Refusing.");
+            $this->line('  renew (a human approves again):  php artisan dispatch:session:refresh --wait');
+            $this->line('  local on purpose:                add --local per call, or clear this guard with dispatch:session:end');
+            $this->fail('Refusing the silent local fallback after a dropped agent session.');
+        }
+
         if ($base === null || $this->agentToken() === null) {
             return $this->resolvedRemoteTarget = false;
         }
 
+        $this->warnIfTokenPastExpiry();
+
         $this->sideNote("<comment>→ remote: {$base} (active agent session; pass --local for the local DB)</comment>");
 
         return $this->resolvedRemoteTarget = true;
+    }
+
+    /**
+     * Pre-empt the mid-run 401: sessions auto-expire by TTL, and the stored
+     * expires_at (stamped at approval) knows when. Warn-only — the server stays
+     * authoritative — but the renewal opportunity is surfaced BEFORE the loop
+     * gets interrupted, not after.
+     */
+    protected function warnIfTokenPastExpiry(): void
+    {
+        $expiresAt = $this->agentTokenFile()['expires_at'] ?? null;
+        if (! is_string($expiresAt) || $expiresAt === '') {
+            return;
+        }
+
+        try {
+            $expiry = Carbon::parse($expiresAt);
+        } catch (\Throwable) {
+            return;
+        }
+
+        if ($expiry->isPast()) {
+            $this->sideNote("<comment>⚠ session token is past its expires_at ({$expiresAt}) — the server will likely 401. Renew cleanly with `php artisan dispatch:session:refresh --wait` before it interrupts the loop.</comment>");
+        }
     }
 
     /**
@@ -170,11 +217,76 @@ trait TalksToAgentApi
 
         file_put_contents($path, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
         @chmod($path, 0600);
+
+        // A delivered credential resolves the dropped-session state — the
+        // renewal (or fresh commissioning) supersedes whatever was dropped.
+        if (isset($data['token'])) {
+            $this->clearSessionDropMarker();
+        }
     }
 
     protected function forgetToken(): void
     {
         $path = $this->agentTokenPath();
+        if (is_file($path)) {
+            @unlink($path);
+        }
+    }
+
+    /**
+     * The drop marker lives beside the token dotfile and outlives it. It turns
+     * "token gone" from an absence into a STATE: why the session died, when,
+     * and the identity needed to renew it (`dispatch:session:refresh`). While
+     * present (and a remote is configured), sticky resolution refuses the
+     * silent local fallback. Cleared by a delivered token (storeToken) or a
+     * deliberate `dispatch:session:end`.
+     */
+    protected function sessionDropPath(): string
+    {
+        return $this->agentTokenPath().'.dropped';
+    }
+
+    protected function markSessionDropped(string $reason): void
+    {
+        $file = $this->agentTokenFile() ?? [];
+
+        $path = $this->sessionDropPath();
+        $dir = dirname($path);
+        if (! is_dir($dir)) {
+            @mkdir($dir, 0700, true);
+        }
+
+        file_put_contents($path, json_encode([
+            'reason' => $reason,
+            'at' => now()->toIso8601String(),
+            // Renewal identity, carried over from the dying dotfile so
+            // session:refresh can reproduce the request.
+            'public_id' => $file['public_id'] ?? null,
+            'agent_name' => $file['agent_name'] ?? null,
+            'purpose' => $file['purpose'] ?? null,
+            'scopes' => $file['scopes'] ?? [],
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        @chmod($path, 0600);
+    }
+
+    /**
+     * @return array<string,mixed>|null
+     */
+    protected function sessionDropMarker(): ?array
+    {
+        $path = $this->sessionDropPath();
+        if (! is_file($path)) {
+            return null;
+        }
+
+        $data = json_decode((string) file_get_contents($path), true);
+
+        return is_array($data) ? $data : null;
+    }
+
+    protected function clearSessionDropMarker(): void
+    {
+        $path = $this->sessionDropPath();
         if (is_file($path)) {
             @unlink($path);
         }
@@ -216,6 +328,9 @@ trait TalksToAgentApi
 
         if ($requireToken && $this->agentToken() === null) {
             $this->error('No agent session token. Run `dispatch:session:request`, get it approved, then `dispatch:session:status`.');
+            if (($drop = $this->sessionDropMarker()) !== null) {
+                $this->line('Context: the previous session was dropped — '.($drop['reason'] ?? 'unknown reason').' ('.($drop['at'] ?? '?').'). `dispatch:session:refresh --wait` renews it with the same identity/scopes.');
+            }
 
             return null;
         }
@@ -234,8 +349,21 @@ trait TalksToAgentApi
         }
 
         if ($response->status() === 401) {
+            // Mark BEFORE forgetting — the marker copies the renewal identity
+            // out of the dotfile the next line deletes.
+            $this->markSessionDropped('revoked or expired (agent API returned 401)');
             $this->forgetToken();
-            $this->error('Agent session was revoked or expired (401). Local token cleared — stop the loop and report it; a human decides whether to commission a new session.');
+            $this->error('Agent session was revoked or expired (401). Local token cleared; bare verbs now refuse the silent local fallback. Renew with `dispatch:session:refresh --wait` (a human approves again), or report and stop — never re-request in a retry loop.');
+
+            return null;
+        }
+
+        // 429 = rate-limited, NOT a dead session. The observed failure cascade
+        // is an agent treating throttling as token trouble and re-requesting a
+        // session — name the correct move instead.
+        if ($response->status() === 429) {
+            $retryAfter = (string) $response->header('Retry-After');
+            $this->error('Agent API rate-limited this client (429'.($retryAfter !== '' ? ", Retry-After: {$retryAfter}s" : '').'). The session token is still valid — back off, then retry the SAME verb. Do NOT re-request or refresh the session over a 429.');
 
             return null;
         }

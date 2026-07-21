@@ -83,17 +83,41 @@ class DispatchSessionRequest extends Command
                 $this->line('Hint: the bootstrap secret sent doesn\'t match production\'s configured value. If it was rotated on the server recently, the server may be serving a STALE CONFIG CACHE — have the operator run `php artisan config:clear` and retry. Pass the value with --secret=<value> or set DISPATCH_AGENT_BOOTSTRAP_SECRET.');
             }
 
+            // The session endpoint is rate-limited per IP. A 429 here does NOT
+            // invalidate an existing approval or token — the observed cascade
+            // is exactly an agent re-requesting over a throttle.
+            if ($response->status() === 429) {
+                $this->line('Hint: the session endpoint is rate-limited. A 429 does NOT invalidate an existing session — if you still hold a token, keep using it. Back off and retry once later; never re-request in a loop.');
+            }
+
             return self::FAILURE;
         }
 
         $data = (array) $response->json();
 
-        $this->storeToken(array_merge($this->agentTokenFile() ?? [], [
+        // A new request SUPERSEDES whatever the dotfile held — deliberately no
+        // merge. Carrying a stale `token` forward caused a real cascade: the
+        // dead token kept sticky-remote alive, the next verb's 401 wiped the
+        // whole file INCLUDING this request's fresh device_code, and the poll
+        // then found "no pending session". If a live token is being replaced,
+        // record the drop so bare verbs stay loud until the new token lands.
+        $previous = $this->agentTokenFile();
+        if (($previous['token'] ?? null) !== null) {
+            $this->markSessionDropped('superseded by a new session request');
+            $this->warn('An agent session token was already present — this request supersedes it locally. (The old server session stays until TTL/revoke; prefer `dispatch:session:end` when a run finishes.)');
+        }
+
+        $this->storeToken([
             'public_id' => $data['public_id'] ?? null,
             'device_code' => $data['device_code'] ?? null,
             'user_code' => $data['user_code'] ?? null,
             'expires_at' => $data['expires_at'] ?? null,
-        ]));
+            // The request's identity, persisted so a dropped session can be
+            // renewed as-was by dispatch:session:refresh.
+            'agent_name' => $name,
+            'purpose' => $purpose,
+            'scopes' => $scopes,
+        ]);
 
         $this->newLine();
         $this->line('Show this code to the approver: <fg=cyan;options=bold>'.($data['user_code'] ?? '?').'</>');

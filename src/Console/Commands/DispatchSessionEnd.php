@@ -43,8 +43,15 @@ class DispatchSessionEnd extends Command
     {
         if ($this->agentToken() === null) {
             // Nothing live locally — clear any stale dotfile and report cleanly.
+            // session:end is also the ACKNOWLEDGE verb for a dropped session:
+            // clearing the marker restores local-by-default for bare verbs.
             $this->forgetToken();
+            $hadDrop = $this->sessionDropMarker() !== null;
+            $this->clearSessionDropMarker();
             $this->info('No active agent session token — nothing to end.');
+            if ($hadDrop) {
+                $this->line('Dropped-session guard cleared — bare verbs act on the local DB again (`dispatch:session:refresh` would have renewed it instead).');
+            }
 
             return self::SUCCESS;
         }
@@ -64,6 +71,7 @@ class DispatchSessionEnd extends Command
 
         if ($result !== null) {
             $this->forgetToken();
+            $this->clearSessionDropMarker();
             $this->info('Session ended — server session revoked, local token cleared.');
             if ($metrics !== null) {
                 $this->line('Session metrics recorded: '.AgentMetrics::summaryLine($metrics));
@@ -73,8 +81,10 @@ class DispatchSessionEnd extends Command
         }
 
         // agentPost() failed. On a 401 it already cleared the token — the session
-        // was already dead, so the goal (no live credential) is met.
+        // was already dead, so the goal (no live credential) is met. It also
+        // wrote a drop marker, but a deliberate end IS the acknowledgment.
         if ($this->agentToken() === null) {
+            $this->clearSessionDropMarker();
             $this->line('Session was already inactive; local token cleared.');
 
             return self::SUCCESS;

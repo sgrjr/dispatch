@@ -79,6 +79,25 @@ census are additive).
 - **`dispatch:session:request --wait`** folds request → show code → poll →
   collect-token into one command (it delegates to the `session:status --wait`
   loop on your behalf).
+- **Dropped sessions fail loud + `dispatch:session:refresh` (client behavior
+  change).** Previously, when a session token died mid-run (401, or a
+  denied/revoked/expired poll), sticky resolution silently fell back to the
+  **local dev DB** — production tasks looked deleted and local throwaway tasks
+  read as the board (observed in the field as apparent data loss). Now an
+  involuntary token death writes a **drop marker** beside the dotfile
+  (`<token_path>.dropped`), and while it stands bare verbs **exit non-zero
+  with the recovery paths** instead of quietly serving local data. Resolve it
+  with the new **`dispatch:session:refresh --wait`** — re-requests a session
+  with the same identity/scopes (persisted in the dotfile since this
+  version), flagged as a renewal in the purpose the approver sees — or
+  acknowledge with `dispatch:session:end` (restores local-by-default);
+  `--local` always overrides per call. Related hardening: a re-`session:request`
+  no longer resurrects a stale `token` key from the old dotfile (that cascade
+  could wipe a fresh pending request on the next 401); a `429` is now
+  answered with back-off guidance instead of looking like token trouble; a
+  token past its stored `expires_at` warns and names `session:refresh` before
+  the 401 interrupts the loop; and `dispatch:doctor` reports a lingering drop
+  marker. Purely client-side — no server or schema change.
 - **Session-anchored metrics: `dispatch:session:end` now records whole-session
   run metrics by default.** The client computes tokens/cost/duration from its
   local Claude Code transcript (window: token stored → now) and folds them into

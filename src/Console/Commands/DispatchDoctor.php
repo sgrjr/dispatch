@@ -3,6 +3,7 @@
 namespace Sgrjr\Dispatch\Console\Commands;
 
 use Illuminate\Console\Command;
+use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 use Sgrjr\Dispatch\Services\AgentSessionService;
 
 /**
@@ -22,6 +23,8 @@ use Sgrjr\Dispatch\Services\AgentSessionService;
  */
 class DispatchDoctor extends Command
 {
+    use TalksToAgentApi;
+
     protected $signature = 'dispatch:doctor
         {--strict : Exit non-zero on warnings too, not just errors (for CI)}
         {--json : Emit machine-readable JSON instead of a human report}';
@@ -43,6 +46,7 @@ class DispatchDoctor extends Command
         $this->checkVerbs();
         $this->checkBatchCap();
         $this->checkRemote($env);
+        $this->checkDroppedSession();
         $this->checkConfigCache($cached);
         $this->checkKeyDrift();
 
@@ -131,6 +135,22 @@ class DispatchDoctor extends Command
         } else {
             $this->add('ok', 'remote.url', "Remote target: {$url}");
         }
+    }
+
+    /**
+     * Client-state check: a lingering drop marker means a commissioned session
+     * died involuntarily (mid-run 401 / denied / revoked / expired) and neither
+     * a renewal nor an acknowledgment has happened — bare verbs are failing
+     * loud instead of falling back to the local DB. Surfaced only when present.
+     */
+    protected function checkDroppedSession(): void
+    {
+        $marker = $this->sessionDropMarker();
+        if ($marker === null) {
+            return;
+        }
+
+        $this->add('warn', 'dropped_session', 'A previous agent session was dropped — '.($marker['reason'] ?? 'unknown reason').' at '.($marker['at'] ?? '?').'. Bare verbs refuse the silent local fallback until `dispatch:session:refresh --wait` renews it (human approves) or `dispatch:session:end` acknowledges it.');
     }
 
     protected function checkConfigCache(bool $cached): void

@@ -108,6 +108,11 @@ class DispatchSessionStatus extends Command
         if (! $response->successful()) {
             $this->error("Agent API HTTP {$response->status()}: ".substr($response->body(), 0, 300));
 
+            // Throttled ≠ dead: a 429 on the poll endpoint invalidates nothing.
+            if ($response->status() === 429) {
+                $this->line('Hint: the session endpoint is rate-limited. Back off before polling again — a 429 does NOT invalidate the pending request or an existing token.');
+            }
+
             return null;
         }
 
@@ -148,8 +153,14 @@ class DispatchSessionStatus extends Command
             case 'denied':
             case 'revoked':
             case 'expired':
+                // Mark before forgetting (the marker copies identity out of the
+                // dotfile) — bare verbs must not quietly serve local data after
+                // a session the agent believed in died.
+                $this->markSessionDropped("session {$status}");
                 $this->forgetToken();
-                $this->error("Session {$status}. Local token cleared — run `dispatch:session:request` to start over.");
+                $this->error("Session {$status}. Local token cleared; bare verbs now refuse the silent local fallback. ".($status === 'denied'
+                    ? 'A human said no — report and stop (a `dispatch:session:refresh --wait` would just re-ask them). `--local` works locally; `dispatch:session:end` clears the guard.'
+                    : 'Renew with `dispatch:session:refresh --wait` (a human approves again), or `dispatch:session:end` to acknowledge and work locally.'));
 
                 return self::FAILURE;
 

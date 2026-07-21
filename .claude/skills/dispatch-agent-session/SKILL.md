@@ -118,9 +118,20 @@ checklist into a manifest.
 
 ## When things go wrong
 
-- **`denied` / `revoked` / `expired` / mid-loop `401`** — the local token is
-  cleared automatically. **Stop and report.** Never re-request in a retry loop;
-  a human decides whether to commission again.
+- **`expired` / `revoked` / mid-loop `401`** — the local token is cleared and a
+  **drop marker** goes up: bare verbs now FAIL LOUD instead of silently serving
+  the local dev DB as if it were production (that masquerade reads as data
+  loss). The baked-in resolution is **`dispatch:session:refresh --wait`** — it
+  re-requests with the same identity/scopes, names itself a renewal of the
+  dropped session for the approver, and blocks for the human decision. Run it
+  ONCE and tell the operator; **never loop it** — approval is still a human
+  call. `dispatch:session:end` instead acknowledges the drop (back to local
+  work); `--local` overrides per call.
+- **`denied`** — a human said no. **Stop and report** — a refresh would just
+  re-ask them; don't.
+- **`429`** — rate-limited, NOT a dead session: the token (or pending request)
+  is still valid. Back off and retry the SAME call once; never re-request or
+  refresh a session over a 429 (that cascade is how tokens get orphaned).
 - **`403` "not scoped"** — the error message itself carries the recovery paths.
   Follow it.
 - **Still `pending` after `--wait`** — re-run `dispatch:session:status --wait`
