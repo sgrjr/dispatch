@@ -9,7 +9,7 @@
 **What this is.** The living roadmap, design reference, and backlog for **`sgrjr/dispatch`** — a standalone Laravel package: task / bug / feature dispatch with capture widgets, a Kanban board + list + submitter portal, a CLI verb-loop, attachments, client diagnostics capture, and a programmatic `DispatchTask` facade. This file lives in the package repo and travels with the code. **§18 is the actionable backlog; §1–§17 are design decisions and build history.**
 
 **Where the pieces live** (paths are from the machine this was built on — confirm they exist):
-- **This package:** GitHub `sgrjr/dispatch`, released via tags (`git tag`). *(Path drifted across machines — was `C:\Users\steph\Documents\laravel-dispatch`; on the current machine it's `C:\Users\sreynoldsjr\Documents\GitHub\dispatch`. Confirm before relying on any absolute path in this doc.)* Tagged through **v0.5.0** and pushed: the non-AI feature batch (workflow config, notifier seam, watchers, merge, markdown, bulk ops, staleness, editable body, throttle, widget a11y) landed across the v0.3/v0.4 line; the 🤖 AI/agent layer (C1–C6) + 🌐 remote-agent seam (§20 Phases 1–4) across the v0.4.x tags; the first-live-run GAP fixes at **v0.4.5–v0.4.9**; the batch-memorialize verb (`dispatch:batch`) at **v0.5.0**. **v0.5.1** — the full-history `todo.md`→Dispatch **import** batch (§18 📜 M1–M4: codeless keyed import, `--no-notify` on bulk paths, the `import` key in `dispatch:schema`, and `MIGRATING.md`). **v0.5.2** — `dispatch:claim <CODE>` claims a *specific* still-unclaimed task by code (local + `--remote`); honored only while the task is open/triage, so naming one never steals in-flight work, and a named-but-unclaimable code exits non-zero. **v0.5.3** — stamped agent-run metrics (`context.result.metrics`) finally get a **viewing surface**: a staff "Agent run" panel on the task detail page + a `# Agent run` block in `dispatch:show`, both shaped by a new pure `MetricsPresenter` (so its presence confirms capture/storage). **v0.5.4** — the third centerpoint-inbox wave (§18 🧰): `dispatch:queue --limit=N` (local + `--remote`); file/stdin input for the long-text/JSON options (`dispatch:done --result-file`, `dispatch:note --body-file`, `dispatch:add --description-file`, `-`=stdin) via a shared `Console\Commands\Concerns\ResolvesTextInput` trait; a README "Inbox → batch" canonical section; `dispatch-agent-session` skill updates (named-task `claim <CODE>` recipe, grantable verb→scope table with `--scope=add`, file/stdin quoting guidance) synced surgically into centerpoint's customized copy; and the GAP-3 companion hardening — defensive `env()`/package-default fallbacks across the `agent.*` config reads (`bootstrap_secret`, `verbs`→`KNOWN_VERBS`, `enabled`, `batch.max_operations`). **`v0.5.5`** — `dispatch:doctor`, the agent config-drift diagnostic (loads the package's canonical `agent` config, diffs the live/published `dispatch.agent.*`, and flags a verb missing from `agent.verbs` / an unset `bootstrap_secret` in prod / a non-HTTPS remote / a stale config cache; human report + `--json`, `--strict` for CI), which **closes the 🧰 wave**; plus a centerpoint de-stale sweep (surgical `agent.disabled_verbs` add to the *published* config, `dispatch-agent-session` skill + `todo.inbox` pointer sync) so the host's `@dev` `composer update` + `git pull` flow stays non-stale with no `vendor:publish`. **Latest: `v0.5.6`** — the fourth centerpoint-inbox wave (§18 📊): remote agent-run metrics finally reachable — `dispatch:done --with-metrics [--since]` computes them from the local transcript and folds them under `context.result.metrics` (the "Agent run" panel's key-path), **status-agnostic** (`done`/`verifying`) and summary-preserving, via a new shared `Support\AgentMetrics` collector — fixing the shipped-but-unreachable remote metrics path (the old flat `--result="$(dispatch:metrics --json)"` one-liner wrote `context.result.*` and clobbered the summary, so the panel never rendered); `dispatch:queue --count` → `{total, by_status}` and `dispatch:next --status` (queue/next symmetry, so an agent learns the true backlog size + filters by state without probing `--limit`); a per-session **"metrics recorded?"** badge on `AgentSessions` (`metrics: none recorded` / `metrics ✓ M/N`, non-noisy); plus operator-facing skill de-friction (status glossary, open-vs-triage disambiguation, confirm-not-already-done triage, the `done`-vs-`verifying` decision guide, the corrected `--with-metrics` recipe) synced surgically into centerpoint's customized skill copy, and a new **`dispatch-inbox-absorb`** meta-skill encoding the absorb → verify-against-code → memorialize → reset-stub → summarize loop. Package Testbench-green at **249 tests**; **browser smoke-test GREEN (2026-07-16)**. **MCP (C8) still deferred** ("lean HTTP now, MCP next", §13). The one runtime item still by hand: the centerpoint live-delivery steps (§18 🌐 last item). PHP 8.2, Laravel 11/12, Livewire 3, Testbench + Pest. DB tables are **`dispatch_*`-prefixed**.
+- **This package:** GitHub `sgrjr/dispatch`, released via tags (`git tag`). *(Path drifted across machines — was `C:\Users\steph\Documents\laravel-dispatch`; on the current machine it's `C:\Users\sreynoldsjr\Documents\GitHub\dispatch`. Confirm before relying on any absolute path in this doc.)* Tagged through **v0.5.0** and pushed: the non-AI feature batch (workflow config, notifier seam, watchers, merge, markdown, bulk ops, staleness, editable body, throttle, widget a11y) landed across the v0.3/v0.4 line; the 🤖 AI/agent layer (C1–C6) + 🌐 remote-agent seam (§20 Phases 1–4) across the v0.4.x tags; the first-live-run GAP fixes at **v0.4.5–v0.4.9**; the batch-memorialize verb (`dispatch:batch`) at **v0.5.0**. **v0.5.1** — the full-history `todo.md`→Dispatch **import** batch (§18 📜 M1–M4: codeless keyed import, `--no-notify` on bulk paths, the `import` key in `dispatch:schema`, and `MIGRATING.md`). **v0.5.2** — `dispatch:claim <CODE>` claims a *specific* still-unclaimed task by code (local + `--remote`); honored only while the task is open/triage, so naming one never steals in-flight work, and a named-but-unclaimable code exits non-zero. **v0.5.3** — stamped agent-run metrics (`context.result.metrics`) finally get a **viewing surface**: a staff "Agent run" panel on the task detail page + a `# Agent run` block in `dispatch:show`, both shaped by a new pure `MetricsPresenter` (so its presence confirms capture/storage). **v0.5.4** — the third centerpoint-inbox wave (§18 🧰): `dispatch:queue --limit=N` (local + `--remote`); file/stdin input for the long-text/JSON options (`dispatch:done --result-file`, `dispatch:note --body-file`, `dispatch:add --description-file`, `-`=stdin) via a shared `Console\Commands\Concerns\ResolvesTextInput` trait; a README "Inbox → batch" canonical section; `dispatch-agent-session` skill updates (named-task `claim <CODE>` recipe, grantable verb→scope table with `--scope=add`, file/stdin quoting guidance) synced surgically into centerpoint's customized copy; and the GAP-3 companion hardening — defensive `env()`/package-default fallbacks across the `agent.*` config reads (`bootstrap_secret`, `verbs`→`KNOWN_VERBS`, `enabled`, `batch.max_operations`). **`v0.5.5`** — `dispatch:doctor`, the agent config-drift diagnostic (loads the package's canonical `agent` config, diffs the live/published `dispatch.agent.*`, and flags a verb missing from `agent.verbs` / an unset `bootstrap_secret` in prod / a non-HTTPS remote / a stale config cache; human report + `--json`, `--strict` for CI), which **closes the 🧰 wave**; plus a centerpoint de-stale sweep (surgical `agent.disabled_verbs` add to the *published* config, `dispatch-agent-session` skill + `todo.inbox` pointer sync) so the host's `@dev` `composer update` + `git pull` flow stays non-stale with no `vendor:publish`. **`v0.5.6`** — the fourth centerpoint-inbox wave (§18 📊): remote agent-run metrics finally reachable — `dispatch:done --with-metrics [--since]` computes them from the local transcript and folds them under `context.result.metrics` (the "Agent run" panel's key-path), **status-agnostic** (`done`/`verifying`) and summary-preserving, via a new shared `Support\AgentMetrics` collector — fixing the shipped-but-unreachable remote metrics path (the old flat `--result="$(dispatch:metrics --json)"` one-liner wrote `context.result.*` and clobbered the summary, so the panel never rendered); `dispatch:queue --count` → `{total, by_status}` and `dispatch:next --status` (queue/next symmetry, so an agent learns the true backlog size + filters by state without probing `--limit`); a per-session **"metrics recorded?"** badge on `AgentSessions` (`metrics: none recorded` / `metrics ✓ M/N`, non-noisy); plus operator-facing skill de-friction (status glossary, open-vs-triage disambiguation, confirm-not-already-done triage, the `done`-vs-`verifying` decision guide, the corrected `--with-metrics` recipe) synced surgically into centerpoint's customized skill copy, and a new **`dispatch-inbox-absorb`** meta-skill encoding the absorb → verify-against-code → memorialize → reset-stub → summarize loop. **Latest: `v0.6.0`** (2026-07-21) — the behavior-change release (see UPGRADING.md): the 🪶 **small-model ergonomics pass** (§18 E1–E8 — the deny-all no-`--scope` bug fixed, one-shot `session:request --wait` commissioning, **sticky auto-remote** with stderr banner/`--local` override/`agent.remote.sticky` opt-out, `claimed_at` in the claim envelope, next-step hints printed at the moment of need, the zero-filled `queue --count` census, errors-as-documentation, skill restructure 550→155 lines); **session-anchored metrics** (`session:end` records whole-session run metrics on the session row by default, "Recently ended" panel, migration `000012`) + derived est. human touch-time (`metrics.touch_time`, computed at read time) + the 3h `session_ttl` default; the 🚨 **dropped-session integrity** wave (drop marker + fail-loud guard instead of the silent local-DB fallback, the `dispatch:session:refresh` renewal pipeline, supersede-not-merge `session:request`, 429 ≠ dead-session messaging, past-`expires_at` pre-warning, `doctor` marker check); the 5th-wave 🚦 doc/skill closures; and the list's updated-at sorts + Updated window filter. Package Testbench-green at **300 tests**; **browser smoke-test GREEN (2026-07-16)**. **MCP (C8) still deferred** ("lean HTTP now, MCP next", §13). The one runtime item still by hand: the centerpoint live-delivery steps (§18 🌐 last item). PHP 8.2, Laravel 11/12, Livewire 3, Testbench + Pest. DB tables are **`dispatch_*`-prefixed**.
 - **First consumer:** `C:\Users\steph\Documents\centerpoint\staff` — a Laravel 12 app that installs this package via a Composer **path repository** (symlinked — so package source edits are live in centerpoint immediately) with a GitHub VCS fallback. It binds the contract seams to its own auth under `App\Dispatch\*`, hosts the Vue widget in its footer, and calls the facade from its exception handler.
 - **Frozen reference — do NOT edit:** `C:\Users\steph\Documents\rupkeep-app` — the original inline implementation this package was distilled from. Read-only source of patterns.
 
@@ -93,36 +93,37 @@ Extract the proven **Dispatch** task-tracking pattern from `rupkeep-app` into a 
 ## 4. Package repo layout (as shipped — re-sync at each release per the release ritual)
 
 ```
-laravel-dispatch/
+dispatch/                        # GitHub sgrjr/dispatch (local dir name varies)
   composer.json                  # sgrjr/dispatch; requires laravel ^11||^12, livewire ^3.0
   src/
-    DispatchServiceProvider.php  # config, migrations, views, commands, Livewire, policy, routes (opt-in)
+    DispatchServiceProvider.php  # config, migrations, views, commands, Livewire, policy, routes (opt-in), agent routes (opt-in)
     DispatchManager.php          # facade target: report/bug/feature/fromException + gate/throttle/redact/context
     Facades/DispatchTask.php     # the static entry point (§16)
     Jobs/CreateDispatchTask.php  # queueable create (reporter.queue → dispatch() vs dispatchSync())
-    Contracts/
-      DispatchGate.php           # authorization + THE visibility scope
-      TenantResolver.php         # stamp/read tenant (no query filtering — see §6)
-      SubmitterResolver.php      # current user / CLI default submitter
+    Contracts/                   # DispatchGate · TenantResolver · SubmitterResolver · DispatchNotifier
     Support/
-      DefaultGate.php  NullTenantResolver.php  AuthSubmitterResolver.php   # working defaults
-    Models/
-      Task.php  TaskComment.php  Label.php  TaskAttachment.php   # resolved via config('dispatch.models.*')
+      DefaultGate.php  NullTenantResolver.php  AuthSubmitterResolver.php     # seam defaults
+      NullNotifier.php  MailNotifier.php  EventNotifier.php                  # notifier seam
+      TaskPresenter.php           # THE frozen --json contract (+ schema())
+      MetricsPresenter.php  AgentMetrics.php  TranscriptLocator.php  TranscriptMetrics.php  TouchTime.php
+      Markdown.php
+    Models/                      # Task · TaskComment · Label · TaskAttachment · AgentSession (via config('dispatch.models.*'))
     Livewire/
       TaskBoard.php  TaskList.php  TaskShow.php  TaskCreate.php  TaskThread.php
       DispatchWidget.php          # Livewire capture (floating button + modal form)
       MySubmissions.php           # submitter portal: status of "my" dispatched tasks
-    Console/Commands/             # Dispatch{Add,Pull,Next,Queue,Show,Note,Done,Push,Export,Import}
-    Http/Controllers/
-      SyncController.php          # JSON-LD snapshot/apply (only meaningful package↔package)
-      AttachmentController.php    # authorized upload/download/delete (streams via Storage, gated by DispatchGate)
-      CaptureController.php       # headless capture API (Vue widget + client diagnostics post here)
-    Services/
-      DispatchTaskService.php     # create + capture() single entry
-      AttachmentService.php       # store/validate/authorize (shared by controller + Livewire)
+      AgentSessions.php           # staff approval queue for agent sessions (§20) + "Recently ended" metrics
+    Console/Commands/             # 23 verbs: Add/Pull/Next/Queue/Show/Note/Done/Push/Export/Import/Edit/Merge
+                                  # + agent loop: Claim/Batch/Schema/Session{Request,Status,Refresh,End}/SessionsPrune
+                                  # + Metrics/MetricsCapture/Doctor · Concerns/{TalksToAgentApi,ResolvesTextInput}
+    Http/
+      Controllers/                # Sync · Attachment · Capture · Agent (the §20 verb API) · AgentSession (device flow)
+      Middleware/                 # AuthenticateAgentSession · EnsureAgentScope · VerifyBootstrapSecret
+    Events/                       # TaskCreated · TaskStatusChanged · TaskAssigned · TaskCommented (EventNotifier emits)
+    Services/                     # DispatchTaskService · AttachmentService · DispatchBatchService · AgentSessionService
     Policies/TaskPolicy.php       # delegates to DispatchGate
     Notifications/TaskUpdate.php  # brand/route from config
-  database/migrations/            # 6 files; ALL tables dispatch_*-prefixed (§5)
+  database/migrations/            # 12 files; ALL tables dispatch_*-prefixed (§5)
   resources/
     views/                        # layout-agnostic Blade (components/ + livewire/); theme via CSS variables
     js/DispatchWidget.vue         # publishable Vue capture widget (vendor:publish --tag=dispatch-vue)
@@ -130,9 +131,11 @@ laravel-dispatch/
     dist/dispatch.js              # native HTML5 drag-and-drop + paste-a-screenshot glue (NO SortableJS)
   config/dispatch.php
   routes/web.php  routes/api.php  # registered only if config('dispatch.routes.enabled')
-  .claude/skills/dispatch-track/SKILL.md
-  tests/                          # Pest + Orchestra Testbench (required to boot Laravel in a package)
-  README.md
+  routes/agent.php                # registered only if config('dispatch.agent.enabled') (§20)
+  .claude/skills/                 # dispatch-track · dispatch-agent-session · dispatch-batch-migrate ·
+                                  # dispatch-inbox-absorb · orchestrate-waves (publish --tag=dispatch-skills)
+  tests/                          # Pest + Orchestra Testbench — 300 green at v0.6.0
+  README.md  UPGRADING.md  MIGRATING.md  ROADMAP.md
 ```
 
 > Note: exception capture lives in `DispatchManager` (the §16 reporter), not a standalone `ExceptionCapture` service as originally planned.
@@ -164,6 +167,8 @@ laravel-dispatch/
 **Tenant columns are NOT in the package migration.** A consuming app adds its own column via its own migration and a `Task` subclass (see §6/§8). The package never assumes what a tenant is.
 
 **Shipped additions (this session):** `due_at` (dateTime, nullable, indexed) and `duplicate_of` (unsignedBigInteger, nullable, indexed — winner's id on a merged loser) on `dispatch_tasks`; new `dispatch_task_watchers` pivot (`task_id` FK cascade + `user_id`, unique `[task_id,user_id]`). New `TaskComment` event types `description_edited` (internal memorial of a prior body) and `merged`. `recordEvent()` gained a trailing `bool $isInternal` param.
+
+**Shipped additions (agent layer, v0.4.x–v0.6.0):** `dispatch_agent_sessions` (migration `000010` — `public_id` uuid unique, `agent_name`, `purpose`, `user_code` indexed, `poll_secret_hash` unique, `requested_meta`/`scopes` json, `status` (pending default, indexed), `token_hash` unique nullable, `token_delivered_at` (enforces once-only delivery), `approved_by_user_id` (no FK — app owns users), `approved_at`, `expires_at` indexed, `last_used_at`, `ip`; `000012` adds `metrics` json + `ended_at` for session-anchored run metrics). `dedupe_key` on `dispatch_tasks` (`000011`, nullable unique — `dispatch:add --key` idempotency + the codeless keyed import/batch upserts). New `TaskComment` event type `claimed` (agent attribution rides `meta.{agent_session_id, agent_name}`). Client-side, not schema: the agent-token dotfile grew `agent_name`/`purpose`/`scopes` (renewal identity) and a sibling `.dropped` marker file (v0.6.0 — the dropped-session guard).
 
 > ✏️ Extra core fields wanted (`estimate`, external link)? → __________  *(`due_at` shipped.)*
 
@@ -201,20 +206,22 @@ interface SubmitterResolver {
 
 > **The shipped file is the reference** — this list captures intent and grows stale; re-sync at each release (release ritual, RESUME-HERE).
 
-- `models.user`, `models.task`, `models.task_comment`, `models.label`, `models.task_attachment`
-- `attachments.disk` (default `local`), `attachments.path_prefix`, `attachments.max_size_kb`, `attachments.allowed_mimes`, `attachments.max_per_batch`
-- `contracts.gate`, `contracts.tenant`, `contracts.submitter`
-- `code_prefix` (default `TASK`), `connection` (DB connection override)
-- `routes.enabled`, `routes.prefix`, `routes.name_prefix`, `routes.middleware`, `routes.portal_middleware`, `routes.api_middleware`
-- `brand.name`, `brand.task_url` (closure/route-name for notification links)
+- `models.{user,task,task_comment,label,task_attachment}`
+- `attachments.{enabled,disk (default local),path_prefix,max_size_kb,max_per_batch,allowed_mimes}`
+- `contracts.{gate,tenant,submitter,notifier (default MailNotifier)}`
+- `code_prefix` (default `TASK`)
+- `workflow.{types,priorities,statuses,type_labels,priority_labels,status_labels}` (empty vocab keys fall back to the `Task::*` consts; empty label maps auto-humanize)
+- `routes.{enabled,prefix,name_prefix,middleware,portal_middleware,api_middleware}`
+- `brand.{name,task_url}` (closure/route-name for notification links)
 - `widget.enabled` (drop-in capture widget)
-- `capture.exceptions` (**default false** — see Sentry note §8), `capture.dedupe_window`
-- `reporter.*` (the §16 facade): `queue`, `environments` (default `['production']`), `redact`, `throttle_seconds`, `trace_frames`, `exception_label`, `capture_request`
-- `notifications.enabled`, `notifications.channels`
-- `sync.remote_url`, `sync.token`, `sync.timeout`, `sync.verify_ssl` (**optional**; verbs no-op gracefully when unset)
-- `jsonld.vocab` (default `https://sgrjr.dev/schema/dispatch/v1#` or similar — not rupkeep's)
-- **Shipped (non-AI batch):** `contracts.notifier` (default `MailNotifier`) · `workflow.{types,priorities,statuses,type_labels,priority_labels,status_labels}` (empty vocab keys fall back to the `Task::*` consts; empty label maps auto-humanize) · `capture.throttle` (default `'60,1'`, `null`=off) · `board.{done_limit,manual_order}` · `staleness.{enabled,threshold_days}` · `markdown.enabled`
-- **Shipped (AI/agent layer):** `agent.{enabled (default false),middleware,bootstrap_secret,session_ttl,request_ttl,poll_interval,request_throttle,verb_throttle,verbs (allowlist),remote.{url,token_path}}` — the dedicated agent API (§20). All read with in-code fallbacks; `enabled` off by default, so the agent routes register only when a host opts in.
+- `capture.{exceptions (**default false** — see Sentry note §8),environments,label,throttle (default '60,1', null=off)}`
+- `reporter.*` (the §16 facade): `enabled`, `environments` (default `['production']`), `queue`, `connection`, `throttle_seconds`, `capture_request`, `redact`, `exception_label`, `trace_frames`
+- `notifications.{enabled,channels}`
+- `board.{done_limit,manual_order}` · `staleness.{enabled,threshold_days}` · `markdown.enabled`
+- `sync.{remote_url,token,timeout,verify_ssl}` (**optional**; verbs no-op gracefully when unset)
+- `jsonld.vocab`
+- **AI/agent layer (§20):** `agent.{enabled (default false),middleware,bootstrap_secret,session_ttl (default 10800 = 3h since v0.6.0),request_ttl,poll_interval,request_throttle,verb_throttle,verbs (allowlist),disabled_verbs (denylist for withholding a shipped verb),batch.max_operations,remote.{url,token_path,sticky (default on — active token ⇒ verbs default --remote, v0.6.0)}}`. All read with in-code/env fallbacks; `enabled` off by default, so the agent routes register only when a host opts in.
+- **Metrics (v0.5.x–v0.6.0):** `metrics.{session_file,transcript_root,pricing.<model>.{input,output,cache_write,cache_read},touch_time.{version,base_minutes.*,per_tool_minutes.*,mutate_tools,bash_tools,category_cap_minutes.*,per_subagent_minutes,subagent_cap_minutes,duration_weight,duration_cap_minutes}}` — transcript-derived run metrics pricing + the derived-at-read-time est. human touch-time coefficients.
 
 ⚠️ **In-code defaults are the real defaults.** Hosts publish `dispatch-config` once and never re-publish (doctrine — re-publishing would clobber hand-edited contract bindings). So every config key added after a host installs is **absent from that host's published file**: the package MUST read it with a safe in-code fallback (`config('dispatch.x', $default)`). The published file's defaults are documentation for new installs, nothing more.
 
@@ -333,7 +340,7 @@ Every genuinely open decision lives here; other sections link in. **If a pending
 1. **Attachment storage disk for centerpoint**: private local (current driver default) vs S3-compatible → revisit if volume grows.
 
 **Resolved (record):**
-- **Sticky remote targeting (2026-07-20, small-model review)** → an ACTIVE session token (+ configured `remote.url`) defaults every loop verb to the remote — the token's lifecycle IS the session — with a per-call `→ remote: <host>` stderr banner, `--local` override, and host opt-out via `agent.remote.sticky` / `DISPATCH_AGENT_STICKY`. Behavior change → v0.6.0 (UPGRADING.md). *(built; 🪶 E3.)*
+- **Sticky remote targeting (2026-07-20, small-model review)** → an ACTIVE session token (+ configured `remote.url`) defaults every loop verb to the remote — the token's lifecycle IS the session — with a per-call `→ remote: <host>` stderr banner, `--local` override, and host opt-out via `agent.remote.sticky` / `DISPATCH_AGENT_STICKY`. Behavior change → v0.6.0 (UPGRADING.md). *(built; 🪶 E3; tagged v0.6.0 2026-07-21.)* **Companion decision (2026-07-21, operator):** a session token lost INVOLUNTARILY is a first-class dropped state, not an absence — bare verbs fail loud (never the silent local fallback) and `dispatch:session:refresh` is the baked-in renewal pipeline, human approval unchanged as the control point. *(built; 🚨 D1–D6.)*
 - **Scope-request default (2026-07-20)** → `dispatch:session:request` with no `--scope` requests the **full grantable allowlist** (the approver sees + controls the grant); `--scope` narrows deliberately. This was always the server's intent — the client's always-send-the-key bug (which turned the default into deny-all) is fixed. *(built; 🪶 E1.)*
 - **Skill posture (2026-07-20)** → "the CLI narrates the pipeline": tool output/errors carry the operational knowledge; the skill holds only the happy path, one judgment decision-card, and guardrail-less hard boundaries. Doc-patching a pipeline seam without a matching tool change is now an anti-pattern of the *process itself*. *(built; 🪶 E5/E7/E8.)*
 - **§20 design forks 1 / 2 / 4 / 5** (agent sessions) → **all resolved & built (follow-up session):** fork 1 = **self-contained package session token** (no Sanctum coupling — stays portable); fork 2 = agent principal is **null `user_id` + `TaskComment.meta{agent_session_id, agent_name}`** attribution; fork 4 = approval UI = **package-shipped Livewire** (`AgentSessions`, host links it); fork 5 = the agent surface **bypasses `scopeVisible` and is authorized staff-equivalent** (a human explicitly approved the session). Fork 3 (**`bootstrap_secret` required-in-prod + `user_code` binding**) built as specced. *(§20 Phases 1–4 built; see §18 🌐.)*
@@ -603,7 +610,7 @@ Single at-a-glance list of everything open. Details live in §14 / §16 / §17. 
 
 **✅ Also shipped this pass (operator-identified, not from the inbox) — the `done` vs `verifying` seam.** An agent almost always closes to `done` because "I did what was asked" *feels* complete, so the `verifying` status goes permanently unused even when work genuinely needs a human check (visual/UX, a deploy/migration, prod-data confirmation, high blast radius). Added skill **§5d "Closing a task — `done` vs `verifying`"**: a decision table keyed on *who still has to act* (not whether the agent's part is done), the `--status=verifying` mechanic, and — critically — a **noise guard** so `verifying` doesn't become a reflexive hedge (reserve it for real hand-offs; always *name the exact check* being handed off; if you can't articulate it, the honest status is `done`). Reinforced by the §5 status glossary (W4-6) and a new anti-pattern. **Also captured as a reusable meta-workflow this pass:** the new **`dispatch-inbox-absorb`** skill, which encodes this whole absorb → verify-against-code → memorialize → reset-stub → summarize loop.
 
-**Status: the 📊 wave is COMPLETE — all W4 items shipped this session** (W4-3/5/6/7 skill docs; W4-1/2/4/8/9 package code). Package **Testbench-green at 249 tests** (240 → +9 new: `done --with-metrics` fold/status-agnostic/claim-default, `queue --count` local+remote+API, `next --status` local+API, and the W4-9 badge both states). New shared unit: `Support\AgentMetrics`. Not yet tagged — a release sweep + version bump rides the next commit per the release ritual.
+**Status: the 📊 wave is COMPLETE — all W4 items shipped this session** (W4-3/5/6/7 skill docs; W4-1/2/4/8/9 package code). Package **Testbench-green at 249 tests** (240 → +9 new: `done --with-metrics` fold/status-agnostic/claim-default, `queue --count` local+remote+API, `next --status` local+API, and the W4-9 badge both states). New shared unit: `Support\AgentMetrics`. *(Tagged **v0.5.6**.)*
 
 ### 🚦 Status-lifecycle ergonomics — greenlighting, hand-off visibility, vet precision (absorbed from the centerpoint inbox — 5th wave, 2026-07-18)
 
@@ -630,7 +637,7 @@ Single at-a-glance list of everything open. Details live in §14 / §16 / §17. 
 - [x] **E8 [skill] — full restructure: 550 → 155 lines** (centerpoint's customized copy 504 → 180, host specifics preserved: prod hostname, `/it/agent-sessions`, admin/staff wording, the todo:inbox vet example). New shape: a hint-driven happy path ("the CLI narrates the pipeline"), ONE decision card holding only (c)-class judgment (done-vs-verifying, "open" disambiguation, vet-by-wiring-identifier, greenlight policy), guardrail-less hard boundaries, compressed batch/troubleshooting/config sections. `dispatch-track` gained the sticky-remote caveat (use `--local` for local tracking during an active session).
 - [ ] **E9 — validation: a small-model production run.** Commission a real session driven by a weaker model (e.g. Haiku) following only the rewritten skill; success = the next inbox wave's findings are about the WORK, not the pipeline. The inbox loop is the measurement instrument.
 
-**Status: package + skill side COMPLETE (2026-07-20)** — suite **263 green** (249 → +14: scopes/one-shot ×3, sticky ×4, census ×3, bridge/tip ×2, claimed_at ×1, 403-message ×1). Happy path: ~8 commands + 4 memorized rules → **6 commands, each narrated by the previous one's output**. The **v0.6.0** bump (sticky-remote behavior change) rides the release ritual at tag time. Open: E9 (operator-run).
+**Status: package + skill side COMPLETE (2026-07-20)** — suite **263 green** (249 → +14: scopes/one-shot ×3, sticky ×4, census ×3, bridge/tip ×2, claimed_at ×1, 403-message ×1). Happy path: ~8 commands + 4 memorized rules → **6 commands, each narrated by the previous one's output**. *(The sticky-remote behavior change shipped in the **v0.6.0** tag, 2026-07-21.)* Open: E9 (operator-run).
 
 ### 🚨 Dropped-session integrity — fail loud, renew cleanly (operator-relayed centerpoint field report, 2026-07-21)
 
@@ -644,7 +651,7 @@ Single at-a-glance list of everything open. Details live in §14 / §16 / §17. 
 - [x] **D6 [pkg] — pre-empt the 401: expiry warning + doctor check.** A sticky call with a token past its stored `expires_at` warns (stderr) and names `session:refresh` BEFORE the server 401s the loop; `dispatch:doctor` reports a lingering drop marker with both resolution paths. *(AgentCliTest expiry case.)*
 - [x] **D7 [docs/skill]** — README (sticky-remote paragraph, seam lifecycle step 4, verb list entry), UPGRADING.md v0.6.0 bullet (client behavior change: loud failure where silence was), and the skill's "When things go wrong" split: 401/expired/revoked → refresh once + report; denied → stop (refresh would re-ask a human who said no); 429 → back off, same call.
 
-**Status: COMPLETE (2026-07-21)** — suite **300 green (1077 assertions)** (288 → +12: marker/guard/`--local`/`--remote`-context/acknowledge/429-verb/expiry ×7; denied-marker/supersede/429-request ×3 + renewal ×2). Client-side only; no server/schema change, so mixed client-server pairs keep working. Rides the pending **v0.6.0** tag.
+**Status: COMPLETE (2026-07-21)** — suite **300 green (1077 assertions)** (288 → +12: marker/guard/`--local`/`--remote`-context/acknowledge/429-verb/expiry ×7; denied-marker/supersede/429-request ×3 + renewal ×2). Client-side only; no server/schema change, so mixed client-server pairs keep working. *(Tagged **v0.6.0**, 2026-07-21 — same-day surgical re-sync of both centerpoint skill copies + the 6th-wave inbox ledger entry; host `composer update` pending on their side.)*
 
 ### 🧾 Session-anchored metrics — the run cost survives the token (operator design review, 2026-07-20)
 
