@@ -197,6 +197,63 @@
         .dispatch-badge.is-low, .dispatch-badge.is-success { background: var(--dispatch-success-bg); color: var(--dispatch-success); }
         .dispatch-badge.is-info { background: var(--dispatch-info-bg); color: var(--dispatch-info); }
 
+        /* Checkbox multi-filter popovers (board + list filter bars — see
+           livewire/partials/filter-group.blade.php). */
+        .dispatch-filter-group { position: relative; }
+        .dispatch-filter-summary {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+            cursor: pointer;
+            list-style: none;
+            user-select: none;
+        }
+        .dispatch-filter-summary::-webkit-details-marker { display: none; }
+        .dispatch-filter-caret { font-size: 0.6rem; color: var(--dispatch-text-muted); }
+        .dispatch-filter-panel {
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 0;
+            z-index: 30;
+            min-width: 13rem;
+            max-height: 16rem;
+            overflow-y: auto;
+            background: var(--dispatch-surface);
+            border: 1px solid var(--dispatch-border);
+            border-radius: var(--dispatch-radius-md);
+            box-shadow: var(--dispatch-shadow);
+            padding: 0.5rem 0.65rem;
+        }
+        .dispatch-filter-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding-bottom: 0.35rem;
+            margin-bottom: 0.35rem;
+            border-bottom: 1px solid var(--dispatch-border);
+            color: var(--dispatch-text-muted);
+            font-size: 0.72rem;
+        }
+        .dispatch-filter-actions button {
+            background: none;
+            border: none;
+            padding: 0;
+            color: var(--dispatch-accent);
+            font-size: 0.72rem;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .dispatch-filter-option {
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+            font-size: 0.78rem;
+            padding: 0.18rem 0;
+            cursor: pointer;
+        }
+        .dispatch-filter-empty { font-size: 0.75rem; color: var(--dispatch-text-muted); }
+
         .dispatch-error { color: var(--dispatch-danger); font-size: 0.75rem; font-weight: 600; margin-top: 0.25rem; }
 
         .dispatch-empty {

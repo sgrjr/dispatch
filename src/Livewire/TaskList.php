@@ -10,6 +10,7 @@ use Livewire\Component;
 use Livewire\WithPagination;
 use Sgrjr\Dispatch\Contracts\DispatchGate;
 use Sgrjr\Dispatch\Contracts\DispatchNotifier;
+use Sgrjr\Dispatch\Livewire\Concerns\HasVocabMultiFilters;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
@@ -21,6 +22,7 @@ use Sgrjr\Dispatch\Services\DispatchTaskService;
  */
 class TaskList extends Component
 {
+    use HasVocabMultiFilters;
     use WithPagination;
 
     #[Url(as: 'q', except: '')]
@@ -29,14 +31,20 @@ class TaskList extends Component
     #[Url(as: 'status', except: '')]
     public string $statusFilter = '';
 
-    #[Url(as: 'type', except: '')]
-    public string $typeFilter = '';
+    /**
+     * Checkbox multi-filters (see HasVocabMultiFilters for the []/['']/subset
+     * state contract). Plural aliases keep pre-multi-select scalar bookmarks
+     * (?type=bug) inert and match TaskBoard's, so a filtered URL transfers
+     * between the list and the board.
+     */
+    #[Url(as: 'types', except: [])]
+    public array $typeFilter = [];
 
-    #[Url(as: 'priority', except: '')]
-    public string $priorityFilter = '';
+    #[Url(as: 'priorities', except: [])]
+    public array $priorityFilter = [];
 
-    #[Url(as: 'label', except: '')]
-    public string $labelFilter = '';
+    #[Url(as: 'labels', except: [])]
+    public array $labelFilter = [];
 
     /** Updated-at window: '', 'today', 'week', 'month', or 'older'. */
     #[Url(as: 'updated', except: '')]
@@ -67,10 +75,44 @@ class TaskList extends Component
 
     public function updating($name): void
     {
-        if (in_array($name, ['search', 'statusFilter', 'typeFilter', 'priorityFilter', 'labelFilter', 'updatedFilter'], true)) {
+        // Only the wire:model-bound filters pass through here — the checkbox
+        // multi-filters assign in-method and reset via afterFilterChanged().
+        if (in_array($name, ['search', 'statusFilter', 'updatedFilter'], true)) {
             $this->resetPage();
             $this->selected = [];
         }
+    }
+
+    protected function afterFilterChanged(): void
+    {
+        $this->resetPage();
+        $this->selected = [];
+    }
+
+    /** @var array<int,string>|null Per-request memo (protected: not Livewire state). */
+    protected ?array $labelNamesCache = null;
+
+    protected function filterVocabs(): array
+    {
+        /** @var class-string<Task> $taskClass */
+        $taskClass = config('dispatch.models.task');
+
+        return [
+            'typeFilter' => $taskClass::types(),
+            'priorityFilter' => $taskClass::priorities(),
+            'labelFilter' => $this->labelNames(),
+        ];
+    }
+
+    /** @return array<int,string> */
+    protected function labelNames(): array
+    {
+        if ($this->labelNamesCache === null) {
+            $labelClass = config('dispatch.models.label');
+            $this->labelNamesCache = $labelClass::orderBy('name')->pluck('name')->all();
+        }
+
+        return $this->labelNamesCache;
     }
 
     public function clearFilters(): void
@@ -289,15 +331,14 @@ class TaskList extends Component
             $query->where('status', $this->statusFilter);
         }
 
-        if (in_array($this->typeFilter, $taskClass::types(), true)) {
-            $query->where('type', $this->typeFilter);
+        if (null !== ($sel = $this->activeSelection($this->typeFilter, $taskClass::types()))) {
+            $query->whereIn('type', $sel);
         }
-        if (in_array($this->priorityFilter, $taskClass::priorities(), true)) {
-            $query->where('priority', $this->priorityFilter);
+        if (null !== ($sel = $this->activeSelection($this->priorityFilter, $taskClass::priorities()))) {
+            $query->whereIn('priority', $sel);
         }
-        if ($this->labelFilter !== '') {
-            $label = $this->labelFilter;
-            $query->whereHas('labels', fn (Builder $q) => $q->where('name', $label));
+        if (null !== ($sel = $this->activeSelection($this->labelFilter, $this->labelNames()))) {
+            $query->whereHas('labels', fn (Builder $q) => $q->whereIn('name', $sel));
         }
 
         // Cumulative windows (today ⊂ week ⊂ month); 'older' is the remainder.

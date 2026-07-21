@@ -53,25 +53,16 @@
                 </select>
             </div>
             <div>
-                <label class="dispatch-label">Type</label>
-                <select wire:model.live="typeFilter" class="dispatch-select">
-                    <option value="">Any type</option>
-                    @foreach ($typeLabels as $code => $label) <option value="{{ $code }}">{{ $label }}</option> @endforeach
-                </select>
+                <span class="dispatch-label">Type</span>
+                @include('dispatch::livewire.partials.filter-group', ['property' => 'typeFilter', 'options' => $typeLabels])
             </div>
             <div>
-                <label class="dispatch-label">Priority</label>
-                <select wire:model.live="priorityFilter" class="dispatch-select">
-                    <option value="">Any priority</option>
-                    @foreach ($priorityLabels as $code => $label) <option value="{{ $code }}">{{ $label }}</option> @endforeach
-                </select>
+                <span class="dispatch-label">Priority</span>
+                @include('dispatch::livewire.partials.filter-group', ['property' => 'priorityFilter', 'options' => $priorityLabels])
             </div>
             <div>
-                <label class="dispatch-label">Label</label>
-                <select wire:model.live="labelFilter" class="dispatch-select">
-                    <option value="">Any label</option>
-                    @foreach ($labels as $l) <option value="{{ $l->name }}">{{ $l->name }}</option> @endforeach
-                </select>
+                <span class="dispatch-label">Label</span>
+                @include('dispatch::livewire.partials.filter-group', ['property' => 'labelFilter', 'options' => $labels->pluck('name', 'name')])
             </div>
             <div>
                 <label class="dispatch-label">Updated</label>

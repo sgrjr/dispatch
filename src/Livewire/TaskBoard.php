@@ -8,6 +8,7 @@ use Livewire\Attributes\Url;
 use Livewire\Component;
 use Sgrjr\Dispatch\Contracts\DispatchGate;
 use Sgrjr\Dispatch\Contracts\DispatchNotifier;
+use Sgrjr\Dispatch\Livewire\Concerns\HasVocabMultiFilters;
 use Sgrjr\Dispatch\Models\TaskComment;
 
 /**
@@ -24,14 +25,35 @@ use Sgrjr\Dispatch\Models\TaskComment;
  */
 class TaskBoard extends Component
 {
-    #[Url(as: 'type', except: '')]
-    public string $typeFilter = '';
+    use HasVocabMultiFilters;
 
-    #[Url(as: 'priority', except: '')]
-    public string $priorityFilter = '';
+    /**
+     * Checkbox multi-filters (see HasVocabMultiFilters for the []/['']/subset
+     * state contract). Aliases are plural so a pre-multi-select scalar
+     * bookmark (?type=bug) is ignored instead of fatally hydrating an array
+     * property, and match TaskList's so a filtered URL transfers between the
+     * board and the list.
+     */
+    #[Url(as: 'types', except: [])]
+    public array $typeFilter = [];
 
-    #[Url(as: 'label', except: '')]
-    public string $labelFilter = '';
+    #[Url(as: 'priorities', except: [])]
+    public array $priorityFilter = [];
+
+    #[Url(as: 'labels', except: [])]
+    public array $labelFilter = [];
+
+    /**
+     * Column visibility — hides whole board columns (e.g. backburner or
+     * declined) rather than filtering tasks within them, so it composes with
+     * the three axes above.
+     */
+    #[Url(as: 'columns', except: [])]
+    public array $columnFilter = [];
+
+    /** Activity window: '', 'today', 'week', 'month', or 'older' (mirrors TaskList). */
+    #[Url(as: 'updated', except: '')]
+    public string $updatedFilter = '';
 
     /**
      * "Load all" override for the done column's `board.done_limit` cap (F8).
@@ -133,6 +155,38 @@ class TaskBoard extends Component
             // up for a board-driven move too. DispatchNotifier never throws.
             app(DispatchNotifier::class)->taskStatusChanged($task, $fromStatus, $toStatus, $user);
         }
+    }
+
+    public function clearFilters(): void
+    {
+        $this->reset(['typeFilter', 'priorityFilter', 'labelFilter', 'columnFilter', 'updatedFilter']);
+    }
+
+    /** @var array<int,string>|null Per-request memo (protected: not Livewire state). */
+    protected ?array $labelNamesCache = null;
+
+    protected function filterVocabs(): array
+    {
+        /** @var class-string<\Sgrjr\Dispatch\Models\Task> $taskClass */
+        $taskClass = config('dispatch.models.task');
+
+        return [
+            'typeFilter' => $taskClass::types(),
+            'priorityFilter' => $taskClass::priorities(),
+            'labelFilter' => $this->labelNames(),
+            'columnFilter' => $taskClass::statuses(),
+        ];
+    }
+
+    /** @return array<int,string> */
+    protected function labelNames(): array
+    {
+        if ($this->labelNamesCache === null) {
+            $labelClass = config('dispatch.models.label');
+            $this->labelNamesCache = $labelClass::orderBy('name')->pluck('name')->all();
+        }
+
+        return $this->labelNamesCache;
     }
 
     /**
@@ -237,22 +291,41 @@ class TaskBoard extends Component
         $gate = app(DispatchGate::class);
         $user = Auth::user();
 
-        $applyScopeAndFilters = function ($query) use ($taskClass, $gate, $user) {
+        // One fetch feeds both the label filter's vocab and the view.
+        $labels = $labelClass::orderBy('name')->get();
+        $this->labelNamesCache = $labels->pluck('name')->all();
+        $labelNames = $this->labelNamesCache;
+
+        $applyScopeAndFilters = function ($query) use ($taskClass, $gate, $user, $labelNames) {
             $gate->scopeVisible($query, $user);
 
-            if (in_array($this->typeFilter, $taskClass::types(), true)) {
-                $query->where('type', $this->typeFilter);
+            if (null !== ($sel = $this->activeSelection($this->typeFilter, $taskClass::types()))) {
+                $query->whereIn('type', $sel);
             }
-            if (in_array($this->priorityFilter, $taskClass::priorities(), true)) {
-                $query->where('priority', $this->priorityFilter);
+            if (null !== ($sel = $this->activeSelection($this->priorityFilter, $taskClass::priorities()))) {
+                $query->whereIn('priority', $sel);
             }
-            if ($this->labelFilter !== '') {
-                $label = $this->labelFilter;
-                $query->whereHas('labels', fn ($q) => $q->where('name', $label));
+            if (null !== ($sel = $this->activeSelection($this->labelFilter, $labelNames))) {
+                $query->whereHas('labels', fn ($q) => $q->whereIn('name', $sel));
             }
+
+            // Cumulative activity windows (today ⊂ week ⊂ month); 'older' is
+            // the remainder — mirrors TaskList so board and list read the same.
+            match ($this->updatedFilter) {
+                'today' => $query->where('updated_at', '>=', now()->startOfDay()),
+                'week' => $query->where('updated_at', '>=', now()->subWeek()),
+                'month' => $query->where('updated_at', '>=', now()->subMonth()),
+                'older' => $query->where('updated_at', '<', now()->subMonth()),
+                default => null,
+            };
 
             return $query;
         };
+
+        // Column visibility: a hidden column isn't just unrendered — its cards
+        // are never fetched. Bulk-status options still come from the full
+        // vocab (statusLabels), so hiding a column doesn't shrink those.
+        $visibleColumns = $this->activeSelection($this->columnFilter, $taskClass::statuses()) ?? $taskClass::statuses();
 
         $manualOrder = (bool) config('dispatch.board.manual_order', false);
 
@@ -265,9 +338,10 @@ class TaskBoard extends Component
         };
 
         // Non-done columns: the same single grouped query as before, minus
-        // whatever the done column claims below.
+        // whatever the done column claims below — restricted to the VISIBLE
+        // columns so hidden ones cost nothing.
         $nonDoneQuery = $applyScopeAndFilters(
-            $taskClass::query()->with(['labels', 'assignee'])->where('status', '!=', 'done')
+            $taskClass::query()->with(['labels', 'assignee'])->whereIn('status', array_values(array_diff($visibleColumns, ['done'])))
         );
         $byStatus = $applyColumnOrder($nonDoneQuery)->get()->groupBy('status');
 
@@ -279,7 +353,7 @@ class TaskBoard extends Component
         // still means something inside "done" too. Visibility/filters are
         // scoped identically to the non-done query above via the same closure.
         $doneLimit = (int) config('dispatch.board.done_limit', 50);
-        $hasDoneStatus = in_array('done', $taskClass::statuses(), true);
+        $hasDoneStatus = in_array('done', $visibleColumns, true);
 
         $doneTotal = 0;
         $doneItems = collect();
@@ -304,12 +378,12 @@ class TaskBoard extends Component
         $byStatus->put('done', $doneItems);
 
         return view('dispatch::livewire.task-board', [
-            'columns' => $taskClass::statuses(),
+            'columns' => $visibleColumns,
             'statusLabels' => $taskClass::statusLabels(),
             'byStatus' => $byStatus,
-            'labels' => $labelClass::orderBy('name')->get(),
-            'types' => $taskClass::types(),
-            'priorities' => $taskClass::priorities(),
+            'labels' => $labels,
+            'typeLabels' => $taskClass::typeLabels(),
+            'priorityLabels' => $taskClass::priorityLabels(),
             'doneTotal' => $doneTotal,
             'doneShowing' => $doneItems->count(),
             'doneLimit' => $doneLimit,

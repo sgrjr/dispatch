@@ -280,3 +280,144 @@ test('bulkDecline declines every selected task', function () {
     $event = $selected->fresh()->comments()->where('event_type', TaskComment::EVENT_STATUS_CHANGE)->first();
     expect($event)->not->toBeNull();
 });
+
+/*
+ * Checkbox multi-filters (HasVocabMultiFilters): [] = all (param-free URL),
+ * [''] = explicit none (still shows all), otherwise a strict vocab-ordered
+ * subset — plus the column-visibility axis and the updated activity window.
+ */
+
+test('checkbox filters default to all — tasks of every type render', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'A bug', 'type' => 'bug', 'status' => 'open']);
+    $svc->create(['title' => 'A chore', 'type' => 'chore', 'status' => 'open']);
+
+    $component = Livewire::test(TaskBoard::class);
+
+    expect($component->get('typeFilter'))->toBe([]);
+    expect($component->viewData('byStatus')->get('open'))->toHaveCount(2);
+});
+
+test('unchecking a type hides it; re-checking the last one normalizes back to the param-free all state', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'A bug', 'type' => 'bug', 'status' => 'open']);
+    $chore = $svc->create(['title' => 'A chore', 'type' => 'chore', 'status' => 'open']);
+
+    $component = Livewire::test(TaskBoard::class)->call('toggleFilter', 'typeFilter', 'bug');
+
+    // All-minus-bug, in vocab order — the stable-serialization invariant.
+    expect($component->get('typeFilter'))->toBe(array_values(array_diff(Task::types(), ['bug'])));
+    expect($component->viewData('byStatus')->get('open')->pluck('id')->all())->toBe([$chore->id]);
+
+    // Re-checking bug completes the set again -> canonical [] (URL param clears).
+    $component->call('toggleFilter', 'typeFilter', 'bug');
+    expect($component->get('typeFilter'))->toBe([]);
+    expect($component->viewData('byStatus')->get('open'))->toHaveCount(2);
+});
+
+test('unchecking every value yields the explicit-none sentinel and still shows everything', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    app(DispatchTaskService::class)->create(['title' => 'A bug', 'type' => 'bug', 'status' => 'open']);
+
+    $component = Livewire::test(TaskBoard::class)->call('selectNoneFilter', 'typeFilter');
+
+    expect($component->get('typeFilter'))->toBe(['']);
+    expect($component->viewData('byStatus')->get('open'))->toHaveCount(1);
+
+    $component->call('selectAllFilter', 'typeFilter');
+    expect($component->get('typeFilter'))->toBe([]);
+});
+
+test('URL subsets hydrate and filter; garbage and legacy scalar params degrade to showing all', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $bug = $svc->create(['title' => 'A bug', 'type' => 'bug', 'status' => 'open']);
+    $svc->create(['title' => 'A chore', 'type' => 'chore', 'status' => 'open']);
+
+    $component = Livewire::withQueryParams(['types' => ['bug']])->test(TaskBoard::class);
+    expect($component->viewData('byStatus')->get('open')->pluck('id')->all())->toBe([$bug->id]);
+
+    $component = Livewire::withQueryParams(['types' => ['nope']])->test(TaskBoard::class);
+    expect($component->viewData('byStatus')->get('open'))->toHaveCount(2);
+
+    // Pre-multi-select bookmark (?type=bug): scalar under the OLD alias — inert.
+    $component = Livewire::withQueryParams(['type' => 'bug'])->test(TaskBoard::class);
+    expect($component->viewData('byStatus')->get('open'))->toHaveCount(2);
+});
+
+test('a label subset filters via whereIn; the all state (not a whereIn of every name) keeps unlabeled tasks visible', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $blocked = $svc->create(['title' => 'Blocked work', 'status' => 'open'], ['blocked']);
+    $svc->create(['title' => 'Unlabeled work', 'status' => 'open']);
+    $svc->create(['title' => 'Deferred work', 'status' => 'open'], ['deferred']);
+
+    $component = Livewire::test(TaskBoard::class);
+    expect($component->viewData('byStatus')->get('open'))->toHaveCount(3);
+
+    // Uncheck 'deferred' -> strict subset ['blocked']: whereHas hides the
+    // deferred task AND (inherently) the unlabeled one — same semantics as the
+    // old single-label filter.
+    $component->call('toggleFilter', 'labelFilter', 'deferred');
+    expect($component->get('labelFilter'))->toBe(['blocked']);
+    expect($component->viewData('byStatus')->get('open')->pluck('id')->all())->toBe([$blocked->id]);
+});
+
+test('a type subset filters the done column through the same closure', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'Done bug', 'type' => 'bug', 'status' => 'done']);
+    $svc->create(['title' => 'Done chore', 'type' => 'chore', 'status' => 'done']);
+
+    $component = Livewire::test(TaskBoard::class)->call('toggleFilter', 'typeFilter', 'chore');
+
+    expect($component->viewData('doneTotal'))->toBe(1);
+    expect($component->viewData('byStatus')->get('done')->pluck('type')->all())->toBe(['bug']);
+});
+
+test('unchecking a column hides it from the board, and a hidden done column skips its query entirely', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'Declined thing', 'status' => 'declined']);
+    $svc->create(['title' => 'Done thing', 'status' => 'done']);
+
+    $component = Livewire::test(TaskBoard::class)->call('toggleFilter', 'columnFilter', 'declined');
+
+    expect($component->viewData('columns'))->toBe(array_values(array_diff(Task::statuses(), ['declined'])));
+
+    $component->call('toggleFilter', 'columnFilter', 'done');
+    expect($component->viewData('columns'))->not->toContain('done');
+    expect($component->viewData('doneTotal'))->toBe(0);
+});
+
+test('the board updated window filters cards by activity, cumulatively like the list', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $old = $svc->create(['title' => 'Ten days quiet', 'status' => 'open']);
+    DB::table('dispatch_tasks')->where('id', $old->id)->update(['updated_at' => now()->subDays(10)]);
+    $svc->create(['title' => 'Fresh today', 'status' => 'open']);
+
+    $component = Livewire::test(TaskBoard::class)->set('updatedFilter', 'week');
+    expect($component->viewData('byStatus')->get('open'))->toHaveCount(1);
+
+    $component->set('updatedFilter', 'month');
+    expect($component->viewData('byStatus')->get('open'))->toHaveCount(2);
+});

@@ -231,3 +231,53 @@ test('the stale filter is not offered when dispatch.staleness.enabled is false',
 
     Livewire::test(TaskList::class)->assertDontSee('Stale');
 });
+
+test('list checkbox filters mirror the board: a subset narrows, none/all show everything', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'A bug', 'type' => 'bug']);
+    $chore = $svc->create(['title' => 'A chore', 'type' => 'chore']);
+
+    $component = Livewire::test(TaskList::class);
+    expect($component->viewData('tasks')->total())->toBe(2);
+
+    $component->call('toggleFilter', 'typeFilter', 'bug');
+    expect($component->viewData('tasks')->total())->toBe(1);
+    expect($component->viewData('tasks')->pluck('id')->all())->toBe([$chore->id]);
+
+    $component->call('selectNoneFilter', 'typeFilter');
+    expect($component->get('typeFilter'))->toBe(['']);
+    expect($component->viewData('tasks')->total())->toBe(2);
+});
+
+test('a checkbox filter toggle clears the bulk selection (afterFilterChanged, not the updating() hook)', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $bug = $svc->create(['title' => 'A bug', 'type' => 'bug']);
+
+    $component = Livewire::test(TaskList::class)
+        ->set('selected', [(string) $bug->id])
+        ->call('toggleFilter', 'typeFilter', 'bug');
+
+    expect($component->get('selected'))->toBe([]);
+});
+
+test('clearFilters restores the checkbox filters to their canonical all state', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    app(DispatchTaskService::class)->create(['title' => 'A bug', 'type' => 'bug']);
+
+    $component = Livewire::test(TaskList::class)
+        ->call('toggleFilter', 'typeFilter', 'bug')
+        ->call('toggleFilter', 'priorityFilter', 'low')
+        ->call('clearFilters');
+
+    expect($component->get('typeFilter'))->toBe([]);
+    expect($component->get('priorityFilter'))->toBe([]);
+    expect($component->viewData('tasks')->total())->toBe(1);
+});

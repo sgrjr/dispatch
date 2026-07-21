@@ -3,17 +3,12 @@
         .dispatch-board-filters {
             display: flex;
             flex-wrap: wrap;
+            align-items: flex-end;
             gap: 0.75rem;
             margin-bottom: 1rem;
         }
-        .dispatch-board-filters label {
-            font-size: 0.7rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.03em;
-            color: var(--dispatch-text-muted);
-        }
-        .dispatch-board-filters select { margin-top: 0.2rem; min-width: 9rem; }
+        .dispatch-board-filters .dispatch-select { width: auto; min-width: 9rem; }
+        .dispatch-board-filters-reset { margin-left: auto; }
         .dispatch-board-bulkbar {
             display: flex;
             flex-wrap: wrap;
@@ -105,26 +100,39 @@
         .dispatch-card-meta { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
     </style>
 
-    {{-- Filter bar --}}
+    {{-- Filter bar: checkbox multi-filters (all-on by default; uncheck to
+         hide noise), column visibility, and the same cumulative activity
+         window as the list view. --}}
     <section class="dispatch-card dispatch-board-filters">
-        <label>Type
-            <select wire:model.live="typeFilter" class="dispatch-select">
-                <option value="">Any</option>
-                @foreach ($types as $t) <option value="{{ $t }}">{{ $t }}</option> @endforeach
+        <div>
+            <span class="dispatch-label">Type</span>
+            @include('dispatch::livewire.partials.filter-group', ['property' => 'typeFilter', 'options' => $typeLabels])
+        </div>
+        <div>
+            <span class="dispatch-label">Priority</span>
+            @include('dispatch::livewire.partials.filter-group', ['property' => 'priorityFilter', 'options' => $priorityLabels])
+        </div>
+        <div>
+            <span class="dispatch-label">Label</span>
+            @include('dispatch::livewire.partials.filter-group', ['property' => 'labelFilter', 'options' => $labels->pluck('name', 'name')])
+        </div>
+        <div>
+            <span class="dispatch-label">Columns</span>
+            @include('dispatch::livewire.partials.filter-group', ['property' => 'columnFilter', 'options' => $statusLabels])
+        </div>
+        <div>
+            <span class="dispatch-label">Updated</span>
+            <select wire:model.live="updatedFilter" class="dispatch-select">
+                <option value="">Any time</option>
+                <option value="today">Today</option>
+                <option value="week">Past week</option>
+                <option value="month">Past month</option>
+                <option value="older">Older</option>
             </select>
-        </label>
-        <label>Priority
-            <select wire:model.live="priorityFilter" class="dispatch-select">
-                <option value="">Any</option>
-                @foreach ($priorities as $p) <option value="{{ $p }}">{{ $p }}</option> @endforeach
-            </select>
-        </label>
-        <label>Label
-            <select wire:model.live="labelFilter" class="dispatch-select">
-                <option value="">Any</option>
-                @foreach ($labels as $l) <option value="{{ $l->name }}">{{ $l->name }}</option> @endforeach
-            </select>
-        </label>
+        </div>
+        <div class="dispatch-board-filters-reset">
+            <button type="button" wire:click="clearFilters" class="dispatch-btn is-secondary">Reset filters</button>
+        </div>
     </section>
 
     {{--
@@ -142,10 +150,12 @@
         @if ($selectMode)
             <span style="font-size: 0.75rem; color: var(--dispatch-text-muted);">{{ count($selectedIds) }} selected</span>
 
+            {{-- Full vocab (statusLabels), not $columns — hiding a column must
+                 not remove it as a bulk-status target. --}}
             <select wire:model.live="bulkStatus" class="dispatch-select">
                 <option value="">Set status…</option>
-                @foreach ($columns as $col)
-                    <option value="{{ $col }}">{{ $statusLabels[$col] ?? $col }}</option>
+                @foreach ($statusLabels as $status => $label)
+                    <option value="{{ $status }}">{{ $label }}</option>
                 @endforeach
             </select>
             <button
