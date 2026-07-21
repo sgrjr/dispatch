@@ -128,6 +128,14 @@ until the user explicitly asks to sync.
 > (each call announces `→ remote: <host>`). For local tracking during an
 > active session, pass `--local` — or end the session first
 > (`dispatch:session:end`).
+>
+> **Dropped-session caveat:** if a session died involuntarily instead
+> (mid-run 401, denied/revoked/expired), the plain verbs FAIL LOUD rather
+> than silently acting on the local DB — local data must never masquerade
+> as the remote board. For local tracking in that state: pass `--local`
+> per call, or run `dispatch:session:end` once to acknowledge the drop and
+> restore local-by-default (`dispatch:session:refresh --wait` renews the
+> session instead, if remote work should continue).
 
 When the user asks "what should I work on next", or you're about to start a
 unit of work that should be tracked end-to-end, drive Dispatch's CLI verbs in
