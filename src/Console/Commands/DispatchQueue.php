@@ -22,7 +22,7 @@ class DispatchQueue extends Command
         {--type= : Filter to a single type}
         {--label=* : Filter to tasks carrying any of these labels}
         {--limit= : Cap the number of tasks returned, top of the priority order (default: all). For the single-task case use dispatch:next.}
-        {--count : Emit counts by status (total + by_status) instead of the task list. With no --status it censuses the whole non-terminal board (open/in_progress/triage/verifying), zero-filled — an empty bucket (e.g. verifying) still prints as 0.}
+        {--count : Emit counts by status (total + by_status) instead of the task list. With no --status it censuses the actionable board (open/in_progress/triage/verifying; parked backburner and terminal done/declined excluded), zero-filled — an empty bucket (e.g. verifying) still prints as 0.}
         {--remote : Act on the configured remote agent API (the default while an agent session token is active)}
         {--local : Act on the local DB even while an agent session token is active (overrides sticky-remote)}
         {--json : Emit machine-readable JSON instead of a human table}';
@@ -69,12 +69,13 @@ class DispatchQueue extends Command
         $taskModel = config('dispatch.models.task');
 
         if ($this->option('count')) {
-            // The no-`--status` census spans the whole NON-TERMINAL board —
-            // including `verifying`, which the actionable LIST default
-            // deliberately excludes (claim only takes open/triage) — and
-            // zero-fills every bucket so an empty state prints as 0 instead of
-            // silently vanishing (W5-2). done/declined stay out so a backfilled
-            // archive doesn't pollute "backlog size".
+            // The no-`--status` census spans the ACTIONABLE board — including
+            // `verifying`, which the actionable LIST default deliberately
+            // excludes (claim only takes open/triage) — and zero-fills every
+            // bucket so an empty state prints as 0 instead of silently
+            // vanishing (W5-2). Parked `backburner` and terminal done/declined
+            // stay out so shelved work and a backfilled archive don't pollute
+            // "backlog size"; --status=backburner still yields that bucket.
             $census = ($status = $this->option('status')) ? [$status] : ['open', 'in_progress', 'triage', 'verifying'];
 
             $grouped = $taskModel::query()

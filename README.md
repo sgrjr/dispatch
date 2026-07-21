@@ -299,8 +299,11 @@ dispatch:show   <code> [--no-internal] [--json]
 dispatch:note   <code> <body> [--public] [--author=]
                 → append a comment; internal by default, --public makes it customer-visible
 
-dispatch:done   <code> [--status=done|declined|verifying] [--ref=] [--note=] [--author=]
-                → close out a task with an optional commit/PR ref and closing note
+dispatch:done   <code> [--status=done|declined|verifying|backburner] [--ref=] [--note=] [--author=]
+                → close out a task with an optional commit/PR ref and closing note;
+                  --status=backburner parks it (triaged, consciously not actionable
+                  now — or code-done but blocked on an external date) without
+                  declining; unpark later with --status=open (or triage/verifying)
 
 dispatch:pull   [--path=] [--dry-run]
                 → fetch canonical task state from a remote Dispatch install
@@ -405,9 +408,10 @@ dispatch:queue  {--status=} {--type=} {--label=*} {--limit=} {--count} {--json} 
                   --limit=N caps the rows to the top N of the priority order so
                   a triage preview needn't pull the whole backlog; --count returns
                   {total, by_status} instead of the list — with no --status it
-                  censuses the whole non-terminal board (open/in_progress/triage/
+                  censuses the actionable board (open/in_progress/triage/
                   verifying, zero-filled, so an empty verifying bucket still
-                  prints) — the true backlog size without probing --limit
+                  prints; parked backburner and terminal done/declined excluded)
+                  — the true backlog size without probing --limit
 
 dispatch:done   {code} {--status=} {--commit=} {--result=} {--result-file=}
                 {--with-metrics} {--since=} {--json} {--remote} {--local}

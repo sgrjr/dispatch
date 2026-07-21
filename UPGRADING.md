@@ -53,6 +53,26 @@ Quick diagnosis:
   directly (missing verb, unset secret, still-cached config) instead of leaving
   you to infer it from a `403`/`401`/`503`.
 
+## Unreleased — `backburner` status + multi-select board/list filters
+
+- **New default status `backburner`** sits between `verifying` and `done`:
+  parked — consciously not actionable now or anytime soon, or code-done but
+  blocked on an external date — distinct from `triage` (unprocessed) and
+  `declined` (rejected). No migration (status is a plain string), but **hosts
+  with a published `config/dispatch.php` must add `'backburner'` to
+  `workflow.statuses` themselves** — the published array wins wholesale over
+  the package default (same shallow-merge trap as the `batch` verb below), and
+  without it the board column, dropdowns, and `--status=backburner` validation
+  simply don't know the value. Park with `dispatch:done <code>
+  --status=backburner`; unpark with `--status=open` (or `triage`/`verifying`).
+  Backburner tasks are excluded from `dispatch:next`/`dispatch:queue` defaults,
+  the `--count` census, claiming, and staleness nagging.
+- **Board/list filter URLs changed shape.** The type/priority/label filters are
+  now multi-select checkbox groups, so their query params went from scalar
+  (`?type=bug`) to arrays (`?types[0]=bug&types[1]=chore`) — note the plural
+  names. Old bookmarked filter URLs aren't errors; they simply load the
+  unfiltered (all-selected) view.
+
 ## v0.6.0 — sticky remote + one-shot commissioning (client behavior changes)
 
 Two client-side defaults changed so an agent needs less ceremony (and less

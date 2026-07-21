@@ -16,7 +16,7 @@ class Task extends Model
 
     public const TYPES = ['bug', 'feature', 'chore', 'debt', 'verify'];
     public const PRIORITIES = ['blocker', 'high', 'medium', 'low'];
-    public const STATUSES = ['triage', 'open', 'in_progress', 'verifying', 'done', 'declined'];
+    public const STATUSES = ['triage', 'open', 'in_progress', 'verifying', 'backburner', 'done', 'declined'];
 
     protected $table = 'dispatch_tasks';
 

@@ -126,6 +126,10 @@ class DispatchTaskService
 
         $existing = $taskModel::query()
             ->where('exception_signature', $signature)
+            // `backburner` is deliberately inside the revivable set: an error
+            // recurring on a parked task is evidence the parking was premature,
+            // so the occurrence lands on it (no auto-unpark — a human sees the
+            // fresh event and unparks deliberately) instead of forking a dupe.
             ->whereNotIn('status', ['done', 'declined'])
             ->orderByDesc('id')
             ->first();

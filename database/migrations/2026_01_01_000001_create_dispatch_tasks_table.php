@@ -16,7 +16,7 @@ return new class extends Migration
 
             $table->string('type')->default('feature'); // bug|feature|chore|debt|verify
             $table->string('priority')->default('medium'); // blocker|high|medium|low
-            $table->string('status')->default('triage'); // triage|open|in_progress|verifying|done|declined
+            $table->string('status')->default('triage'); // triage|open|in_progress|verifying|backburner|done|declined
 
             $table->boolean('is_public')->default(false);
             $table->integer('position')->default(0);     // board ordering within a column

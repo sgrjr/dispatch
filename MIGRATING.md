@@ -141,7 +141,7 @@ Dispatch's vocab is intentionally narrow:
 | Field | Allowed values |
 |---|---|
 | `type` | `bug` · `feature` · `chore` · `debt` · `verify` |
-| `status` | `triage` · `open` · `in_progress` · `verifying` · `done` · `declined` |
+| `status` | `triage` · `open` · `in_progress` · `verifying` · `backburner` · `done` · `declined` |
 | `priority` | `blocker` · `high` · `medium` · `low` |
 
 A real `todo.md` carries far more — kinds like `BUG/NEW/INFRA/POLISH/UPGRADE/
@@ -158,11 +158,18 @@ so it's still filterable and nothing is lost:
 | kind `PERF` / `security` / `tech debt` / `UPGRADE` | `type: debt` | `kind:PERF` (etc.) |
 | kind `VERIFY` / `smoke test` | `type: verify` | `kind:VERIFY` |
 | state `PARTIAL` / `WIP` | `status: in_progress` | `state:PARTIAL` |
-| state `DEFERRED` / `wontfix` | `status: declined` (if truly dropped) | `state:DEFERRED` |
+| state `DEFERRED` | `status: backburner` (parked, not rejected) | `state:DEFERRED` |
+| state `wontfix` / truly dropped | `status: declined` | — |
 | state `DONE` / `[x]` | `status: done` | — |
 | size `S` / `M` / `L` | *(none)* | `size:M` |
 | `#area-tag` / section heading | *(none)* | `area:<tag>` |
 | `urgent` / `!!` / `(high)` | `priority: high` | — |
+
+> Before `backburner` existed, `DEFERRED` mapped to `status: declined` +
+> `state:DEFERRED` label. Already-migrated data isn't retro-fixed; to revive
+> those, run a one-shot fixup — tasks labeled `state:DEFERRED` that sit at
+> `declined` move to `backburner`:
+> `Task::whereHas('labels', fn ($q) => $q->where('name', 'state:DEFERRED'))->where('status', 'declined')->update(['status' => 'backburner']);`
 
 Labels are free-form, so `kind:*` / `state:*` / `size:*` sit right alongside your
 domain labels — a board/list filter on `kind:INFRA` then recovers the original

@@ -68,11 +68,18 @@ return [
     | for board/list ordering — follows list order). `*_labels` optionally
     | maps a raw value to its display label; leave a map empty ([]) to
     | auto-humanize instead (`in_progress` -> `In Progress`).
+    |
+    | `backburner` is the parked status: consciously judged not actionable now
+    | or anytime soon, OR actionable-but-blocked on an external event (a
+    | scheduled cutover, an ops window). Non-terminal — distinct from `triage`
+    | (unprocessed inbox) and `declined` (rejected) — and enterable from any
+    | status: triage -> backburner parks a someday item, verifying -> backburner
+    | parks code-done work awaiting its launch date.
     */
     'workflow' => [
         'types' => ['bug', 'feature', 'chore', 'debt', 'verify'],
         'priorities' => ['blocker', 'high', 'medium', 'low'],
-        'statuses' => ['triage', 'open', 'in_progress', 'verifying', 'done', 'declined'],
+        'statuses' => ['triage', 'open', 'in_progress', 'verifying', 'backburner', 'done', 'declined'],
 
         'type_labels' => [],
         'priority_labels' => [],

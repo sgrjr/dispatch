@@ -77,6 +77,7 @@ feels finished.**
 | `done` | You verified the change end-to-end yourself and it's self-contained. Still the common case — don't hedge. |
 | `--status=verifying` | Something only a human can do remains: a visual/UX check, a deploy or migration, a prod-data/credential check, high blast radius (auth, billing, data integrity), or the task asked for sign-off. **Name the exact check** in the result or a note — a bare `verifying` with no stated ask is noise. Can't articulate a check? It's `done` (or you're not finished — keep `in_progress`). |
 | `--status=declined` | Won't-do: obsolete, wrong, or solved elsewhere — say why in a note. |
+| `--status=backburner` | Real but consciously parked: not actionable now or anytime soon (someday-item out of triage), OR code-done but blocked on an external event — a launch date, an ops cutover window. Not rejection (`declined`) and not a pending human check (`verifying`) — say what unblocks it in a note. **Never self-park a commissioned task unless the commission says so.** |
 
 Your `verifying` hand-off pile: `dispatch:queue --status=verifying` (it sits
 outside the default queue view; the `--count` census always shows its size).
@@ -98,6 +99,9 @@ evidence (`file:line` + landing commit) → `done` as already-implemented.
 configured workflow status; needs the `done` scope). Self-greenlight ONLY when
 the commission explicitly delegates it; otherwise promotion is a human call —
 leave items in `triage` and ask. Never claim-then-close a task just to move it.
+Park/unpark works the same way: `--status=backburner` shelves,
+`--status=open|triage|verifying` revives — the timeline's status-change events
+say where it came from.
 
 ## Batch memorialize — one hit instead of forty (optional)
 

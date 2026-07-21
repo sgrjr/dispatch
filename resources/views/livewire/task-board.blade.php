@@ -24,7 +24,7 @@
         .dispatch-board-bulkbar select { width: auto; min-width: 9rem; }
         .dispatch-board {
             display: grid;
-            grid-template-columns: repeat(6, minmax(0, 1fr));
+            grid-template-columns: repeat({{ count($columns) }}, minmax(0, 1fr));
             gap: 0.75rem;
             align-items: start;
         }
@@ -192,7 +192,7 @@
                     @foreach ($cards as $task)
                         @php
                             $isStale = $stalenessEnabled
-                                && ! in_array($task->status, ['done', 'declined'], true)
+                                && ! in_array($task->status, ['backburner', 'done', 'declined'], true)
                                 && $task->updated_at
                                 && $task->updated_at->lt(now()->subDays($staleThresholdDays));
                         @endphp

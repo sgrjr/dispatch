@@ -200,9 +200,11 @@ parse against that instead of guessing field names from examples.
 6. **`php artisan dispatch:done <code> --commit=<sha> --result='{"tests":"passing"}'`**
    — mark the task complete once the work lands. `--commit` + `--result` are
    stored under the task's `context.result` as the audit trail back to the
-   change; always pass a commit SHA when you have one. `--status=declined` or
-   `--status=verifying` are valid alternatives to `done` when that's the actual
-   outcome. (To leave a comment, use `dispatch:note` — `done` has no note flag.)
+   change; always pass a commit SHA when you have one. `--status=declined`,
+   `--status=verifying`, or `--status=backburner` (parked/not-now — out of the
+   queue without rejecting, distinct from declined) are valid alternatives to
+   `done` when that's the actual outcome. (To leave a comment, use
+   `dispatch:note` — `done` has no note flag.)
 
    **Stamp run metrics (optional).** To memorialize what the run cost —
    tokens, cost, tool usage, duration — fold `dispatch:metrics` into the same

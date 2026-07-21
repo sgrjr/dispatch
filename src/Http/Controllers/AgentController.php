@@ -76,12 +76,13 @@ class AgentController extends Controller
 
         // ?count — return {total, by_status} instead of the task list, so an
         // agent learns the true backlog size without probing --limit (W4-4).
-        // The no-`status` census spans the whole NON-TERMINAL board — including
+        // The no-`status` census spans the ACTIONABLE board — including
         // `verifying`, which the actionable LIST default deliberately excludes
         // (claim only takes open/triage) — and zero-fills every bucket so an
         // empty state reports 0 instead of silently vanishing (W5-2).
-        // done/declined stay out so a backfilled archive doesn't pollute
-        // "backlog size".
+        // Parked `backburner` and terminal done/declined stay out so shelved
+        // work and a backfilled archive don't pollute "backlog size";
+        // ?status=backburner still yields that bucket explicitly.
         if ($request->boolean('count')) {
             $census = ($status = $request->query('status'))
                 ? [$status]

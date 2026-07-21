@@ -79,6 +79,7 @@ If unsure what the code prefix is, run `php artisan dispatch:queue` (or
 | `[ ]` under "In progress" / "Doing", or has progress notes | `in_progress` | `in_progress` |
 | `[ ]` plain / under "Backlog" / "New" / "Todo" | `triage` (default) | *(omit — don't move it)* |
 | "needs verify" / "to verify" | `verifying` | `verifying` |
+| "someday" / "icebox" / "parked" / "deferred" / "wishlist" | `backburner` | `backburner` |
 | "declined" / "won't do" / "wontfix" | `declined` | `declined` |
 
 **Key rule:** for an **`update`**, if you can't tell the status changed, **omit

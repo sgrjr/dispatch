@@ -253,7 +253,7 @@ class TaskList extends Component
             return false;
         }
 
-        if (in_array($task->status, ['done', 'declined'], true) || $task->updated_at === null) {
+        if (in_array($task->status, ['backburner', 'done', 'declined'], true) || $task->updated_at === null) {
             return false;
         }
 
@@ -283,7 +283,7 @@ class TaskList extends Component
 
         if ($this->statusFilter === 'stale' && $staleEnabled) {
             $thresholdDays = (int) config('dispatch.staleness.threshold_days', 42);
-            $query->whereNotIn('status', ['done', 'declined'])
+            $query->whereNotIn('status', ['backburner', 'done', 'declined'])
                 ->where('updated_at', '<', now()->subDays($thresholdDays));
         } elseif (in_array($this->statusFilter, $taskClass::statuses(), true)) {
             $query->where('status', $this->statusFilter);
