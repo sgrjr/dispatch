@@ -119,7 +119,7 @@ class AgentController extends Controller
         $taskModel = config('dispatch.models.task');
 
         $task = $taskModel::query()
-            ->with(['labels', 'submitter', 'assignee', 'comments.user'])
+            ->with(['labels', 'submitter', 'assignee', 'comments.user', 'attachments', 'comments.attachments'])
             ->where('code', $code)
             ->first();
 
@@ -150,7 +150,7 @@ class AgentController extends Controller
         // needs the human's direction (which lives in the description/comments,
         // invisible in the summary shape that next/queue return). Load the
         // relations the full presenter reads so it doesn't lazy-load per row.
-        $task?->load('labels', 'submitter', 'assignee', 'comments.user');
+        $task?->load('labels', 'submitter', 'assignee', 'comments.user', 'attachments', 'comments.attachments');
 
         // The claim timestamp rides top-level (beside `task`) for zero-parse
         // reuse as `--since` on the closing `done --with-metrics`. It also

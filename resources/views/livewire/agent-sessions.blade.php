@@ -26,6 +26,9 @@
         }
         .dispatch-agent-confirm { font-size: 0.72rem; color: var(--dispatch-text-muted); margin-top: 0.3rem; }
         .dispatch-agent-actions { display: flex; gap: 0.5rem; align-items: flex-start; }
+        .dispatch-agent-ttl { display: flex; flex-direction: column; gap: 0.2rem; }
+        .dispatch-agent-ttl label { font-size: 0.72rem; color: var(--dispatch-text-muted); }
+        .dispatch-agent-ttl .dispatch-select { width: auto; font-size: 0.78rem; padding: 0.35rem 0.5rem; }
     </style>
 
     <section class="dispatch-card">
@@ -55,6 +58,16 @@
                         </div>
                     </div>
                     <div class="dispatch-agent-actions">
+                        <div class="dispatch-agent-ttl">
+                            <label for="ttl-{{ $session->id }}">session length</label>
+                            <select id="ttl-{{ $session->id }}" wire:model="approveTtl.{{ $session->id }}" class="dispatch-select">
+                                <option value="">Default ({{ round(((int) config('dispatch.agent.session_ttl', 10800)) / 3600, 1) }}h)</option>
+                                <option value="3600">1 hour</option>
+                                <option value="10800">3 hours</option>
+                                <option value="28800">8 hours</option>
+                                <option value="86400">24 hours</option>
+                            </select>
+                        </div>
                         <button type="button" wire:click="approve({{ $session->id }})" wire:confirm="Approve this agent session?" class="dispatch-btn">Approve</button>
                         <button type="button" wire:click="deny({{ $session->id }})" class="dispatch-btn is-secondary">Deny</button>
                     </div>

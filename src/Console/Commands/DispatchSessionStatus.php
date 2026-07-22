@@ -4,14 +4,23 @@ namespace Sgrjr\Dispatch\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 
 /**
- * Poll a previously-requested agent session for approval (§20 Phase 1). The
- * poll is device_code-authed (RFC 8628), NOT bearer — there is no session
- * token until this succeeds — so it is built directly with Http rather than
- * TalksToAgentApi::agentGet (which sends a bearer, not a device_code).
+ * Probe the local agent-session state — and, when a request is still pending,
+ * poll the remote for approval (§20 Phase 1). This is a THREE-STATE local probe
+ * that always exits 0 except when the remote is unconfigured or an actual poll
+ * settles as denied/revoked/expired:
+ *   ACTIVE  — a token is stored: report it from the dotfile, NO HTTP call.
+ *   PENDING — public_id+device_code but no token: run the approval poll below.
+ *   DROPPED — a drop marker but no token: name refresh / session:end.
+ *   NONE    — nothing at all: name dispatch:session:request.
+ *
+ * The pending poll is device_code-authed (RFC 8628), NOT bearer — there is no
+ * session token until it succeeds — so it is built directly with Http rather
+ * than TalksToAgentApi::agentGet (which sends a bearer, not a device_code).
  *
  * By default it polls ONCE and exits (re-run it, or wire it to a cron). Pass
  * `--wait[=secs]` to poll IN-PROCESS — sleep + retry while `pending`, up to the
@@ -37,16 +46,38 @@ class DispatchSessionStatus extends Command
             return self::FAILURE;
         }
 
-        $data = $this->agentTokenFile();
+        $data = $this->agentTokenFile() ?? [];
         $publicId = $data['public_id'] ?? null;
         $deviceCode = $data['device_code'] ?? null;
 
-        if (! $publicId || ! $deviceCode) {
-            $this->error('No pending agent session found. Run `dispatch:session:request` first.');
-
-            return self::FAILURE;
+        // STATE: ACTIVE. A stored token means the session is already commissioned.
+        // After approval the dotfile RETAINS public_id+device_code beside the
+        // token, so this branch must sit ABOVE the pending poll — otherwise an
+        // active session would keep re-polling the (now approved) request. This
+        // is a purely LOCAL probe: liveness is read off the stored expires_at, no
+        // HTTP round-trip (the server stays authoritative for the verbs).
+        if (! empty($data['token'])) {
+            return $this->reportActive($data);
         }
 
+        // STATE: DROPPED or NONE. No pending request (public_id/device_code) and
+        // no token. A drop marker turns "token gone" into a first-class state
+        // (why it died, and the identity to renew); its absence is a clean NONE.
+        // Either way this is a local report that exits 0 (config failure already
+        // returned above) — name the next verb, don't error.
+        if (! $publicId || ! $deviceCode) {
+            if (($drop = $this->sessionDropMarker()) !== null) {
+                return $this->reportDropped($drop);
+            }
+
+            $this->info('No active token and no pending agent session. Request one with `dispatch:session:request` (add --wait to request + collect the token in one command).');
+
+            return self::SUCCESS;
+        }
+
+        // STATE: PENDING — a request is out but not yet approved. The existing
+        // device_code poll/settle loop owns this (still exits 1 on denied /
+        // revoked / expired via settle()).
         $budget = $this->resolveWaitBudget();
         $deadline = microtime(true) + $budget;
         $announced = false;
@@ -169,6 +200,62 @@ class DispatchSessionStatus extends Command
 
                 return self::FAILURE;
         }
+    }
+
+    /**
+     * STATE: ACTIVE. Report a stored token entirely from the dotfile — NO HTTP.
+     * The token's own expires_at tells us liveness; when it's past, name the
+     * clean renewal (the server would 401 the next verb otherwise).
+     *
+     * @param  array<string,mixed>  $data  the token dotfile contents
+     */
+    private function reportActive(array $data): int
+    {
+        $name = $data['agent_name'] ?? 'agent';
+        $expiresAt = $data['expires_at'] ?? null;
+        $storedAt = $data['stored_at'] ?? null;
+
+        $this->info("Active agent session: {$name} (token stored locally).");
+        if (is_string($storedAt) && $storedAt !== '') {
+            $this->line("  Approved / token stored: {$storedAt}");
+        }
+
+        $past = false;
+        if (is_string($expiresAt) && $expiresAt !== '') {
+            try {
+                $past = Carbon::parse($expiresAt)->isPast();
+            } catch (\Throwable) {
+                $past = false;
+            }
+            $this->line("  Expires: {$expiresAt}".($past ? ' (past)' : ''));
+        }
+
+        if ($past) {
+            $this->warn('This token is past its expires_at — the server will likely 401 on the next verb. Renew cleanly with `dispatch:session:refresh --wait` before it interrupts the loop.');
+        } else {
+            $this->line('Session is live — run the verbs (sticky-remote targets production while active), then close out with `dispatch:session:end`.');
+        }
+
+        return self::SUCCESS;
+    }
+
+    /**
+     * STATE: DROPPED. A drop marker with no live token — the session died
+     * involuntarily (revoked / expired / superseded). Name both recoveries:
+     * refresh renews the same identity; session:end acknowledges and works local.
+     *
+     * @param  array<string,mixed>  $drop  the drop marker contents
+     */
+    private function reportDropped(array $drop): int
+    {
+        $reason = $drop['reason'] ?? 'dropped';
+        $at = $drop['at'] ?? 'unknown time';
+
+        $this->info("Agent session dropped — {$reason} ({$at}). No active token.");
+        $this->line('  renew (a human approves again, same identity):  <fg=gray>php artisan dispatch:session:refresh --wait</>');
+        $this->line('  acknowledge and work locally:                   <fg=gray>php artisan dispatch:session:end</>');
+
+        return self::SUCCESS;
     }
 
     // --wait budget resolution lives in TalksToAgentApi::resolveWaitBudget(),

@@ -228,7 +228,7 @@ test('dispatch:done --json emits a TaskPresenter summary', function () {
         ->and($decoded['labels'])->toBe(['area:api'])
         ->and(array_keys($decoded))->toEqual([
             'code', 'title', 'type', 'priority', 'status', 'is_public',
-            'labels', 'comment_count', 'due_at', 'dedupe_key', 'submitter', 'assignee',
+            'labels', 'comment_count', 'attachment_count', 'due_at', 'dedupe_key', 'submitter', 'assignee',
             'created_at', 'updated_at',
         ]);
 });
@@ -760,7 +760,8 @@ test('dispatch:claim prints claimed_at and the pre-filled closing command', func
 
     expect(dispatchJson($out)['code'])->toBe($task->code)
         ->and($out)->toContain('claimed_at: ')
-        ->and($out)->toContain("dispatch:done {$task->code} --status=done|verifying")
+        ->and($out)->toContain("dispatch:done {$task->code} --status=<done|verifying>")
+        ->and($out)->toContain('--commit=<sha>')
         ->and($out)->toContain('--with-metrics --since="');
 });
 
@@ -773,4 +774,123 @@ test('dispatch:done --remote without --with-metrics prints the metrics tip', fun
     Artisan::call('dispatch:done', ['code' => 'TASK-906', '--remote' => true]);
 
     expect(Artisan::output())->toContain('tip: no metrics on this close');
+});
+
+// --- W7-3: done --with-metrics prints an "attached" receipt on the side channel
+
+/**
+ * A one-record main transcript (a single terminal assistant snapshot inside the
+ * window) — enough for AgentMetrics::collect to locate a transcript and count
+ * non-zero tokens. Inlined here rather than leaning on MetricsTest's helpers.
+ */
+function writeAgentCliTranscript(string $path): void
+{
+    file_put_contents($path, json_encode([
+        'type' => 'assistant',
+        'timestamp' => '2026-01-01T00:10:00Z',
+        'uuid' => 'acli-1',
+        'message' => [
+            'role' => 'assistant',
+            'id' => 'msg_A',
+            'model' => 'claude-opus-4-8',
+            'stop_reason' => 'tool_use',
+            'content' => [['type' => 'tool_use', 'id' => 'toolu_1', 'name' => 'Read', 'input' => []]],
+            'usage' => [
+                'input_tokens' => 50, 'output_tokens' => 100,
+                'cache_read_input_tokens' => 500, 'cache_creation_input_tokens' => 1000,
+            ],
+        ],
+    ])."\n");
+}
+
+test('dispatch:done --with-metrics prints the metrics-attached receipt (local)', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'close with receipt', 'status' => 'in_progress']);
+
+    $main = sys_get_temp_dir().'/dispatch-agentcli-'.uniqid().'.jsonl';
+    writeAgentCliTranscript($main);
+
+    $exit = Artisan::call('dispatch:done', [
+        'code' => $task->code,
+        '--commit' => 'abc1234',
+        '--with-metrics' => true,
+        '--since' => '2026-01-01T00:00:00Z',
+        '--transcript' => $main,
+    ]);
+    $out = Artisan::output(); // BufferedOutput::fetch() clears — read once.
+    @unlink($main);
+
+    expect($exit)->toBe(0)
+        ->and($out)->toContain('task metrics attached →')
+        ->and($out)->toContain('window basis: since-option');
+});
+
+test('dispatch:done --with-metrics with no locatable transcript does NOT print the receipt', function () {
+    // Force the locator to find nothing: no --transcript, and the fallback
+    // discovery paths point at directories that do not exist (the default root
+    // resolves to a real ~/.claude/projects on a dev box, so it must be pinned).
+    config([
+        'dispatch.metrics.session_file' => sys_get_temp_dir().'/dispatch-nofile-'.uniqid().'.json',
+        'dispatch.metrics.transcript_root' => sys_get_temp_dir().'/dispatch-noroot-'.uniqid(),
+    ]);
+
+    $task = app(DispatchTaskService::class)->create(['title' => 'no transcript', 'status' => 'in_progress']);
+
+    $exit = Artisan::call('dispatch:done', [
+        'code' => $task->code,
+        '--commit' => 'abc1234',
+        '--with-metrics' => true,
+        '--since' => '2026-01-01T00:00:00Z',
+        '--project-dir' => sys_get_temp_dir().'/dispatch-noproj-'.uniqid(),
+    ]);
+    $out = Artisan::output(); // BufferedOutput::fetch() clears — read once.
+
+    expect($exit)->toBe(0)
+        ->and($out)->not->toContain('task metrics attached')
+        ->and($out)->toContain('No transcript located for --with-metrics');
+});
+
+test('dispatch:done --remote --with-metrics prints the receipt and posts result.metrics', function () {
+    seedAgentToken();
+    Http::fake([
+        'agent.example.test/*' => Http::response(['task' => ['code' => 'TASK-907', 'status' => 'done']], 200),
+    ]);
+
+    $main = sys_get_temp_dir().'/dispatch-agentcli-'.uniqid().'.jsonl';
+    writeAgentCliTranscript($main);
+
+    $exit = Artisan::call('dispatch:done', [
+        'code' => 'TASK-907',
+        '--commit' => 'deadbee',
+        '--with-metrics' => true,
+        '--since' => '2026-01-01T00:00:00Z',
+        '--transcript' => $main,
+        '--remote' => true,
+    ]);
+    $out = Artisan::output(); // BufferedOutput::fetch() clears — read once.
+    @unlink($main);
+
+    expect($exit)->toBe(0)
+        ->and($out)->toContain('task metrics attached →');
+
+    // The receipt is a side-channel echo — the posted payload still carries the
+    // metrics under result.metrics (the panel's key-path), and stdout is clean JSON.
+    Http::assertSent(function ($request) {
+        return $request->method() === 'POST'
+            && str_contains($request->url(), '/api/dispatch/agent/done')
+            && ($request->data()['result']['metrics']['tokens']['total'] ?? 0) > 0;
+    });
+});
+
+test('dispatch:claim --json local decodes cleanly with the attachment relations loaded', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'bridge me', 'status' => 'open']);
+
+    Artisan::call('dispatch:claim', ['--json' => true]);
+    $out = Artisan::output();
+
+    // The loadMissing() now pulls 'attachments' + 'comments.attachments' too;
+    // assert at the relation level (the presenter's `attachments` key contract
+    // belongs to the sibling worker) — the JSON must still decode as the claimed task.
+    $decoded = dispatchJson($out);
+    expect($decoded)->toBeArray()
+        ->and($decoded['code'])->toBe($task->code);
 });

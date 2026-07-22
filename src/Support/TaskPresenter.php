@@ -3,6 +3,7 @@
 namespace Sgrjr\Dispatch\Support;
 
 use Sgrjr\Dispatch\Models\Task;
+use Sgrjr\Dispatch\Models\TaskAttachment;
 use Sgrjr\Dispatch\Models\TaskComment;
 
 /**
@@ -37,6 +38,12 @@ class TaskPresenter
             // shape (GAP 2c): a count of human comments (event_type=comment),
             // NOT system timeline events. > 0 means run `show` before claiming.
             'comment_count' => self::commentCount($task),
+            // Task-level attachment count on the SUMMARY shape (W8-6): >0 means a
+            // human attached evidence (a screenshot, a log) the JSON API cannot
+            // deliver — the binaries live on a private, auth-gated disk. Treat it
+            // as a signal to run `show` and, if you need the content, ask for a
+            // transcription.
+            'attachment_count' => self::attachmentCount($task),
             'due_at' => optional($task->due_at)->toIso8601String(),
             'dedupe_key' => $task->dedupe_key,
             // Guard on the FK before touching the relation: an agent/CLI task has
@@ -51,6 +58,17 @@ class TaskPresenter
         if ($full) {
             $data['description'] = $task->description;
             $data['context'] = $task->context;
+            // Task-level attachment metadata (W8-6): existence SIGNALS only — there
+            // is no fetch URL because binaries do not travel the agent JSON API
+            // (private disk, auth-gated streaming). A human who attached a
+            // screenshot reasonably assumes the agent saw it; surface it so the
+            // agent can ask for a transcription rather than silently proceeding.
+            $data['attachments'] = $task->attachments->map(fn (TaskAttachment $a) => [
+                'filename' => $a->original_name,
+                'mime' => $a->mime_type,
+                'size_bytes' => $a->size_bytes,
+                'is_image' => (bool) $a->is_image,
+            ])->values()->all();
             $data['comments'] = $task->comments->map(fn (TaskComment $c) => [
                 'id' => $c->id,
                 'event_type' => $c->event_type,
@@ -58,6 +76,9 @@ class TaskPresenter
                 'author' => $c->user_id ? self::userRef($c->user) : null,
                 'body' => $c->body,
                 'meta' => $c->meta,
+                // Per-comment attachment count (W8-6): same existence signal at the
+                // comment grain — a human may hang evidence off a specific reply.
+                'attachment_count' => self::commentAttachmentCount($c),
                 'created_at' => optional($c->created_at)->toIso8601String(),
             ])->values()->all();
         }
@@ -96,6 +117,7 @@ class TaskPresenter
                 'is_public' => 'bool',
                 'labels' => 'string[]',
                 'comment_count' => 'int',   // human comments (event_type=comment); >0 → run `show` for direction
+                'attachment_count' => 'int', // task-level; >0 = a human attached evidence the API cannot deliver — ask for a transcription
                 'due_at' => 'iso8601|null',
                 'dedupe_key' => 'string|null',
                 'submitter' => 'string|int|null',
@@ -106,7 +128,16 @@ class TaskPresenter
             'full_adds' => [
                 'description' => 'string|null',
                 'context' => 'object|null',
-                'comments' => '[{id:int, event_type:string, is_internal:bool, author:string|int|null, body:string, meta:object|null, created_at:iso8601}]',
+                'attachments' => '[{filename, mime, size_bytes, is_image:bool}] — metadata SIGNALS only: no fetch URL, binaries do not travel the agent API',
+                'comments' => '[{id:int, event_type:string, is_internal:bool, author:string|int|null, body:string, meta:object|null, attachment_count:int, created_at:iso8601}]',
+            ],
+            // Close conventions (§17C / done verb): what a completed task stores
+            // and the recommended way to record HOW it resolved, so the board can
+            // measure pre-resolved briefs (built vs. already-implemented/obsolete).
+            'done' => [
+                'commit' => 'sha stored at context.result.commit',
+                'result' => 'object stored at context.result (a new close replaces it; metrics accumulate)',
+                'resolution' => 'recommended result key on close: result.resolution = built | already-implemented | obsolete (free-form allowed) — records HOW the task resolved, so the board can measure pre-resolved briefs',
             ],
             // The `dispatch:batch` / POST agent/batch manifest — apply a whole
             // run of ops in one transaction. Additive + server-bounded: `add`
@@ -226,6 +257,44 @@ class TaskPresenter
         return (int) $task->comments()
             ->where('event_type', TaskComment::EVENT_COMMENT)
             ->count();
+    }
+
+    /**
+     * Number of attachments on the task (W8-6) — the "did a human attach evidence
+     * the JSON API can't hand me?" signal. Mirrors {@see commentCount()}'s 3-tier
+     * preference to keep collections off the N+1 path (there is no event_type
+     * filter — every attachment counts):
+     *   1. an eager `->withCount('attachments as attachment_count')` (loaded by
+     *      DispatchTaskService::eagerForRead on the next/queue query paths);
+     *   2. the already-loaded `attachments` relation — counted in memory;
+     *   3. a single COUNT query as a fallback (single-task summaries only).
+     */
+    protected static function attachmentCount(Task $task): int
+    {
+        $attrs = $task->getAttributes();
+        if (array_key_exists('attachment_count', $attrs)) {
+            return (int) $attrs['attachment_count'];
+        }
+
+        if ($task->relationLoaded('attachments')) {
+            return $task->attachments->count();
+        }
+
+        return (int) $task->attachments()->count();
+    }
+
+    /**
+     * Number of attachments on a single comment (W8-6). The claim/show paths eager
+     * `comments.attachments`, so the loaded-relation branch wins and there is no
+     * N+1; the count-query branch is the single-comment fallback only.
+     */
+    protected static function commentAttachmentCount(TaskComment $comment): int
+    {
+        if ($comment->relationLoaded('attachments')) {
+            return $comment->attachments->count();
+        }
+
+        return (int) $comment->attachments()->count();
     }
 
     /**

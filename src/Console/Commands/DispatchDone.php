@@ -86,6 +86,7 @@ class DispatchDone extends Command
         // touches the local DB, so a remote task can't use it — folding into the
         // closing result does. Status-agnostic on purpose: `done` OR `verifying`
         // both mean "agent finished, about to release the token — stamp now".
+        $metrics = null;
         if ($this->option('with-metrics')) {
             [$metrics, $metricsErr] = $this->collectMetrics($locator);
             if ($metricsErr !== null) {
@@ -117,6 +118,8 @@ class DispatchDone extends Command
             if (! $this->option('with-metrics')) {
                 $this->sideNote('tip: no metrics on this close — metrics ride EVERY done: add --with-metrics --since=<claimed_at from claim> so this task shows its own run cost. (Session totals still land automatically at dispatch:session:end.)');
             }
+
+            $this->emitMetricsReceipt($metrics);
 
             return self::SUCCESS;
         }
@@ -150,6 +153,8 @@ class DispatchDone extends Command
             $tasks->recordResult($task, $result ?? [], $commit);
         }
 
+        $this->emitMetricsReceipt($metrics);
+
         if ($this->option('json')) {
             $this->line(json_encode(TaskPresenter::toArray($task->fresh(), false), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
@@ -159,6 +164,24 @@ class DispatchDone extends Command
         $this->info("{$task->code} -> {$status}.");
 
         return self::SUCCESS;
+    }
+
+    /**
+     * A positive "task metrics attached" receipt on the STDERR side channel
+     * (keeps --json stdout contract-pure), mirroring session:end's summaryLine
+     * receipt. Fires only when metrics were actually computed from a LOCATED
+     * transcript: a no-transcript run yields an all-zero object and already
+     * warned in collectMetrics(), so an "attached" line there would be a lie.
+     *
+     * @param  array<string,mixed>|null  $metrics
+     */
+    private function emitMetricsReceipt(?array $metrics): void
+    {
+        if (! $this->option('with-metrics') || $metrics === null || $metrics['transcript']['main'] === null) {
+            return;
+        }
+
+        $this->sideNote('task metrics attached → '.AgentMetrics::summaryLine($metrics).' · window basis: '.$metrics['window']['basis']);
     }
 
     /**

@@ -27,9 +27,7 @@
                             <span class="dispatch-badge is-{{ $task->priority }}">{{ $task->priority }}</span>
                             <span class="dispatch-badge">{{ $task->type }}</span>
                             <span class="dispatch-badge is-info">{{ $statusLabels[$task->status] ?? $task->status }}</span>
-                            @foreach ($task->labels as $label)
-                                <span class="dispatch-badge" style="background-color: {{ $label->color ?: '#94a3b8' }}; color:#fff;">{{ $label->name }}</span>
-                            @endforeach
+                            @include('dispatch::livewire.partials.label-chips', ['labels' => $task->labels, 'context' => 'row'])
                         </div>
                     </div>
                     <div class="dispatch-list-side">

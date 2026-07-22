@@ -19,6 +19,17 @@ use Sgrjr\Dispatch\Services\AgentSessionService;
  */
 class AgentSessions extends Component
 {
+    /**
+     * Per-approval session TTL (seconds), keyed by session id — the approver
+     * right-sizes the window per commission (short for an experiment, long for
+     * an overnight run); the config default is just the pre-selected option.
+     * Livewire dot-notation binds each row's select as `approveTtl.{id}`; an
+     * unset key (select untouched) falls back to the service's config default.
+     *
+     * @var array<int,string>
+     */
+    public array $approveTtl = [];
+
     public function mount(): void
     {
         if (! app(DispatchGate::class)->isStaff(Auth::user())) {
@@ -34,7 +45,11 @@ class AgentSessions extends Component
 
         $session = AgentSession::query()->findOrFail($id);
 
-        app(AgentSessionService::class)->approve($session, (int) Auth::id());
+        // Empty/untouched select ('' → 0) collapses to null, letting the service
+        // apply its config default; any preset passes straight through as the TTL.
+        $ttl = (int) ($this->approveTtl[$id] ?? 0) ?: null;
+
+        app(AgentSessionService::class)->approve($session, (int) Auth::id(), $ttl);
     }
 
     public function deny(int $id): void

@@ -17,6 +17,31 @@
             margin-bottom: 1rem;
         }
         .dispatch-board-bulkbar select { width: auto; min-width: 9rem; }
+        .dispatch-board-focusbar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.6rem;
+            margin-bottom: 1rem;
+        }
+        .dispatch-board-focusbar .dispatch-select { width: auto; min-width: 9rem; }
+        .dispatch-focus-save { display: flex; align-items: center; gap: 0.4rem; }
+        .dispatch-focus-save .dispatch-input { width: auto; min-width: 12rem; }
+        .dispatch-link {
+            font-size: 0.78rem;
+            color: var(--dispatch-accent);
+            text-decoration: none;
+        }
+        .dispatch-link:hover { text-decoration: underline; }
+        .dispatch-swimlane-toggle { margin-left: auto; }
+        .dispatch-swimlane-head {
+            margin: 1.25rem 0 0.35rem;
+            font-size: 0.72rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--dispatch-text-muted);
+        }
         .dispatch-board {
             display: grid;
             grid-template-columns: repeat({{ count($columns) }}, minmax(0, 1fr));
@@ -98,6 +123,9 @@
         .dispatch-card-code { font-weight: 700; color: var(--dispatch-accent); font-size: 0.72rem; }
         .dispatch-card-title { margin: 0.3rem 0 0.4rem; color: var(--dispatch-text); }
         .dispatch-card-meta { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+        /* Elevated label chips sit tight on the card, just under the title. */
+        .dispatch-card-chips { display: flex; flex-wrap: wrap; gap: 0.25rem; margin: 0 0 0.35rem; }
+        .dispatch-card-chips .dispatch-badge { font-size: 0.66rem; padding: 0.05rem 0.4rem; }
     </style>
 
     {{-- Filter bar: checkbox multi-filters (all-on by default; uncheck to
@@ -114,7 +142,7 @@
         </div>
         <div>
             <span class="dispatch-label">Label</span>
-            @include('dispatch::livewire.partials.filter-group', ['property' => 'labelFilter', 'options' => $labels->pluck('name', 'name')])
+            @include('dispatch::livewire.partials.filter-group-grouped', ['property' => 'labelFilter', 'label' => 'Label', 'groups' => $labelFilterGroups])
         </div>
         <div>
             <span class="dispatch-label">Due</span>
@@ -137,6 +165,32 @@
         <div class="dispatch-board-filters-reset">
             <button type="button" wire:click="clearFilters" class="dispatch-btn is-secondary">Reset filters</button>
         </div>
+    </section>
+
+    {{--
+        Focus bar (W8-2 / W8-5): the steering-lens switcher, a "save current
+        filters as a Focus" form, a guarded link to the manage-focuses page,
+        and the swimlanes view toggle. A Focus narrows BOTH board queries when
+        selected; swimlanes is a pure view mode (see the board body below).
+    --}}
+    <section class="dispatch-card dispatch-board-focusbar">
+        <div>
+            <span class="dispatch-label">Focus</span>
+            @include('dispatch::livewire.partials.focus-switcher', ['focuses' => $focuses])
+        </div>
+
+        <form wire:submit="saveCurrentAsFocus" class="dispatch-focus-save">
+            <input type="text" wire:model="newFocusName" class="dispatch-input" placeholder="Save current filters as…" aria-label="New focus name">
+            <button type="submit" class="dispatch-btn is-secondary">Save focus</button>
+        </form>
+
+        @if (\Illuminate\Support\Facades\Route::has(config('dispatch.routes.name_prefix', 'dispatch.').'focuses'))
+            <a href="{{ route(config('dispatch.routes.name_prefix', 'dispatch.').'focuses') }}" class="dispatch-link">Manage focuses</a>
+        @endif
+
+        <button type="button" wire:click="$toggle('swimlanes')" class="dispatch-btn is-secondary dispatch-swimlane-toggle">
+            {{ $swimlanes ? 'Lanes: on' : 'Lanes: off' }}
+        </button>
     </section>
 
     {{--
@@ -182,78 +236,96 @@
     </section>
 
     {{--
-        Board root: dispatch.js scopes its delegated dragstart/dragover/drop
-        listeners to `[data-dispatch-board]` and resolves the owning Livewire
-        component via the nearest `[wire:id]` ancestor (this root element),
-        so no per-card/per-column rebinding is needed after Livewire morphs
-        the DOM on re-render.
-    --}}
-    <div class="dispatch-board" data-dispatch-board style="margin-top: 1rem;">
-        @foreach ($columns as $col)
-            @php $cards = $byStatus->get($col, collect()); @endphp
-            <section class="dispatch-column">
-                <header class="dispatch-column-head">
-                    <span>{{ $statusLabels[$col] ?? $col }}</span>
-                    <span class="dispatch-column-count">
-                        @if ($col === 'done' && $doneTotal > $doneShowing)
-                            {{ $doneShowing }} / {{ $doneTotal }}
-                        @else
-                            {{ $cards->count() }}
-                        @endif
-                    </span>
-                </header>
-                <ul class="dispatch-column-list" data-dispatch-column data-status="{{ $col }}">
-                    @foreach ($cards as $task)
-                        @php
-                            $isStale = $stalenessEnabled
-                                && ! in_array($task->status, ['backburner', 'done', 'declined'], true)
-                                && $task->updated_at
-                                && $task->updated_at->lt(now()->subDays($staleThresholdDays));
-                        @endphp
-                        <li
-                            class="dispatch-card @if ($selectMode) is-select-mode @endif"
-                            draggable="{{ $selectMode ? 'false' : 'true' }}"
-                            data-dispatch-card
-                            data-task-id="{{ $task->id }}"
-                            wire:key="board-card-{{ $task->id }}"
-                        >
-                            <div class="dispatch-card-head">
-                                @if ($selectMode)
-                                    <input
-                                        type="checkbox"
-                                        class="dispatch-card-select"
-                                        wire:model.live="selectedIds"
-                                        value="{{ $task->id }}"
-                                        draggable="false"
-                                    >
-                                @endif
-                                <a href="{{ route('dispatch.show', $task) }}" class="dispatch-card-code">{{ $task->code }}</a>
-                                <span class="dispatch-badge is-{{ $task->priority }}">{{ $task->priority }}</span>
-                            </div>
-                            <p class="dispatch-card-title">{{ \Illuminate\Support\Str::limit($task->title, 90) }}</p>
-                            <div class="dispatch-card-meta">
-                                <span class="dispatch-badge">{{ $task->type }}</span>
-                                @if ($task->is_public)
-                                    <span class="dispatch-badge is-success">public</span>
-                                @endif
-                                @if ($isStale)
-                                    <span class="dispatch-badge is-warning" title="No update in over {{ $staleThresholdDays }} days">stale</span>
-                                @endif
-                                @include('dispatch::livewire.partials.due-badge', ['task' => $task])
-                                @if ($task->assignee)
-                                    <span style="font-size: 0.7rem; color: var(--dispatch-text-muted);">{{ $task->assignee->name }}</span>
-                                @endif
-                            </div>
-                        </li>
-                    @endforeach
-                </ul>
+        Board body. Swimlanes (W8-5) render one grid per elevated lane, each
+        headed by the lane name ('—' = no elevated label, sorted last); off,
+        $laneRows is a single unlabeled row so this exact grid renders once,
+        byte-identical to the pre-lanes board.
 
-                @if ($col === 'done' && $doneLimit > 0 && $doneTotal > $doneLimit)
-                    <button type="button" wire:click="toggleShowAllDone" class="dispatch-btn is-secondary dispatch-column-loadmore">
-                        {{ $showAllDone ? 'Show recent only' : 'Load all ('.$doneTotal.')' }}
-                    </button>
-                @endif
-            </section>
-        @endforeach
-    </div>
+        dispatch.js scopes its delegated dragstart/dragover/drop listeners to
+        `[data-dispatch-board]` and resolves the owning Livewire component via
+        the nearest `[wire:id]` ancestor, so no per-card/per-column rebinding is
+        needed after a morph. In swimlane mode cards render draggable="false"
+        (lane-relative drops have no meaning), so DnD is inert there without
+        touching dispatch.js.
+    --}}
+    @foreach ($laneRows as $laneRow)
+        @if ($laneRow['label'] !== null)
+            <h3 class="dispatch-swimlane-head">{{ $laneRow['label'] }}</h3>
+        @endif
+        @php $laneStatus = $laneRow['byStatus']; @endphp
+        <div class="dispatch-board" data-dispatch-board style="margin-top: 1rem;">
+            @foreach ($columns as $col)
+                @php $cards = $laneStatus->get($col, collect()); @endphp
+                <section class="dispatch-column">
+                    <header class="dispatch-column-head">
+                        <span>{{ $statusLabels[$col] ?? $col }}</span>
+                        <span class="dispatch-column-count">
+                            @if (! $swimlanes && $col === 'done' && $doneTotal > $doneShowing)
+                                {{ $doneShowing }} / {{ $doneTotal }}
+                            @else
+                                {{ $cards->count() }}
+                            @endif
+                        </span>
+                    </header>
+                    <ul class="dispatch-column-list" data-dispatch-column data-status="{{ $col }}">
+                        @foreach ($cards as $task)
+                            @php
+                                $isStale = $stalenessEnabled
+                                    && ! in_array($task->status, ['backburner', 'done', 'declined'], true)
+                                    && $task->updated_at
+                                    && $task->updated_at->lt(now()->subDays($staleThresholdDays));
+                                $elevatedLabels = \Sgrjr\Dispatch\Support\LabelFacets::split($task->labels)['elevated'];
+                            @endphp
+                            <li
+                                class="dispatch-card @if ($selectMode) is-select-mode @endif"
+                                draggable="{{ ($selectMode || $swimlanes) ? 'false' : 'true' }}"
+                                data-dispatch-card
+                                data-task-id="{{ $task->id }}"
+                                wire:key="board-card-{{ $task->id }}"
+                            >
+                                <div class="dispatch-card-head">
+                                    @if ($selectMode)
+                                        <input
+                                            type="checkbox"
+                                            class="dispatch-card-select"
+                                            wire:model.live="selectedIds"
+                                            value="{{ $task->id }}"
+                                            draggable="false"
+                                        >
+                                    @endif
+                                    <a href="{{ route('dispatch.show', $task) }}" class="dispatch-card-code">{{ $task->code }}</a>
+                                    <span class="dispatch-badge is-{{ $task->priority }}">{{ $task->priority }}</span>
+                                </div>
+                                <p class="dispatch-card-title">{{ \Illuminate\Support\Str::limit($task->title, 90) }}</p>
+                                @if ($elevatedLabels->isNotEmpty())
+                                    <div class="dispatch-card-chips">
+                                        @include('dispatch::livewire.partials.label-chips', ['labels' => $task->labels, 'context' => 'card'])
+                                    </div>
+                                @endif
+                                <div class="dispatch-card-meta">
+                                    <span class="dispatch-badge">{{ $task->type }}</span>
+                                    @if ($task->is_public)
+                                        <span class="dispatch-badge is-success">public</span>
+                                    @endif
+                                    @if ($isStale)
+                                        <span class="dispatch-badge is-warning" title="No update in over {{ $staleThresholdDays }} days">stale</span>
+                                    @endif
+                                    @include('dispatch::livewire.partials.due-badge', ['task' => $task])
+                                    @if ($task->assignee)
+                                        <span style="font-size: 0.7rem; color: var(--dispatch-text-muted);">{{ $task->assignee->name }}</span>
+                                    @endif
+                                </div>
+                            </li>
+                        @endforeach
+                    </ul>
+
+                    @if (! $swimlanes && $col === 'done' && $doneLimit > 0 && $doneTotal > $doneLimit)
+                        <button type="button" wire:click="toggleShowAllDone" class="dispatch-btn is-secondary dispatch-column-loadmore">
+                            {{ $showAllDone ? 'Show recent only' : 'Load all ('.$doneTotal.')' }}
+                        </button>
+                    @endif
+                </section>
+            @endforeach
+        </div>
+    @endforeach
 </div>

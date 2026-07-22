@@ -23,7 +23,7 @@ class DispatchClaim extends Command
     protected $signature = 'dispatch:claim
         {code? : Claim THIS task by code (e.g. TASK-042), if still unclaimed; omit to claim the next candidate}
         {--type= : Restrict to this task type (ignored when a code is given)}
-        {--label=* : Restrict to tasks carrying ALL of these labels. Repeatable. (ignored when a code is given)}
+        {--label=* : Restrict to tasks carrying ANY of these labels (a union — all-of is not available). Repeatable. (ignored when a code is given)}
         {--assignee= : User id to assign the claimed task to}
         {--no-focus : Ignore any active Focus steering for this claim}
         {--json : Emit machine-readable JSON instead of human text}
@@ -53,7 +53,7 @@ class DispatchClaim extends Command
             return $this->reportNothingClaimed($code);
         }
 
-        $task->loadMissing('labels', 'submitter', 'assignee', 'comments.user');
+        $task->loadMissing('labels', 'submitter', 'assignee', 'comments.user', 'attachments', 'comments.attachments');
         $claimedAt = optional(
             $task->comments->where('event_type', TaskComment::EVENT_CLAIMED)->max('created_at')
         )->toIso8601String();
@@ -96,7 +96,7 @@ class DispatchClaim extends Command
         $since = $claimedAt !== null ? ' --with-metrics --since="'.$claimedAt.'"' : '';
 
         $this->sideNote("claimed_at: ".($claimedAt ?? 'unknown'));
-        $this->sideNote("→ when finished: php artisan dispatch:done {$code} --status=done|verifying --result-file=result.json{$since}");
+        $this->sideNote("→ when finished: php artisan dispatch:done {$code} --status=<done|verifying> --commit=<sha> --result-file=result.json{$since}");
         $this->sideNote('   (done = you verified it yourself · verifying = a human still has a named check. Then: dispatch:session:end)');
     }
 

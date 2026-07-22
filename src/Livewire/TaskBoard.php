@@ -9,7 +9,9 @@ use Livewire\Component;
 use Sgrjr\Dispatch\Contracts\DispatchGate;
 use Sgrjr\Dispatch\Contracts\DispatchNotifier;
 use Sgrjr\Dispatch\Livewire\Concerns\HasVocabMultiFilters;
+use Sgrjr\Dispatch\Models\Focus;
 use Sgrjr\Dispatch\Models\TaskComment;
+use Sgrjr\Dispatch\Support\LabelFacets;
 
 /**
  * Full-page Kanban board. Columns are Task::statuses() in configured order;
@@ -58,6 +60,24 @@ class TaskBoard extends Component
     /** Activity window: '', 'today', 'week', 'month', or 'older' (mirrors TaskList). */
     #[Url(as: 'updated', except: '')]
     public string $updatedFilter = '';
+
+    /**
+     * Focus steering lens (W8-2): the id of an active Focus, or '' for "all".
+     * Only a value matching an ACTIVE focus constrains the board — a stale or
+     * unknown id falls through to no constraint (see render()).
+     */
+    #[Url(as: 'focus')]
+    public string $focusFilter = '';
+
+    /**
+     * Swimlanes (W8-5): group each column a second time by the task's elevated
+     * lane (LabelFacets::laneKey). Off (default) renders the single-grid board.
+     */
+    #[Url(as: 'lanes')]
+    public bool $swimlanes = false;
+
+    /** Draft name for "save current filters as a Focus" (W8-2). */
+    public string $newFocusName = '';
 
     /**
      * "Load all" override for the done column's `board.done_limit` cap (F8).
@@ -163,7 +183,7 @@ class TaskBoard extends Component
 
     public function clearFilters(): void
     {
-        $this->reset(['typeFilter', 'priorityFilter', 'labelFilter', 'dueFilter', 'columnFilter', 'updatedFilter']);
+        $this->reset(['typeFilter', 'priorityFilter', 'labelFilter', 'dueFilter', 'columnFilter', 'updatedFilter', 'focusFilter']);
     }
 
     /** @var array<int,string>|null Per-request memo (protected: not Livewire state). */
@@ -192,6 +212,63 @@ class TaskBoard extends Component
         }
 
         return $this->labelNamesCache;
+    }
+
+    /**
+     * Grouped label-filter sections (elevated namespaces first, then a plain
+     * 'Labels' section, then 'Meta') for the grouped filter partial (W8-1a). A
+     * pure derivation of the same full Label models render() already fetched —
+     * passed in so this never issues a second query. filterVocabs()/labelNames()
+     * stay flat: the grouping is render-only, the trait still validates
+     * selections against the flat name vocab.
+     *
+     * @param  iterable<int,\Sgrjr\Dispatch\Models\Label>  $labels
+     * @return array<int,array{title:string,options:array<string,string>}>
+     */
+    public function labelFilterGroups(iterable $labels): array
+    {
+        return LabelFacets::grouped($labels);
+    }
+
+    /**
+     * Save the CURRENT checkbox filter state as a new steering Focus (W8-2).
+     * Only constrained axes are persisted: activeSelection() returns null for
+     * an "all"/"none" axis, and a null axis is omitted from the filters JSON
+     * (Focus's storage rule — an absent axis means "all", never "match none").
+     * A blank name is a silent no-op. The board is already staff-only (mount
+     * redirect), so no extra gate is needed here.
+     */
+    public function saveCurrentAsFocus(): void
+    {
+        $name = trim($this->newFocusName);
+        if ($name === '') {
+            return;
+        }
+
+        /** @var class-string<\Sgrjr\Dispatch\Models\Task> $taskClass */
+        $taskClass = config('dispatch.models.task');
+        /** @var class-string<Focus> $focusClass */
+        $focusClass = config('dispatch.models.focus', Focus::class);
+
+        $filters = [];
+        if (null !== ($sel = $this->activeSelection($this->labelFilter, $this->labelNames()))) {
+            $filters['labels'] = $sel;
+        }
+        if (null !== ($sel = $this->activeSelection($this->typeFilter, $taskClass::types()))) {
+            $filters['types'] = $sel;
+        }
+        if (null !== ($sel = $this->activeSelection($this->priorityFilter, $taskClass::priorities()))) {
+            $filters['priorities'] = $sel;
+        }
+
+        $focusClass::create([
+            'name' => $name,
+            'filters' => $filters,
+            'rank' => (int) $focusClass::query()->max('rank') + 1,
+            'is_active' => true,
+        ]);
+
+        $this->newFocusName = '';
     }
 
     /**
@@ -301,7 +378,16 @@ class TaskBoard extends Component
         $this->labelNamesCache = $labels->pluck('name')->all();
         $labelNames = $this->labelNamesCache;
 
-        $applyScopeAndFilters = function ($query) use ($taskClass, $gate, $user, $labelNames) {
+        // Focus steering (W8-2). Only a value matching an ACTIVE focus id
+        // constrains the board; '' or a stale/unknown id falls through to no
+        // constraint (all tasks). The switcher only ever lists active focuses.
+        $focusClass = config('dispatch.models.focus', Focus::class);
+        $focuses = $focusClass::query()->active()->ranked()->get();
+        $activeFocus = $this->focusFilter !== ''
+            ? $focuses->first(fn ($f) => (string) $f->getKey() === $this->focusFilter)
+            : null;
+
+        $applyScopeAndFilters = function ($query) use ($taskClass, $gate, $user, $labelNames, $activeFocus) {
             $gate->scopeVisible($query, $user);
 
             if (null !== ($sel = $this->activeSelection($this->typeFilter, $taskClass::types()))) {
@@ -326,6 +412,13 @@ class TaskBoard extends Component
                 'older' => $query->where('updated_at', '<', now()->subMonth()),
                 default => null,
             };
+
+            // Focus steering: narrow BOTH the grouped non-done query and the
+            // capped done query by the selected focus's stored axes, through
+            // this one shared closure so the two never diverge.
+            if ($activeFocus !== null) {
+                $activeFocus->applyTo($query);
+            }
 
             return $query;
         };
@@ -385,11 +478,49 @@ class TaskBoard extends Component
 
         $byStatus->put('done', $doneItems);
 
+        // Swimlanes (W8-5): a second grouping axis over the already-ordered,
+        // already-capped columns. Each task's lane is its first elevated
+        // label's value (LabelFacets::laneKey; '—' when it has none). Per-column
+        // order is preserved because we push in the existing iteration order.
+        // The done column's GLOBAL cap is untouched — lanes just split whatever
+        // the capped set already contains. Off = one unlabeled lane row that
+        // reproduces the original single-grid board, so the blade has one path.
+        if ($this->swimlanes) {
+            $byLaneStatus = [];
+            $laneSeen = [];
+            foreach ($byStatus as $status => $cards) {
+                foreach ($cards as $task) {
+                    $lane = LabelFacets::laneKey($task) ?? '—';
+                    $laneSeen[$lane] = true;
+                    $byLaneStatus[$lane][$status] = ($byLaneStatus[$lane][$status] ?? collect())->push($task);
+                }
+            }
+
+            // Sorted lane order, '—' (no elevated label) always last.
+            $lanes = array_values(array_diff(array_keys($laneSeen), ['—']));
+            sort($lanes, SORT_NATURAL | SORT_FLAG_CASE);
+            if (isset($laneSeen['—'])) {
+                $lanes[] = '—';
+            }
+
+            $laneRows = array_map(
+                fn ($lane) => ['label' => $lane, 'byStatus' => collect($byLaneStatus[$lane])],
+                $lanes,
+            );
+        } else {
+            $lanes = [];
+            $laneRows = [['label' => null, 'byStatus' => $byStatus]];
+        }
+
         return view('dispatch::livewire.task-board', [
             'columns' => $visibleColumns,
             'statusLabels' => $taskClass::statusLabels(),
             'byStatus' => $byStatus,
+            'lanes' => $lanes,
+            'laneRows' => $laneRows,
             'labels' => $labels,
+            'labelFilterGroups' => $this->labelFilterGroups($labels),
+            'focuses' => $focuses,
             'typeLabels' => $taskClass::typeLabels(),
             'priorityLabels' => $taskClass::priorityLabels(),
             'dueBucketLabels' => $taskClass::dueBucketLabels(),

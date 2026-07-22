@@ -27,6 +27,10 @@
         .dispatch-stat { flex: 1 1 6rem; min-width: 6rem; background: var(--dispatch-surface-muted); border: 1px solid var(--dispatch-border); border-radius: var(--dispatch-radius-md); padding: 0.55rem 0.75rem; }
         .dispatch-stat-value { font-size: 1.2rem; font-weight: 700; line-height: 1.1; }
         .dispatch-stat-label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--dispatch-text-muted); margin-top: 0.2rem; }
+        /* Facet chip tiers (label-chips partial, 'detail' context): elevated
+           leads with a faint inset ring; meta is provenance, held subdued. */
+        .dispatch-badge.dispatch-label-elevated { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35); }
+        .dispatch-badge.dispatch-label-meta { font-size: 0.68rem; }
     </style>
 
     {{-- Header --}}
@@ -42,9 +46,7 @@
                     @if ($task->is_public)
                         <span class="dispatch-badge is-success">public</span>
                     @endif
-                    @foreach ($task->labels as $label)
-                        <span class="dispatch-badge" style="background-color: {{ $label->color ?: '#94a3b8' }}; color:#fff;">{{ $label->name }}</span>
-                    @endforeach
+                    @include('dispatch::livewire.partials.label-chips', ['labels' => $task->labels, 'context' => 'detail'])
                 </div>
             </div>
             <div class="dispatch-show-side">

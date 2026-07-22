@@ -44,7 +44,7 @@ class DispatchShow extends Command
         $taskModel = config('dispatch.models.task');
 
         $task = $taskModel::query()
-            ->with(['labels', 'submitter', 'assignee', 'comments.user'])
+            ->with(['labels', 'submitter', 'assignee', 'comments.user', 'attachments', 'comments.attachments'])
             ->where('code', $this->argument('code'))
             ->first();
 
@@ -66,6 +66,15 @@ class DispatchShow extends Command
         $this->line('  priority: '.$task->priority.'  ·  type: '.$task->type.'  ·  status: '.$task->status.'  ·  public: '.($task->is_public ? 'yes' : 'no'));
         if ($task->labels->isNotEmpty()) {
             $this->line('  labels: '.$task->labels->pluck('name')->implode(', '));
+        }
+        if ($task->attachments->isNotEmpty()) {
+            // Existence signal (W8-6): the binaries live on a private, auth-gated
+            // disk and never travel the CLI/JSON surface — print the metadata so a
+            // human (or agent reading `--json`) knows evidence exists.
+            $this->line('  <fg=gray>Attachments:</>');
+            foreach ($task->attachments as $a) {
+                $this->line('    '.$a->original_name.' ('.$a->mime_type.', '.$a->size_bytes.' bytes)'.($a->is_image ? ' · image' : ''));
+            }
         }
         if ($task->submitter) {
             $this->line('  submitter: '.$task->submitter->email);
@@ -132,7 +141,10 @@ class DispatchShow extends Command
                 $when = optional($c->created_at)->format('Y-m-d H:i') ?? '?';
                 $who = $c->user?->email ?? ($c->isSystem() ? 'system' : 'anon');
                 $tag = $c->is_internal ? '[INTERNAL]' : ($c->isSystem() ? '['.$c->event_type.']' : '');
-                $this->line('  <fg=gray>'.$when.'</> <fg=yellow>'.$who.'</> '.$tag);
+                // Per-comment attachment signal (W8-6) — evidence hung off a reply.
+                $atts = $c->relationLoaded('attachments') ? $c->attachments->count() : $c->attachments()->count();
+                $suffix = $atts > 0 ? ' [+'.$atts.' attachment(s)]' : '';
+                $this->line('  <fg=gray>'.$when.'</> <fg=yellow>'.$who.'</> '.$tag.$suffix);
                 foreach (preg_split('/\R/', trim((string) $c->body)) as $line) {
                     $this->line('    '.$line);
                 }

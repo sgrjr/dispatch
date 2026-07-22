@@ -32,6 +32,14 @@ afterEach(function () {
             }
         }
     }
+
+    // --code-file artifacts the code-file tests drop in the temp dir (the file
+    // itself, and the blocker file the unwritable-path case creates).
+    foreach ([$this->codeFilePath ?? null, $this->codeFileBlocker ?? null] as $file) {
+        if (is_string($file) && is_file($file)) {
+            @unlink($file);
+        }
+    }
 });
 
 test('dispatch:sessions:prune expires a stale approved session', function () {
@@ -505,4 +513,135 @@ test('the client falls back to DISPATCH_AGENT_REMOTE_URL when merged config lack
 
     putenv('DISPATCH_AGENT_REMOTE_URL');
     unset($_ENV['DISPATCH_AGENT_REMOTE_URL'], $_SERVER['DISPATCH_AGENT_REMOTE_URL']);
+});
+
+// --- session:status as a three-state LOCAL probe (W7-4): ACTIVE / DROPPED / NONE ---
+
+test('dispatch:session:status reports an ACTIVE session locally from the dotfile without any HTTP call', function () {
+    // After approval the dotfile keeps public_id+device_code beside the token —
+    // the ACTIVE branch must win over the pending poll, and must not phone home.
+    $expires = now()->addHour()->toIso8601String();
+    file_put_contents($this->tokenPath, json_encode([
+        'public_id' => 'pub-active-1',
+        'device_code' => str_repeat('a', 64),
+        'token' => 'live-token',
+        'agent_name' => 'claude-prod',
+        'expires_at' => $expires,
+        'stored_at' => now()->subMinutes(5)->toIso8601String(),
+    ]));
+
+    Http::fake();
+
+    $exit = Artisan::call('dispatch:session:status');
+    $output = Artisan::output();
+
+    expect($exit)->toBe(0)
+        ->and($output)->toContain('claude-prod')
+        ->and($output)->toContain($expires);
+
+    // A stored token is reported straight from the dotfile — no round-trip.
+    Http::assertNothingSent();
+});
+
+test('dispatch:session:status warns and names session:refresh when the active token is past its expiry', function () {
+    file_put_contents($this->tokenPath, json_encode([
+        'token' => 'stale-live-token',
+        'agent_name' => 'claude-prod',
+        'expires_at' => now()->subHour()->toIso8601String(),
+    ]));
+
+    Http::fake();
+
+    $exit = Artisan::call('dispatch:session:status');
+    $output = Artisan::output();
+
+    expect($exit)->toBe(0)
+        ->and($output)->toContain('session:refresh');
+    Http::assertNothingSent();
+});
+
+test('dispatch:session:status reports a DROPPED session from the marker and names refresh, exit 0', function () {
+    // Only the drop marker exists (no token file) — the involuntary-death state.
+    file_put_contents($this->tokenPath.'.dropped', json_encode([
+        'reason' => 'revoked or expired (agent API returned 401)',
+        'at' => '2026-07-21T00:00:00Z',
+        'public_id' => 'pub-dropped-1',
+        'agent_name' => 'claude-prod',
+        'purpose' => 'work the board',
+        'scopes' => ['next', 'show'],
+    ]));
+
+    Http::fake();
+
+    $exit = Artisan::call('dispatch:session:status');
+    $output = Artisan::output();
+
+    expect($exit)->toBe(0)
+        ->and($output)->toContain('dropped')
+        ->and($output)->toContain('session:refresh');
+    Http::assertNothingSent();
+});
+
+test('dispatch:session:status reports NONE and names session:request when nothing is present, exit 0', function () {
+    // Nothing seeded: no token file, no drop marker. The former zero-state used
+    // to error+exit 1 — now it is a clean report that names the entry verb.
+    Http::fake();
+
+    $exit = Artisan::call('dispatch:session:status');
+    $output = Artisan::output();
+
+    expect($exit)->toBe(0)
+        ->and($output)->toContain('session:request');
+    Http::assertNothingSent();
+});
+
+// --- session:request --code-file (W7-1): surface the user_code out-of-band ---
+
+test('dispatch:session:request --code-file writes the user_code JSON the moment it is known', function () {
+    $this->codeFilePath = sys_get_temp_dir().'/dispatch-code-'.uniqid().'.json';
+
+    $expires = now()->addMinutes(15)->toIso8601String();
+    Http::fake([
+        '*' => Http::response([
+            'public_id' => 'pub-code-1',
+            'device_code' => str_repeat('a', 64),
+            'user_code' => 'CODEFILE',
+            'expires_at' => $expires,
+        ], 201),
+    ]);
+
+    $exit = Artisan::call('dispatch:session:request', ['--name' => 'claude', '--secret' => 'shh', '--code-file' => $this->codeFilePath]);
+
+    expect($exit)->toBe(0)
+        ->and(is_file($this->codeFilePath))->toBeTrue();
+
+    $written = json_decode((string) file_get_contents($this->codeFilePath), true);
+    expect($written['user_code'])->toBe('CODEFILE')
+        ->and($written['public_id'])->toBe('pub-code-1')
+        ->and($written['expires_at'])->toBe($expires);
+});
+
+test('dispatch:session:request --code-file warns but still succeeds when the path is unwritable', function () {
+    // Parent is an existing FILE, so the directory can't be created and the
+    // write fails — a bad --code-file path must never block commissioning.
+    $blocker = sys_get_temp_dir().'/dispatch-code-blocker-'.uniqid();
+    file_put_contents($blocker, 'not a directory');
+    $this->codeFileBlocker = $blocker;
+    $unwritable = $blocker.'/nested/code.json';
+
+    Http::fake([
+        '*' => Http::response([
+            'public_id' => 'pub-code-2',
+            'device_code' => str_repeat('b', 64),
+            'user_code' => 'BADPATH1',
+        ], 201),
+    ]);
+
+    $exit = Artisan::call('dispatch:session:request', ['--name' => 'claude', '--secret' => 'shh', '--code-file' => $unwritable]);
+    $output = Artisan::output();
+
+    expect($exit)->toBe(0)
+        ->and($output)->toContain('BADPATH1')                 // the code is still shown
+        ->and($output)->toContain('Could not write --code-file');
+    expect(is_file($unwritable))->toBeFalse();
 });

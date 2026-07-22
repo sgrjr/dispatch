@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\DB;
 use Livewire\Livewire;
 use Sgrjr\Dispatch\Contracts\DispatchNotifier;
 use Sgrjr\Dispatch\Livewire\TaskBoard;
+use Sgrjr\Dispatch\Models\Focus;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
@@ -464,4 +465,195 @@ test('due badges render tiered by bucket, and inactive tasks with a due date ren
     expect(substr_count($html, 'dispatch-badge is-danger" title="Due '))->toBe(1);
     expect(substr_count($html, 'dispatch-badge is-warning" title="Due '))->toBe(1);
     expect(substr_count($html, 'dispatch-badge" title="Due '))->toBe(1);
+});
+
+/*
+ * W8-1a — grouped label filter + elevated card chips.
+ * W8-2  — focus steering (view filter + save current filters as a focus).
+ * W8-5  — swimlanes. Fixtures lean on the shipped namespace_kinds map
+ * (area:* / epic:* = elevated, source:* / kind:* = meta) so the facet
+ * behavior is exercised without touching per-label `kind` columns.
+ */
+
+test('the label filter renders grouped sections — an elevated namespace heads its own section, meta sits under Meta', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'Accounts area work', 'status' => 'open'], ['area:accounts']);
+    $svc->create(['title' => 'Thrown from an exception', 'status' => 'open'], ['source:exception']);
+
+    $component = Livewire::test(TaskBoard::class);
+
+    // Elevated `area:*` heads an 'Area' section; `source:*` collects under 'Meta'.
+    $component->assertSeeHtml('>Area</div>')->assertSee('area:accounts');
+    $component->assertSeeHtml('>Meta</div>')->assertSee('source:exception');
+});
+
+test('board cards show an elevated label chip but never a meta chip', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'Accounts work', 'status' => 'open'], ['area:accounts']);
+    $svc->create(['title' => 'From an exception', 'status' => 'open'], ['source:exception']);
+
+    $html = Livewire::test(TaskBoard::class)->html();
+
+    // Exactly one card carries a chips block — the elevated task's — and it
+    // renders the elevated chip class. (Match the rendered attribute, not the
+    // `.dispatch-card-chips` CSS selector in the <style> block.)
+    expect(substr_count($html, 'class="dispatch-card-chips"'))->toBe(1);
+    expect($html)->toContain('dispatch-label-elevated');
+
+    // The meta label never renders as a CARD chip (that class only ever appears
+    // in the detail context the board doesn't use).
+    expect($html)->not->toContain('dispatch-label-meta');
+});
+
+test('an active focus constrains BOTH board queries; blank or unknown focus id shows all', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $inFocus = $svc->create(['title' => 'Accounts work', 'status' => 'open'], ['area:accounts']);
+    $svc->create(['title' => 'Unrelated work', 'status' => 'open']);
+
+    $focus = Focus::create([
+        'name' => 'Accounts',
+        'filters' => ['labels' => ['area:accounts']],
+        'rank' => 1,
+        'is_active' => true,
+    ]);
+
+    // Selected -> only the matching task remains on the board.
+    $component = Livewire::test(TaskBoard::class)->set('focusFilter', (string) $focus->id);
+    expect($component->viewData('byStatus')->get('open')->pluck('id')->all())->toBe([$inFocus->id]);
+
+    // '' -> unconstrained.
+    $component->set('focusFilter', '');
+    expect($component->viewData('byStatus')->get('open'))->toHaveCount(2);
+
+    // Unknown/stale id -> unconstrained (never "match nothing").
+    $component->set('focusFilter', '999999');
+    expect($component->viewData('byStatus')->get('open'))->toHaveCount(2);
+});
+
+test('an inactive focus id does not constrain the board (the switcher only offers active focuses)', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'Accounts work', 'status' => 'open'], ['area:accounts']);
+    $svc->create(['title' => 'Unrelated work', 'status' => 'open']);
+
+    $inactive = Focus::create([
+        'name' => 'Archived lens',
+        'filters' => ['labels' => ['area:accounts']],
+        'rank' => 1,
+        'is_active' => false,
+    ]);
+
+    $component = Livewire::test(TaskBoard::class)->set('focusFilter', (string) $inactive->id);
+    expect($component->viewData('byStatus')->get('open'))->toHaveCount(2);
+    expect($component->viewData('focuses'))->toHaveCount(0);
+});
+
+test('saveCurrentAsFocus persists ONLY the constrained axes; a blank name creates nothing', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    // Two labels so a one-label selection is a STRICT subset (a constrained axis).
+    $svc->create(['title' => 'Blocked work', 'status' => 'open'], ['blocked']);
+    $svc->create(['title' => 'Deferred work', 'status' => 'open'], ['deferred']);
+
+    $component = Livewire::test(TaskBoard::class)
+        ->set('labelFilter', ['blocked'])
+        ->set('newFocusName', 'Blocked only')
+        ->call('saveCurrentAsFocus');
+
+    $focus = Focus::query()->firstWhere('name', 'Blocked only');
+    expect($focus)->not->toBeNull();
+    // type/priority stayed "all" -> omitted; only the labels axis is stored.
+    expect($focus->filters)->toBe(['labels' => ['blocked']]);
+    expect(array_keys($focus->filters))->toBe(['labels']);
+    expect($focus->is_active)->toBeTrue();
+    expect($focus->rank)->toBe(1);
+    expect($component->get('newFocusName'))->toBe('');
+
+    // A blank/whitespace name is a silent no-op.
+    $before = Focus::query()->count();
+    $component->set('newFocusName', '   ')->call('saveCurrentAsFocus');
+    expect(Focus::query()->count())->toBe($before);
+});
+
+test('saveCurrentAsFocus ranks each new focus above the current max', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    Focus::create(['name' => 'Existing', 'filters' => [], 'rank' => 7, 'is_active' => true]);
+
+    Livewire::test(TaskBoard::class)
+        ->set('newFocusName', 'Next up')
+        ->call('saveCurrentAsFocus');
+
+    expect(Focus::query()->firstWhere('name', 'Next up')->rank)->toBe(8);
+});
+
+test('swimlanes off renders the plain board; on splits each task into exactly one lane with the unlabeled task last under —', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $accounts = $svc->create(['title' => 'Accounts work', 'status' => 'open'], ['area:accounts']);
+    $onboarding = $svc->create(['title' => 'Onboarding epic', 'status' => 'open'], ['epic:onboarding']);
+    $bare = $svc->create(['title' => 'No lane at all', 'status' => 'open']);
+
+    // OFF: no lane headers, but the cards still render (spot-check one).
+    $off = Livewire::test(TaskBoard::class);
+    expect($off->viewData('lanes'))->toBe([]);
+    $offHtml = $off->html();
+    // Match the rendered <h3 class="dispatch-swimlane-head">, not the CSS rule.
+    expect($offHtml)->not->toContain('class="dispatch-swimlane-head"');
+    expect($offHtml)->toContain('data-task-id="'.$accounts->id.'"');
+
+    // ON: lanes sorted with '—' last; every task on exactly one card.
+    $on = Livewire::test(TaskBoard::class)->set('swimlanes', true);
+    expect($on->viewData('lanes'))->toBe(['accounts', 'onboarding', '—']);
+
+    $onHtml = $on->html();
+    expect($onHtml)->toContain('class="dispatch-swimlane-head"');
+    foreach ([$accounts, $onboarding, $bare] as $task) {
+        expect(substr_count($onHtml, 'data-task-id="'.$task->id.'"'))->toBe(1);
+    }
+
+    // The '—' lane holds the unlabeled task.
+    $dashRow = collect($on->viewData('laneRows'))->firstWhere('label', '—');
+    expect($dashRow['byStatus']->get('open')->pluck('id')->all())->toBe([$bare->id]);
+});
+
+test('the done cap still bounds the total card count with swimlanes on', function () {
+    config(['dispatch.board.done_limit' => 2]);
+
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'Done A', 'status' => 'done'], ['area:accounts']);
+    $svc->create(['title' => 'Done B', 'status' => 'done'], ['epic:onboarding']);
+    $svc->create(['title' => 'Done C', 'status' => 'done']);
+    $svc->create(['title' => 'Done D', 'status' => 'done']);
+
+    $component = Livewire::test(TaskBoard::class)->set('swimlanes', true);
+
+    // Global cap unchanged: only `done_limit` done tasks are selected...
+    expect($component->viewData('doneShowing'))->toBe(2);
+    expect($component->viewData('doneTotal'))->toBe(4);
+
+    // ...and splitting them across lanes preserves that total — no duplication,
+    // no lane lifting the cap.
+    $doneAcrossLanes = collect($component->viewData('laneRows'))
+        ->sum(fn ($row) => $row['byStatus']->get('done', collect())->count());
+    expect($doneAcrossLanes)->toBe(2);
 });

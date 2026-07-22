@@ -24,7 +24,7 @@ test('the summary shape carries exactly the documented keys', function () {
 
     expect(array_keys($data))->toEqual([
         'code', 'title', 'type', 'priority', 'status', 'is_public',
-        'labels', 'comment_count', 'due_at', 'dedupe_key', 'submitter', 'assignee',
+        'labels', 'comment_count', 'attachment_count', 'due_at', 'dedupe_key', 'submitter', 'assignee',
         'created_at', 'updated_at',
     ]);
 
@@ -76,7 +76,7 @@ test('the full shape adds description, context and comments', function () {
         ->and($data['comments'])->toBeArray()->toHaveCount(1);
 
     $comment = $data['comments'][0];
-    expect(array_keys($comment))->toEqual(['id', 'event_type', 'is_internal', 'author', 'body', 'meta', 'created_at'])
+    expect(array_keys($comment))->toEqual(['id', 'event_type', 'is_internal', 'author', 'body', 'meta', 'attachment_count', 'created_at'])
         ->and($comment['body'])->toBe('a note');
 });
 

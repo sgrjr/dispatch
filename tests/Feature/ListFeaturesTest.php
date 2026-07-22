@@ -6,6 +6,7 @@ use Livewire\Livewire;
 use Sgrjr\Dispatch\Contracts\DispatchGate;
 use Sgrjr\Dispatch\Contracts\DispatchNotifier;
 use Sgrjr\Dispatch\Livewire\TaskList;
+use Sgrjr\Dispatch\Models\Focus;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
@@ -349,4 +350,161 @@ test('sorting by due_asc and due_desc puts null due dates last in both direction
         ->assertSeeInOrder([$near->code, $far->code, $undated->code])
         ->set('sort', 'due_desc')
         ->assertSeeInOrder([$far->code, $near->code, $undated->code]);
+});
+
+/*
+ * W8-1a / W8-2 / W8-5: facet-aware label filter grouping, chip demotion on
+ * rows, saved Focus steering, and page-scoped group-by. Grouping/demotion/
+ * lanes are all pure derivations of LabelFacets over the SAME flat vocab —
+ * the []/['']/subset multi-filter contract is untouched.
+ */
+
+test('the label filter renders grouped facet sections — elevated namespaces titled, plain under Labels, meta under Meta', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    // area:* is elevated, source:* is meta, a prefixless name is plain
+    // (default dispatch.labels.namespace_kinds).
+    app(DispatchTaskService::class)->create(
+        ['title' => 'Facet fixture'],
+        ['area:billing', 'frontend', 'source:cli'],
+    );
+
+    Livewire::test(TaskList::class)
+        ->assertSee('Area')        // elevated namespace section title (ucfirst prefix)
+        ->assertSee('Labels')      // plain-label section
+        ->assertSee('Meta')        // meta section
+        ->assertSee('source:cli'); // the meta label is still a FILTER option, even though it's demoted off rows
+});
+
+test('a list row demotes the meta label chip while keeping elevated and plain chips', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    // Distinct colors let us prove chip PRESENCE by color — a color string only
+    // appears in a rendered chip, never in the (colorless) grouped filter option.
+    $labelClass = config('dispatch.models.label');
+    $elevated = $labelClass::create(['name' => 'area:core', 'color' => '#111111']);
+    $plain = $labelClass::create(['name' => 'frontend', 'color' => '#222222']);
+    $meta = $labelClass::create(['name' => 'source:cli', 'color' => '#333333']);
+
+    $task = app(DispatchTaskService::class)->create(['title' => 'Chip demotion fixture']);
+    $task->labels()->attach([$elevated->id, $plain->id, $meta->id]);
+
+    Livewire::test(TaskList::class)
+        ->assertSee('#111111')                  // elevated chip rendered on the row
+        ->assertSee('#222222')                  // plain chip rendered on the row
+        ->assertDontSee('#333333')              // meta chip NOT rendered (would carry this color)
+        ->assertDontSee('dispatch-label-meta'); // the meta facet class appears nowhere on the list ('row' context)
+});
+
+test('focusFilter steers the list to a focus\'s constrained axes; empty shows all; changing it resets pagination', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $billing = $svc->create(['title' => 'billing task'], ['area:billing']);
+    $other = $svc->create(['title' => 'unrelated task']);
+
+    $focus = Focus::create([
+        'name' => 'Billing',
+        'filters' => ['labels' => ['area:billing']],
+        'is_active' => true,
+    ]);
+
+    $component = Livewire::test(TaskList::class);
+
+    // Unsteered ('' ) → every visible task.
+    expect($component->viewData('tasks')->pluck('id')->all())
+        ->toEqualCanonicalizing([$billing->id, $other->id]);
+
+    // A valid focus narrows to its matching axis.
+    $component->set('focusFilter', (string) $focus->id);
+    expect($component->viewData('tasks')->pluck('id')->all())->toBe([$billing->id]);
+
+    // Back to '' restores everything.
+    $component->set('focusFilter', '');
+    expect($component->viewData('tasks')->pluck('id')->all())
+        ->toEqualCanonicalizing([$billing->id, $other->id]);
+
+    // Changing the focus resets pagination — updating() treats focusFilter like
+    // the other scalar filters (search/status/updated).
+    $component->call('gotoPage', 3);
+    expect($component->get('paginators.page'))->toBe(3);
+    $component->set('focusFilter', (string) $focus->id);
+    expect($component->get('paginators.page'))->toBe(1);
+});
+
+test('an invalid/stale focusFilter id is ignored (unsteered), never fataled', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $a = $svc->create(['title' => 'task a']);
+    $b = $svc->create(['title' => 'task b']);
+
+    $component = Livewire::test(TaskList::class)->set('focusFilter', '9999');
+    expect($component->viewData('tasks')->pluck('id')->all())
+        ->toEqualCanonicalizing([$a->id, $b->id]);
+});
+
+test('saveCurrentAsFocus serializes only the constrained axes, ranks last, and no-ops on a blank name', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'a bug', 'type' => 'bug']);
+    $svc->create(['title' => 'a chore', 'type' => 'chore']);
+
+    // Blank name → nothing persisted (even with a live filter selection).
+    Livewire::test(TaskList::class)
+        ->call('selectNoneFilter', 'typeFilter')
+        ->call('toggleFilter', 'typeFilter', 'bug')
+        ->set('newFocusName', '   ')
+        ->call('saveCurrentAsFocus');
+    expect(Focus::count())->toBe(0);
+
+    // Named save with ONE axis constrained → filters holds only that axis; the
+    // unconstrained (all) label/priority axes are omitted per the storage rule.
+    Livewire::test(TaskList::class)
+        ->call('selectNoneFilter', 'typeFilter')
+        ->call('toggleFilter', 'typeFilter', 'bug')
+        ->set('newFocusName', 'Just bugs')
+        ->call('saveCurrentAsFocus');
+
+    $focus = Focus::query()->firstOrFail();
+    expect($focus->name)->toBe('Just bugs');
+    expect($focus->filters)->toBe(['types' => ['bug']]);
+    expect($focus->is_active)->toBeTrue();
+    expect($focus->rank)->toBe(1); // max('rank') was null → 0 + 1
+});
+
+test('groupBy lanes the current page under elevated-namespace headers, unlabeled bucket last; off renders flat', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $billing = $svc->create(['title' => 'billing work'], ['area:billing']);
+    $api = $svc->create(['title' => 'api work'], ['area:api']);
+    $loose = $svc->create(['title' => 'unlaned work']);
+
+    // Off ('' ): no grouping structure, no affordance, every row present.
+    $off = Livewire::test(TaskList::class);
+    expect($off->viewData('groupedLanes'))->toBeNull();
+    $off->assertDontSee('grouped within this page')
+        ->assertSee($billing->code)
+        ->assertSee($api->code)
+        ->assertSee($loose->code);
+
+    // On ('area'): value-sorted lanes with the unlabeled '—' bucket LAST, each
+    // visible row under exactly one lane, and the affordance visible.
+    $on = Livewire::test(TaskList::class)->set('groupBy', 'area');
+    $lanes = $on->viewData('groupedLanes');
+
+    expect(collect($lanes)->pluck('lane')->all())->toBe(['api', 'billing', '—']);
+    expect($lanes[0]['tasks']->pluck('id')->all())->toBe([$api->id]);
+    expect($lanes[1]['tasks']->pluck('id')->all())->toBe([$billing->id]);
+    expect($lanes[2]['tasks']->pluck('id')->all())->toBe([$loose->id]);
+
+    $on->assertSee('grouped within this page');
 });

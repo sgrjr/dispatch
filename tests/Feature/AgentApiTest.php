@@ -478,6 +478,102 @@ test('AgentSessions lists a recently ended session with its session-end metrics 
         ->assertSee('54,321 tok');              // the shared summary line
 });
 
+// --- W8-6: attachments become visible in the agent JSON contract -----------
+
+test('GET show exposes task attachments[] and per-comment attachment_count via the API (W8-6)', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'has a screenshot', 'status' => 'open']);
+    $task->attachments()->create([
+        'disk' => 'private', 'path' => 'a/shot.png', 'original_name' => 'shot.png',
+        'mime_type' => 'image/png', 'size_bytes' => 2048, 'is_image' => true,
+    ]);
+
+    $author = dispatchMakeUser(88700);
+    $comment = $task->recordEvent(Sgrjr\Dispatch\Models\TaskComment::EVENT_COMMENT, $author->id, [], 'see attached log');
+    $comment->attachments()->create([
+        'disk' => 'private', 'path' => 'a/log.txt', 'original_name' => 'log.txt',
+        'mime_type' => 'text/plain', 'size_bytes' => 512, 'is_image' => false,
+    ]);
+
+    $token = agentApiToken();
+
+    $this->withToken($token)->getJson('api/dispatch/agent/show/'.$task->code)
+        ->assertOk()
+        ->assertJsonPath('task.attachment_count', 1)
+        ->assertJsonPath('task.attachments.0.filename', 'shot.png')
+        ->assertJsonPath('task.attachments.0.mime', 'image/png')
+        ->assertJsonPath('task.attachments.0.size_bytes', 2048)
+        ->assertJsonPath('task.attachments.0.is_image', true)
+        ->assertJsonPath('task.comments.0.attachment_count', 1);
+});
+
+test('POST claim delivers task attachments[] + per-comment attachment_count in the full shape (W8-6)', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'claim with evidence', 'status' => 'open']);
+    $task->attachments()->create([
+        'disk' => 'private', 'path' => 'a/diagram.png', 'original_name' => 'diagram.png',
+        'mime_type' => 'image/png', 'size_bytes' => 4096, 'is_image' => true,
+    ]);
+
+    $author = dispatchMakeUser(88710);
+    $comment = $task->recordEvent(Sgrjr\Dispatch\Models\TaskComment::EVENT_COMMENT, $author->id, [], 'repro attached');
+    $comment->attachments()->create([
+        'disk' => 'private', 'path' => 'a/trace.json', 'original_name' => 'trace.json',
+        'mime_type' => 'application/json', 'size_bytes' => 900, 'is_image' => false,
+    ]);
+
+    $token = agentApiToken();
+
+    $this->withToken($token)->postJson('api/dispatch/agent/claim')
+        ->assertOk()
+        ->assertJsonPath('task.code', $task->code)
+        ->assertJsonPath('task.attachment_count', 1)
+        ->assertJsonPath('task.attachments.0.filename', 'diagram.png')
+        ->assertJsonPath('task.attachments.0.is_image', true)
+        // The human's comment carried a file — visible at the comment grain too.
+        ->assertJsonPath('task.comments.0.attachment_count', 1);
+});
+
+test('GET next surfaces attachment_count so an agent knows a human attached evidence (W8-6)', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'has evidence', 'status' => 'open', 'priority' => 'high']);
+    $task->attachments()->create([
+        'disk' => 'private', 'path' => 'a/1.png', 'original_name' => '1.png',
+        'mime_type' => 'image/png', 'size_bytes' => 10, 'is_image' => true,
+    ]);
+    $task->attachments()->create([
+        'disk' => 'private', 'path' => 'a/2.png', 'original_name' => '2.png',
+        'mime_type' => 'image/png', 'size_bytes' => 20, 'is_image' => true,
+    ]);
+
+    $token = agentApiToken();
+
+    // Value correctness via the eager withCount (attachment_count attribute) — no
+    // full attachments[] list on the summary shape, just the signal.
+    $this->withToken($token)->getJson('api/dispatch/agent/next')
+        ->assertOk()
+        ->assertJsonPath('task.code', $task->code)
+        ->assertJsonPath('task.attachment_count', 2)
+        ->assertJsonMissingPath('task.attachments');
+});
+
+test('GET queue summaries carry attachment_count (W8-6)', function () {
+    $svc = app(DispatchTaskService::class);
+    $withFile = $svc->create(['title' => 'q-with-file', 'status' => 'open', 'priority' => 'high']);
+    $withFile->attachments()->create([
+        'disk' => 'private', 'path' => 'a/q.png', 'original_name' => 'q.png',
+        'mime_type' => 'image/png', 'size_bytes' => 33, 'is_image' => true,
+    ]);
+    $noFile = $svc->create(['title' => 'q-no-file', 'status' => 'open', 'priority' => 'low']);
+
+    $token = agentApiToken();
+
+    $tasks = $this->withToken($token)->getJson('api/dispatch/agent/queue')
+        ->assertOk()
+        ->json('tasks');
+
+    $rows = collect($tasks)->keyBy('code');
+    expect($rows[$withFile->code]['attachment_count'])->toBe(1)
+        ->and($rows[$noFile->code]['attachment_count'])->toBe(0);
+});
+
 test('AgentSessions flags an ENDED session that closed work but recorded nothing — the real none-recorded verdict', function () {
     $this->actingAs(dispatchMakeUser(8130));
 

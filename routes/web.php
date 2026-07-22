@@ -42,4 +42,11 @@ if (class_exists(\Sgrjr\Dispatch\Livewire\AgentSessions::class)) {
     Route::get('/agent-sessions', \Sgrjr\Dispatch\Livewire\AgentSessions::class)->name('agent-sessions');
 }
 
+// Staff "Focuses" management surface (roadmap W8-2). Gated the same way as the
+// agent-sessions route above — a route action is eagerly validated at
+// registration, so it can only be referenced once the component class exists.
+if (class_exists(\Sgrjr\Dispatch\Livewire\FocusPanel::class)) {
+    Route::get('/focuses', \Sgrjr\Dispatch\Livewire\FocusPanel::class)->name('focuses');
+}
+
 Route::get('/{task:code}', TaskShow::class)->name('show');

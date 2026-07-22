@@ -26,6 +26,7 @@ class DispatchSessionRequest extends Command
         {--purpose= : Short human-readable purpose for the session}
         {--scope=* : Narrow the requested verb set. Repeatable. OMIT to request the full grantable allowlist (the recommended default — the approver sees and controls the grant).}
         {--wait=0 : After showing the user_code, block in-process for approval for up to N seconds (bare --wait ≈60s) and collect the token — the whole commissioning in ONE command. Omit for the two-step flow (poll with dispatch:session:status).}
+        {--code-file= : Write the user_code (JSON: user_code/public_id/expires_at) to this file the moment it is known — lets a blocked/buffered harness read the code from another process}
         {--secret= : Bootstrap secret; falls back to dispatch.agent.bootstrap_secret}';
 
     protected $description = 'Request a new agent session from the remote Dispatch agent API.';
@@ -119,6 +120,19 @@ class DispatchSessionRequest extends Command
             'scopes' => $scopes,
         ]);
 
+        // --code-file: surface the user_code out-of-band the moment it is known.
+        // With --wait this command blocks in-process, so a buffered agent harness
+        // can't read the printed code until the process exits — which deadlocks
+        // the approval relay. A cooperating process can poll this file instead.
+        // Best-effort: a bad path must never block commissioning (see below).
+        if (($codeFile = $this->option('code-file')) !== null && $codeFile !== '') {
+            $this->writeCodeFile($codeFile, [
+                'user_code' => $data['user_code'] ?? null,
+                'public_id' => $data['public_id'] ?? null,
+                'expires_at' => $data['expires_at'] ?? null,
+            ]);
+        }
+
         $this->newLine();
         $this->line('Show this code to the approver: <fg=cyan;options=bold>'.($data['user_code'] ?? '?').'</>');
         $this->line($scopes === []
@@ -141,5 +155,28 @@ class DispatchSessionRequest extends Command
         $this->line('(Tip: next time pass --wait here to request + collect the token in one command.)');
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Write the freshly-issued user_code (and identity) to --code-file for a
+     * cooperating out-of-band reader. Best-effort by contract: a write failure
+     * WARNs and returns — the code is still on stdout, and a bad --code-file
+     * path must never fail an otherwise-successful commissioning request.
+     *
+     * @param  array<string,mixed>  $payload
+     */
+    private function writeCodeFile(string $path, array $payload): void
+    {
+        $dir = dirname($path);
+        if (! is_dir($dir)) {
+            @mkdir($dir, 0700, true);
+        }
+
+        // @-suppressed: an unwritable path (e.g. parent that can't be created)
+        // returns false rather than throwing — we warn on that below.
+        $ok = @file_put_contents($path, json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        if ($ok === false) {
+            $this->warn("Could not write --code-file to {$path} — the user_code is shown above; continuing.");
+        }
     }
 }

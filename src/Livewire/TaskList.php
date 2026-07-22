@@ -11,9 +11,12 @@ use Livewire\WithPagination;
 use Sgrjr\Dispatch\Contracts\DispatchGate;
 use Sgrjr\Dispatch\Contracts\DispatchNotifier;
 use Sgrjr\Dispatch\Livewire\Concerns\HasVocabMultiFilters;
+use Sgrjr\Dispatch\Models\Focus;
+use Sgrjr\Dispatch\Models\Label;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
+use Sgrjr\Dispatch\Support\LabelFacets;
 
 /**
  * Full-page task table: search, filters, sort, pagination, and bulk actions.
@@ -58,6 +61,25 @@ class TaskList extends Component
     #[Url(as: 'updated', except: '')]
     public string $updatedFilter = '';
 
+    /**
+     * Active steering focus id (W8-2). '' = unsteered (all tasks); otherwise a
+     * Focus id whose constrained axes narrow the list via Focus::applyTo(). A
+     * stale/invalid id is ignored (treated as unsteered) rather than fataling.
+     */
+    #[Url(as: 'focus', except: '')]
+    public string $focusFilter = '';
+
+    /**
+     * Page-scoped group-by namespace (W8-5). '' = flat list; otherwise an
+     * ELEVATED label namespace (area, epic, …) the CURRENT page's rows are
+     * laned under. Pure presentation — never touches the query/pagination.
+     */
+    #[Url(as: 'group', except: '')]
+    public string $groupBy = '';
+
+    /** Name buffer for "save current filters as a Focus" (W8-2). */
+    public string $newFocusName = '';
+
     #[Url(as: 'sort', except: 'priority')]
     public string $sort = 'priority';
 
@@ -85,7 +107,7 @@ class TaskList extends Component
     {
         // Only the wire:model-bound filters pass through here — the checkbox
         // multi-filters assign in-method and reset via afterFilterChanged().
-        if (in_array($name, ['search', 'statusFilter', 'updatedFilter'], true)) {
+        if (in_array($name, ['search', 'statusFilter', 'updatedFilter', 'focusFilter'], true)) {
             $this->resetPage();
             $this->selected = [];
         }
@@ -124,9 +146,161 @@ class TaskList extends Component
         return $this->labelNamesCache;
     }
 
+    /** @var \Illuminate\Support\Collection<int,Label>|null Per-request memo of the full label set. */
+    protected $labelsCache = null;
+
+    /**
+     * The full Label models, ordered by name — one fetch feeding both the view
+     * (chips/legend) and the grouped label filter's sections.
+     *
+     * @return \Illuminate\Support\Collection<int,Label>
+     */
+    protected function allLabels()
+    {
+        if ($this->labelsCache === null) {
+            $labelClass = config('dispatch.models.label');
+            $this->labelsCache = $labelClass::orderBy('name')->get();
+        }
+
+        return $this->labelsCache;
+    }
+
+    /**
+     * Titled sections for the grouped label filter (W8-1a): elevated namespaces
+     * first, then plain, then meta — see LabelFacets::grouped(). Render-only
+     * grouping over the same label set; the filter's vocab (labelNames()) and
+     * the whereIn payload stay FLAT, so the []/['']/subset state contract in
+     * HasVocabMultiFilters is untouched.
+     *
+     * @return array<int,array{title:string,options:array<string,string>}>
+     */
+    public function labelFilterGroups(): array
+    {
+        return LabelFacets::grouped($this->allLabels());
+    }
+
+    /**
+     * The ELEVATED label namespaces available for page-scoped group-by (W8-5):
+     * the keys of LabelFacets::namespaceKinds() whose kind is 'elevated' (e.g.
+     * area, epic). Also the allow-list validating the bound $groupBy.
+     *
+     * @return array<int,string>
+     */
+    public function groupByOptions(): array
+    {
+        return array_keys(array_filter(
+            LabelFacets::namespaceKinds(),
+            fn ($kind) => $kind === Label::KIND_ELEVATED,
+        ));
+    }
+
+    /**
+     * Persist the current filter selection as a steering Focus (W8-2). Stores
+     * ONLY the constrained axes (labels/types/priorities) per Focus's storage
+     * rule — activeSelection() returns null for an all/none axis, which we omit
+     * so an absent key means "unconstrained". A blank name is a no-op. New
+     * focuses rank last (max+1) and start active.
+     */
+    public function saveCurrentAsFocus(): void
+    {
+        $name = trim($this->newFocusName);
+        if ($name === '') {
+            return;
+        }
+
+        /** @var class-string<Task> $taskClass */
+        $taskClass = config('dispatch.models.task');
+
+        $filters = [];
+        if (null !== ($sel = $this->activeSelection($this->labelFilter, $this->labelNames()))) {
+            $filters['labels'] = $sel;
+        }
+        if (null !== ($sel = $this->activeSelection($this->typeFilter, $taskClass::types()))) {
+            $filters['types'] = $sel;
+        }
+        if (null !== ($sel = $this->activeSelection($this->priorityFilter, $taskClass::priorities()))) {
+            $filters['priorities'] = $sel;
+        }
+
+        /** @var class-string<Focus> $focusClass */
+        $focusClass = config('dispatch.models.focus', Focus::class);
+
+        $focusClass::create([
+            'name' => $name,
+            'filters' => $filters,
+            'rank' => (int) $focusClass::max('rank') + 1,
+            'is_active' => true,
+        ]);
+
+        $this->newFocusName = '';
+        session()->flash('dispatch-status', "Focus \"{$name}\" saved.");
+    }
+
+    /**
+     * The group-by lane for a task under the current $groupBy namespace: the
+     * value-part (after ':') of its FIRST label whose prefix() === $groupBy and
+     * whose effectiveKind() is elevated. Null when the task carries no such
+     * label (rendered in the '—' bucket, last).
+     *
+     * Deliberately namespace-SCOPED — NOT LabelFacets::laneKey(), which is
+     * namespace-agnostic (first elevated label of ANY namespace) for board
+     * swimlanes. Here the operator picked a specific axis to lane by.
+     */
+    private function groupLaneFor(Task $task): ?string
+    {
+        foreach ($task->labels as $label) {
+            if ($label->prefix() === $this->groupBy && $label->effectiveKind() === Label::KIND_ELEVATED) {
+                $name = (string) $label->name;
+                $pos = strpos($name, ':');
+
+                return $pos === false ? $name : substr($name, $pos + 1);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Partition the current page's rows into ordered lanes for group-by (W8-5).
+     * Value-named lanes sort ascending; the unlabeled '—' bucket is always
+     * appended LAST. Each task lands under exactly one lane (its first matching
+     * label). A pure presentation pass over the already-paginated items — no
+     * query, no reordering of pagination.
+     *
+     * @param  \Illuminate\Support\Collection<int,Task>  $tasks
+     * @return array<int,array{lane:string,tasks:\Illuminate\Support\Collection<int,Task>}>
+     */
+    private function groupPageIntoLanes($tasks): array
+    {
+        $buckets = [];
+        $unlabeled = [];
+
+        foreach ($tasks as $task) {
+            $lane = $this->groupLaneFor($task);
+            if ($lane === null) {
+                $unlabeled[] = $task;
+            } else {
+                $buckets[$lane][] = $task;
+            }
+        }
+
+        ksort($buckets, SORT_STRING);
+
+        $lanes = [];
+        foreach ($buckets as $lane => $items) {
+            $lanes[] = ['lane' => (string) $lane, 'tasks' => collect($items)];
+        }
+
+        if ($unlabeled !== []) {
+            $lanes[] = ['lane' => '—', 'tasks' => collect($unlabeled)];
+        }
+
+        return $lanes;
+    }
+
     public function clearFilters(): void
     {
-        $this->reset(['search', 'statusFilter', 'typeFilter', 'priorityFilter', 'labelFilter', 'dueFilter', 'updatedFilter']);
+        $this->reset(['search', 'statusFilter', 'typeFilter', 'priorityFilter', 'labelFilter', 'dueFilter', 'updatedFilter', 'focusFilter']);
         $this->resetPage();
         $this->selected = [];
     }
@@ -317,7 +491,6 @@ class TaskList extends Component
     {
         /** @var class-string<Task> $taskClass */
         $taskClass = config('dispatch.models.task');
-        $labelClass = config('dispatch.models.label');
         $userClass = config('dispatch.models.user');
 
         $query = $taskClass::query()->with(['labels', 'submitter', 'assignee']);
@@ -362,11 +535,32 @@ class TaskList extends Component
             default => null,
         };
 
+        // Steering focus (W8-2): resolve the active, ranked focuses once — they
+        // feed both the switcher and (when one is selected + still valid) the
+        // query narrowing. A stale id simply doesn't match, so it's unsteered.
+        $focusClass = config('dispatch.models.focus', Focus::class);
+        $focuses = $focusClass::query()->active()->ranked()->get();
+
+        if ($this->focusFilter !== '' && null !== ($focus = $focuses->firstWhere('id', (int) $this->focusFilter))) {
+            $focus->applyTo($query);
+        }
+
         $query = $this->applySort($query);
 
+        $tasks = $query->paginate(25);
+
+        // Page-scoped group-by (W8-5): a pure presentation pass over THIS page's
+        // rows only — null (off, or an invalid namespace) renders the flat list
+        // unchanged. Pagination/sort are untouched.
+        $groupedLanes = ($this->groupBy !== '' && in_array($this->groupBy, $this->groupByOptions(), true))
+            ? $this->groupPageIntoLanes($tasks->getCollection())
+            : null;
+
         return view('dispatch::livewire.task-list', [
-            'tasks' => $query->paginate(25),
-            'labels' => $labelClass::orderBy('name')->get(),
+            'tasks' => $tasks,
+            'labels' => $this->allLabels(),
+            'focuses' => $focuses,
+            'groupedLanes' => $groupedLanes,
             'statusLabels' => $taskClass::statusLabels(),
             'typeLabels' => $taskClass::typeLabels(),
             'priorityLabels' => $taskClass::priorityLabels(),
