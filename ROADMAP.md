@@ -355,6 +355,10 @@ Every genuinely open decision lives here; other sections link in. **If a pending
 - Facade name / mode / hook (§16 Q1–Q3) → `DispatchTask`; sync default, configurable via `reporter.queue`; manual one-liner hook (no auto-register).
 - v0.3 timing (was §17 Q3) → **browser smoke test first; §18 🔴 gates all new build phases.**
 
+2. **FEATURE IDEA TO EXPLORE**
+
+A feature to consider in the future: allowing the user more than 1 "board", but allow there to be board on more than 1 axis. currently the board is exclusively on the status axis, but it wouldn't be much in matters fo code complexity added to add some other axises like "due ness/status" or perhaps allowing the client/host/consumer  fo the library to defined elevated "labels" as axises for a custom board ( as "all" labels would just be too noisy). these are just loose ideas and concepts to explore later. 7/22/2026
+
 ---
 
 ## 14. Explicitly OUT of scope this phase
