@@ -205,6 +205,9 @@ class DispatchServiceProvider extends ServiceProvider
             'dispatch-my-submissions' => \Sgrjr\Dispatch\Livewire\MySubmissions::class,
             // §20 Phase 3 — the staff "Agent Sessions" approval queue (Wave 1).
             'dispatch-agent-sessions' => \Sgrjr\Dispatch\Livewire\AgentSessions::class,
+            // Focus steering panel (roadmap W8-2) — ships in a later wave; the
+            // foreach's class_exists guard keeps the provider booting until then.
+            'dispatch-focus-panel' => \Sgrjr\Dispatch\Livewire\FocusPanel::class,
         ];
 
         foreach ($components as $alias => $class) {

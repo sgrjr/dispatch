@@ -6,7 +6,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Str;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 use Sgrjr\Dispatch\Models\Task;
-use Sgrjr\Dispatch\Models\TaskComment;
+use Sgrjr\Dispatch\Services\DispatchTaskService;
 use Sgrjr\Dispatch\Support\TaskPresenter;
 
 /**
@@ -29,7 +29,7 @@ class DispatchQueue extends Command
 
     protected $description = 'List the actionable backlog in priority order.';
 
-    public function handle(): int
+    public function handle(DispatchTaskService $tasks): int
     {
         $limit = $this->option('limit');
         if ($limit !== null) {
@@ -95,25 +95,15 @@ class DispatchQueue extends Command
             return self::SUCCESS;
         }
 
-        $query = $taskModel::query()
-            ->with('labels')
-            ->withCount(['comments as comment_count' => fn ($q) => $q->where('event_type', TaskComment::EVENT_COMMENT)]);
+        // Query construction (filters + eager-load + priority ordering) lives in
+        // the service; this command keeps only its limit + output logic. The
+        // queue is NOT focus-steered — it's a full list, not a single pick.
+        $filters = array_filter([
+            'type' => $this->option('type'),
+            'label' => $this->option('label'),
+        ]);
 
-        if ($status = $this->option('status')) {
-            $query->where('status', $status);
-        } else {
-            $query->whereIn('status', ['open', 'in_progress', 'triage']);
-        }
-
-        $type = $this->option('type');
-        $labels = $this->option('label');
-
-        $tasks = $query
-            ->when($type, fn ($q) => $q->where('type', $type))
-            ->when($labels, fn ($q) => $q->whereHas('labels', fn ($lq) => $lq->whereIn('name', (array) $labels)))
-            ->orderByRaw("CASE priority WHEN 'blocker' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 99 END")
-            ->orderBy('position')
-            ->orderBy('id')
+        $tasks = $tasks->queueQuery($filters, $this->option('status'))
             ->when($limit, fn ($q) => $q->limit($limit))
             ->get();
 

@@ -196,6 +196,19 @@ class Task extends Model
     }
 
     /**
+     * The actionable-first grouping used to order the agent's `next`/`claim`
+     * candidates: already-started or in-flight work (open/in_progress) sorts
+     * ahead of everything else (triage), which only surfaces once nothing is
+     * open. This is a 2-way GROUPING, deliberately NOT a status rank — do not
+     * substitute {@see statusSql()} (the full configured rank) here; ordering
+     * on the whole rank would reshuffle the actionable tier by status.
+     */
+    public static function actionableFirstSql(): string
+    {
+        return "CASE WHEN status IN ('open', 'in_progress') THEN 0 ELSE 1 END";
+    }
+
+    /**
      * A `CASE {column} WHEN '<p0>' THEN 0 ... ELSE <count> END` SQL fragment
      * ranking priorities() in configured order (index = rank), replacing the
      * hardcoded CASE that used to live inline in the board/list query.

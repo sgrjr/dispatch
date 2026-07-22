@@ -4,8 +4,7 @@ namespace Sgrjr\Dispatch\Console\Commands;
 
 use Illuminate\Console\Command;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
-use Sgrjr\Dispatch\Models\Task;
-use Sgrjr\Dispatch\Models\TaskComment;
+use Sgrjr\Dispatch\Services\DispatchTaskService;
 use Sgrjr\Dispatch\Support\TaskPresenter;
 
 /**
@@ -20,19 +19,21 @@ class DispatchNext extends Command
         {--status= : Restrict to a single status (default: open, in_progress, triage)}
         {--type= : Filter to a single type}
         {--label=* : Filter to tasks carrying any of these labels}
+        {--no-focus : Ignore any active Focus steering for this call}
         {--remote : Act on the configured remote agent API (the default while an agent session token is active)}
         {--local : Act on the local DB even while an agent session token is active (overrides sticky-remote)}
         {--json : Emit machine-readable JSON instead of human text}';
 
     protected $description = 'Show the single highest-priority actionable task to pick up next.';
 
-    public function handle(): int
+    public function handle(DispatchTaskService $tasks): int
     {
         if ($this->targetsRemote()) {
             $r = $this->agentGet('next', array_filter([
                 'status' => $this->option('status'),
                 'type' => $this->option('type'),
                 'label' => $this->option('label'),
+                'no_focus' => $this->option('no-focus') ? 1 : null,
             ]));
 
             if ($r === null) {
@@ -44,30 +45,16 @@ class DispatchNext extends Command
             return self::SUCCESS;
         }
 
-        /** @var class-string<Task> $taskModel */
-        $taskModel = config('dispatch.models.task');
-
-        $type = $this->option('type');
-        $labels = $this->option('label');
-
         // Actionable = open/in_progress first; triage only as a fallback group
         // when nothing is already open/in-flight. Within a group: priority,
-        // then position, then id.
-        $task = $taskModel::query()
-            ->with('labels')
-            ->withCount(['comments as comment_count' => fn ($q) => $q->where('event_type', TaskComment::EVENT_COMMENT)])
-            ->when(
-                $this->option('status'),
-                fn ($q, $status) => $q->where('status', $status),
-                fn ($q) => $q->whereIn('status', ['open', 'in_progress', 'triage'])
-            )
-            ->when($type, fn ($q) => $q->where('type', $type))
-            ->when($labels, fn ($q) => $q->whereHas('labels', fn ($lq) => $lq->whereIn('name', (array) $labels)))
-            ->orderByRaw("CASE WHEN status IN ('open', 'in_progress') THEN 0 ELSE 1 END")
-            ->orderByRaw("CASE priority WHEN 'blocker' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 99 END")
-            ->orderBy('position')
-            ->orderBy('id')
-            ->first();
+        // then position, then id. Focus-steered unless --no-focus. Ordering,
+        // eager-loading and steering all live in the service.
+        $filters = array_filter([
+            'type' => $this->option('type'),
+            'label' => $this->option('label'),
+        ]);
+
+        $task = $tasks->nextCandidate($filters, $this->option('status'), ! $this->option('no-focus'));
 
         if (! $task) {
             if ($this->option('json')) {

@@ -31,27 +31,16 @@ class AgentController extends Controller
 {
     public function next(Request $request): JsonResponse
     {
-        /** @var class-string<Task> $taskModel */
-        $taskModel = config('dispatch.models.task');
-
-        $task = $taskModel::query()
-            ->with(['labels', 'submitter', 'assignee'])
-            ->withCount(['comments as comment_count' => fn ($q) => $q->where('event_type', TaskComment::EVENT_COMMENT)])
-            ->when(
-                $request->query('status'),
-                fn ($q, $status) => $q->where('status', $status),
-                fn ($q) => $q->whereIn('status', ['open', 'in_progress', 'triage'])
-            )
-            ->when($request->query('type'), fn ($q, $type) => $q->where('type', $type))
-            ->when($request->query('label'), fn ($q, $label) => $q->whereHas(
-                'labels',
-                fn ($lq) => $lq->whereIn('name', (array) $label)
-            ))
-            ->orderByRaw("CASE WHEN status IN ('open', 'in_progress') THEN 0 ELSE 1 END")
-            ->orderByRaw("CASE priority WHEN 'blocker' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 99 END")
-            ->orderBy('position')
-            ->orderBy('id')
-            ->first();
+        // Query construction, eager-loading, ordering and focus-steering all
+        // live in the service (mirrors the CLI). ?no_focus=1 bypasses steering.
+        $task = app(DispatchTaskService::class)->nextCandidate(
+            array_filter([
+                'type' => $request->query('type'),
+                'label' => $request->query('label'),
+            ]),
+            $request->query('status'),
+            ! $request->boolean('no_focus'),
+        );
 
         return response()->json([
             'task' => $task ? TaskPresenter::toArray($task) : null,
@@ -103,16 +92,16 @@ class AgentController extends Controller
             ]);
         }
 
-        $query = $typeLabel(
-            ($status = $request->query('status'))
-                ? $taskModel::query()->where('status', $status)
-                : $taskModel::query()->whereIn('status', ['open', 'in_progress', 'triage'])
-        )
-            ->with(['labels', 'submitter', 'assignee'])
-            ->withCount(['comments as comment_count' => fn ($q) => $q->where('event_type', TaskComment::EVENT_COMMENT)])
-            ->orderByRaw("CASE priority WHEN 'blocker' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 99 END")
-            ->orderBy('position')
-            ->orderBy('id');
+        // The list path's filter + eager-load + priority ordering lives in the
+        // service (the count census above keeps its own bespoke aggregate). Not
+        // focus-steered — the queue is a full list, not a single pick.
+        $query = app(DispatchTaskService::class)->queueQuery(
+            array_filter([
+                'type' => $request->query('type'),
+                'label' => $request->query('label'),
+            ]),
+            $request->query('status'),
+        );
 
         $limit = (int) $request->query('limit', 0);
         if ($limit > 0) {
@@ -154,7 +143,7 @@ class AgentController extends Controller
         $task = app(DispatchTaskService::class)->claim($s, array_filter([
             'type' => $v['type'] ?? null,
             'label' => $v['label'] ?? null,
-        ]), null, $v['code'] ?? null);
+        ]), null, $v['code'] ?? null, ! $request->boolean('no_focus'));
 
         // Deliver the FULL shape on claim — description + context + the comments
         // thread — because claim is exactly when the agent commits to a task and

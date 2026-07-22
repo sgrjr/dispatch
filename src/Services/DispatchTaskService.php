@@ -3,6 +3,7 @@
 namespace Sgrjr\Dispatch\Services;
 
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -236,23 +237,170 @@ class DispatchTaskService
     }
 
     /**
+     * The `next`/`claim` candidate ordering: actionable-first, then configured
+     * priority rank, then manual position, then id. Uses Task::prioritySql()
+     * (config-aware) rather than a hardcoded priority CASE — identical ordering
+     * under the default vocab (relative order is what matters, not the rank
+     * values), and correct under a custom priority vocab too.
+     */
+    public function orderForNext(Builder $q): Builder
+    {
+        return $q
+            ->orderByRaw(Task::actionableFirstSql())
+            ->orderByRaw(Task::prioritySql())
+            ->orderBy('position')
+            ->orderBy('id');
+    }
+
+    /**
+     * The `queue` ordering: configured priority rank, then position, then id —
+     * NO status term (a flat priority list, unlike {@see orderForNext()}).
+     */
+    public function orderForQueue(Builder $q): Builder
+    {
+        return $q
+            ->orderByRaw(Task::prioritySql())
+            ->orderBy('position')
+            ->orderBy('id');
+    }
+
+    /**
+     * Eager-load the relations + counts the read presenters need, in one place
+     * so no read surface N+1s. The `attachment_count` withCount is loaded even
+     * though nothing reads it yet — a later wave adds the presenter key and must
+     * not reintroduce an N+1 to get it.
+     */
+    public function eagerForRead(Builder $q): Builder
+    {
+        // The user relations are guarded: eager-loading a belongsTo BUILDS the
+        // related model instance, and the host user model need not even exist in
+        // a headless/agent context (TaskPresenter guards its reads on the FK for
+        // the same reason). Headless installs have null submitters anyway, so
+        // skipping the eager-load introduces no N+1 there.
+        $userModel = config('dispatch.models.user');
+        $withUser = is_string($userModel) && class_exists($userModel) ? ['submitter', 'assignee'] : [];
+
+        return $q
+            ->with(array_merge(['labels'], $withUser))
+            ->withCount([
+                'comments as comment_count' => fn ($q) => $q->where('event_type', TaskComment::EVENT_COMMENT),
+                'attachments as attachment_count',
+            ]);
+    }
+
+    /**
+     * Steer a single-candidate pick through the active focuses. When $applyFocus
+     * is true, each active focus (highest rank first) gets a turn: the first
+     * focus that yields a task wins; a focus whose matches are all absent — or,
+     * under FOR UPDATE SKIP LOCKED, all currently locked — yields null and
+     * steering falls through to the NEXT focus, then finally the unsteered base.
+     * Steer, never block or starve: a busy focus never stalls the loop.
+     *
+     * $baseQuery must return a FRESH builder per call (a Builder is single-use
+     * once ->first() runs, and each focus probes its own copy).
+     */
+    public function steeredFirst(bool $applyFocus, \Closure $baseQuery): ?Task
+    {
+        if ($applyFocus) {
+            /** @var class-string $focusModel */
+            $focusModel = config('dispatch.models.focus', \Sgrjr\Dispatch\Models\Focus::class);
+
+            foreach ($focusModel::query()->active()->ranked()->get() as $focus) {
+                $task = $focus->applyTo($baseQuery())->first();
+                if ($task !== null) {
+                    return $task;
+                }
+            }
+        }
+
+        return $baseQuery()->first();
+    }
+
+    /**
+     * The `next` pick: the single highest-priority actionable candidate, focus-
+     * steered by default. Base status defaults to the actionable trio
+     * (open/in_progress/triage) unless $status pins one; type/label filters
+     * narrow (label is any-of). Pass $applyFocus false to bypass steering.
+     *
+     * @param  array{type?:string,label?:string|array<int,string>}  $filters
+     */
+    public function nextCandidate(array $filters = [], ?string $status = null, bool $applyFocus = true): ?Task
+    {
+        /** @var class-string<Task> $taskModel */
+        $taskModel = config('dispatch.models.task');
+
+        $type = $filters['type'] ?? null;
+        $label = $filters['label'] ?? null;
+
+        $baseQuery = fn () => $this->orderForNext($this->eagerForRead(
+            $taskModel::query()
+                ->when(
+                    $status,
+                    fn ($q, $s) => $q->where('status', $s),
+                    fn ($q) => $q->whereIn('status', ['open', 'in_progress', 'triage'])
+                )
+                ->when($type, fn ($q, $type) => $q->where('type', $type))
+                ->when($label, fn ($q, $label) => $q->whereHas(
+                    'labels',
+                    fn ($lq) => $lq->whereIn('name', (array) $label)
+                ))
+        ));
+
+        return $this->steeredFirst($applyFocus, $baseQuery);
+    }
+
+    /**
+     * The `queue` builder: the filtered, eager-loaded, priority-ordered backlog.
+     * Base status defaults to the actionable trio unless $status pins one.
+     * NOT focus-steered — the queue is a full list, not a single pick. Callers
+     * add their own ->limit()/->get().
+     *
+     * @param  array{type?:string,label?:string|array<int,string>}  $filters
+     */
+    public function queueQuery(array $filters = [], ?string $status = null): Builder
+    {
+        /** @var class-string<Task> $taskModel */
+        $taskModel = config('dispatch.models.task');
+
+        $type = $filters['type'] ?? null;
+        $label = $filters['label'] ?? null;
+
+        return $this->orderForQueue($this->eagerForRead(
+            $taskModel::query()
+                ->when(
+                    $status,
+                    fn ($q, $s) => $q->where('status', $s),
+                    fn ($q) => $q->whereIn('status', ['open', 'in_progress', 'triage'])
+                )
+                ->when($type, fn ($q, $type) => $q->where('type', $type))
+                ->when($label, fn ($q, $label) => $q->whereHas(
+                    'labels',
+                    fn ($lq) => $lq->whereIn('name', (array) $label)
+                ))
+        ));
+    }
+
+    /**
      * Atomically claim an actionable task for an agent (C1). Picks only
      * UNSTARTED work (status open/triage, never `in_progress`, so two agents
      * can't grab the same in-flight task), mirroring dispatch:next's ordering so
      * an agent claims exactly what `next` would surface. Row-locked inside a
      * transaction; on MySQL/Postgres SKIP LOCKED hands each concurrent agent a
-     * distinct task.
+     * distinct task. Focus-steered by default ($applyFocus): the locked
+     * candidate is picked through the active focuses, falling through to base
+     * when a focus's matches are absent or all locked.
      *
      * Pass $code to claim ONE specific task by code instead of the next
      * candidate — used when a human (or a plan) hands an agent a particular
      * task. The same UNSTARTED guard still applies: a named task that is already
      * in_progress/done/etc. (or doesn't exist) yields null, so claim-by-code
      * still never steals in-flight work. A named code is exact — the type/label
-     * filters are ignored, since the code already picks the task.
+     * filters are ignored, AND steering is forced off, since the code already
+     * picks the task.
      *
      * @param  array{type?:string,label?:string|array<int,string>}  $filters
      */
-    public function claim(?AgentSession $session = null, array $filters = [], ?int $assigneeUserId = null, ?string $code = null): ?Task
+    public function claim(?AgentSession $session = null, array $filters = [], ?int $assigneeUserId = null, ?string $code = null, bool $applyFocus = true): ?Task
     {
         /** @var class-string<Task> $taskModel */
         $taskModel = config('dispatch.models.task');
@@ -262,33 +410,42 @@ class DispatchTaskService
         $type = $code === null ? ($filters['type'] ?? null) : null;
         $label = $code === null ? ($filters['label'] ?? null) : null;
 
-        return DB::transaction(function () use ($taskModel, $session, $type, $label, $assigneeUserId, $code) {
-            $query = $taskModel::query()
-                ->whereIn('status', ['open', 'triage'])
-                ->when($code, fn ($q, $c) => $q->where('code', $c))
-                ->when($type, fn ($q, $type) => $q->where('type', $type))
-                ->when($label, fn ($q, $label) => $q->whereHas(
-                    'labels',
-                    fn ($lq) => $lq->whereIn('name', (array) $label)
-                ))
-                ->orderByRaw("CASE WHEN status IN ('open', 'in_progress') THEN 0 ELSE 1 END")
-                ->orderByRaw("CASE priority WHEN 'blocker' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 99 END")
-                ->orderBy('position')
-                ->orderBy('id');
+        return DB::transaction(function () use ($taskModel, $session, $type, $label, $assigneeUserId, $code, $applyFocus) {
+            // A FRESH lean, LOCKED candidate builder per call — steeredFirst may
+            // probe it once per focus plus once for the base, and a locked
+            // builder is single-use once ->first() runs. Deliberately lean: no
+            // with()/withCount() (subqueries under FOR UPDATE are fragile) —
+            // the post-claim loadMissing in the callers hydrates for output.
+            $baseQuery = function () use ($taskModel, $type, $label, $code) {
+                $query = $this->orderForNext(
+                    $taskModel::query()
+                        ->whereIn('status', ['open', 'triage'])
+                        ->when($code, fn ($q, $c) => $q->where('code', $c))
+                        ->when($type, fn ($q, $type) => $q->where('type', $type))
+                        ->when($label, fn ($q, $label) => $q->whereHas(
+                            'labels',
+                            fn ($lq) => $lq->whereIn('name', (array) $label)
+                        ))
+                );
 
-            // Row-lock the candidate. MySQL/Postgres get SKIP LOCKED so parallel
-            // claimers each grab the NEXT free row; SQLite compiles lockForUpdate
-            // to a no-op (single-connection test env — atomicity is asserted by
-            // sequential distinctness, see ClaimTest).
-            $driver = DB::connection()->getDriverName();
-            if (in_array($driver, ['mysql', 'mariadb', 'pgsql'], true)) {
-                $query->lock('for update skip locked');
-            } else {
-                $query->lockForUpdate();
-            }
+                // Row-lock the candidate. MySQL/Postgres get SKIP LOCKED so
+                // parallel claimers each grab the NEXT free row; SQLite compiles
+                // lockForUpdate to a no-op (single-connection test env —
+                // atomicity is asserted by sequential distinctness, see ClaimTest).
+                $driver = DB::connection()->getDriverName();
+                if (in_array($driver, ['mysql', 'mariadb', 'pgsql'], true)) {
+                    $query->lock('for update skip locked');
+                } else {
+                    $query->lockForUpdate();
+                }
 
+                return $query;
+            };
+
+            // An exact code overrides steering exactly as it already overrides
+            // filters — the caller may also force it off (--no-focus).
             /** @var Task|null $task */
-            $task = $query->first();
+            $task = $this->steeredFirst($applyFocus && $code === null, $baseQuery);
             if ($task === null) {
                 return null;
             }

@@ -26,6 +26,7 @@ return [
         'task_comment' => TaskComment::class,
         'label' => Label::class,
         'task_attachment' => TaskAttachment::class,
+        'focus' => \Sgrjr\Dispatch\Models\Focus::class,
     ],
 
     /*
@@ -84,6 +85,37 @@ return [
         'type_labels' => [],
         'priority_labels' => [],
         'status_labels' => [],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Label facets
+    |--------------------------------------------------------------------------
+    |
+    | Labels carry a "kind" that decides how they render and which axis a board
+    | can group by. `namespace_kinds` maps a label's NAME PREFIX (the part before
+    | the first ':') to a kind:
+    |   - `elevated` — the load-bearing axis (area:*, epic:*): elevated chips
+    |     lead the card, and a board can swim-lane / group by them.
+    |   - `meta` — provenance/plumbing (source:*, kind:*): surfaced only in the
+    |     detail view, kept off cards and rows so they don't crowd the signal.
+    | Any prefix not listed here (and any prefixless label) is a plain label.
+    |
+    | A per-label override lives in the `dispatch_labels.kind` COLUMN: set it and
+    | that one label's kind wins over the namespace default (Label::effectiveKind).
+    |
+    | NOTE the intentional overlap: the `kind` entry in this map is the LABEL
+    | NAMESPACE `kind:*` (e.g. `kind:regression`), which is unrelated to the
+    | `kind` COLUMN just mentioned — different scopes that happen to share a
+    | word. Don't "fix" it by renaming either.
+    */
+    'labels' => [
+        'namespace_kinds' => [
+            'area' => 'elevated',
+            'epic' => 'elevated',
+            'source' => 'meta',
+            'kind' => 'meta',
+        ],
     ],
 
     /*

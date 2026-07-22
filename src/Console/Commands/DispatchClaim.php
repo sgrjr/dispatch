@@ -25,6 +25,7 @@ class DispatchClaim extends Command
         {--type= : Restrict to this task type (ignored when a code is given)}
         {--label=* : Restrict to tasks carrying ALL of these labels. Repeatable. (ignored when a code is given)}
         {--assignee= : User id to assign the claimed task to}
+        {--no-focus : Ignore any active Focus steering for this claim}
         {--json : Emit machine-readable JSON instead of human text}
         {--remote : Claim via the remote agent API (the default while an agent session token is active)}
         {--local : Claim on the local DB even while an agent session token is active (overrides sticky-remote)}';
@@ -46,7 +47,7 @@ class DispatchClaim extends Command
 
         $assignee = $this->option('assignee');
 
-        $task = $tasks->claim(null, $filters, $assignee !== null ? (int) $assignee : null, $code);
+        $task = $tasks->claim(null, $filters, $assignee !== null ? (int) $assignee : null, $code, ! $this->option('no-focus'));
 
         if ($task === null) {
             return $this->reportNothingClaimed($code);
@@ -108,6 +109,7 @@ class DispatchClaim extends Command
             'type' => $filters['type'] ?? null,
             'label' => $filters['label'] ?? null,
             'code' => $code,
+            'no_focus' => $this->option('no-focus') ? 1 : null,
         ]);
 
         $response = $this->agentPost('claim', $payload);
