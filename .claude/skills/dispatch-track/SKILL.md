@@ -95,7 +95,14 @@ setup required. Sensible starting conventions:
 - `source:customer` — relayed from a user/customer
 - `area:<area>` — check this project's existing labels (`dispatch:queue` or
   the board) before inventing a new one; reuse what's already there
-- `epic:<slug>` — only if it clearly belongs to an existing epic
+- `epic:<slug>` — an epic is now just a single-label **Focus**: tag it with an
+  `epic:<slug>` label and manage the steering lens at `/focuses`. There is no
+  special epic type anymore.
+
+**Label kinds** decide where a label renders: `area:*` / `epic:*` are
+**elevated** (navigational — they lead cards/rows and a board can lane by them);
+`source:*` / `kind:*` are **meta** (bookkeeping — detail view only). Anything
+else is a plain label.
 
 **`--public`** — omit unless the item should be visible to non-staff
 submitters (default is private/internal).
@@ -187,7 +194,9 @@ parse against that instead of guessing field names from examples.
    Scope with `--type=` / `--label=*` the same way you'd scope `next`. This
    matters whenever more than one agent (or an agent and a human) might pull
    from the same backlog — `next` alone is just a preview and doesn't
-   reserve anything.
+   reserve anything. When an active **Focus** exists, `next`/`claim` steer
+   toward its matches first (it never starves — an empty focus falls through);
+   `--no-focus` ignores it, and `queue` is never steered.
 
 4. **Do the work** the task describes. This is a normal coding session —
    nothing Dispatch-specific here.
@@ -200,7 +209,10 @@ parse against that instead of guessing field names from examples.
 6. **`php artisan dispatch:done <code> --commit=<sha> --result='{"tests":"passing"}'`**
    — mark the task complete once the work lands. `--commit` + `--result` are
    stored under the task's `context.result` as the audit trail back to the
-   change; always pass a commit SHA when you have one. `--status=declined`,
+   change; always pass a commit SHA when you have one. Record how it resolved
+   with a `result.resolution` key (`built | already-implemented | obsolete`,
+   free-form allowed) so the board can tell built work from what was already in
+   the tree. `--status=declined`,
    `--status=verifying`, or `--status=backburner` (parked/not-now — out of the
    queue without rejecting, distinct from declined) are valid alternatives to
    `done` when that's the actual outcome. (To leave a comment, use

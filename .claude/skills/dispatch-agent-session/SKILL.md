@@ -1,6 +1,6 @@
 ---
 name: dispatch-agent-session
-description: PROACTIVELY use when asked to work the PRODUCTION Dispatch backlog from outside the deploy — "work the live/prod backlog", "run as a remote agent", "commission an agent session", "pick up real tasks remotely", "work this against production", "work/claim all the open production items", "plan and complete the production backlog" — or whenever context makes clear the target is the authoritative (production) Dispatch instance rather than local dev. Drives the human-commissioned session protocol (one-shot `dispatch:session:request --wait` → human approval) and the verb loop that follows — while the session token is active every dispatch verb targets production automatically (sticky remote), so the loop is queue → claim → work → note → done → session:end — plus the batch "memorialize" path (`dispatch:batch`) that commits a whole run of add/update ops in one hit. Also use when a session goes stale (401 mid-loop, denied, revoked, expired) and needs graceful handling. Do NOT use for local dev work against the app's own database — see `dispatch-track` for that.
+description: PROACTIVELY use when asked to work the PRODUCTION Dispatch backlog from outside the deploy — "work the live/prod backlog", "run as a remote agent", "commission an agent session", "pick up real tasks remotely", "work this against production", "work/claim all the open production items", "plan and complete the production backlog" — or whenever context makes clear the target is the authoritative (production) Dispatch instance rather than local dev. Drives the human-commissioned session protocol (two-step for agents: `dispatch:session:request` → surface the user_code → `dispatch:session:status --wait` collects on approval; `--wait` on the request is the human-at-a-terminal one-shot) and the verb loop that follows — while the session token is active every dispatch verb targets production automatically (sticky remote), so the loop is queue → claim → work → note → done → session:end — plus the batch "memorialize" path (`dispatch:batch`) that commits a whole run of add/update ops in one hit. Also use when a session goes stale (401 mid-loop, denied, revoked, expired) and needs graceful handling. Do NOT use for local dev work against the app's own database — see `dispatch-track` for that.
 ---
 
 # Work the production Dispatch backlog as a commissioned agent
@@ -19,15 +19,22 @@ boundaries.
 ## Happy path — one run, end to end
 
 ```bash
-# 1. Commission — ONE command: prints a short user_code, blocks until a human
-#    decides, then stores the token. No --scope needed: the default requests
-#    the full grantable verb set (the approver sees + controls the actual grant).
-php artisan dispatch:session:request --name="<agent>" --purpose="<why>" --wait
+# 1. Commission — TWO steps for an agent. Request WITHOUT --wait: the user_code
+#    prints and the command EXITS, so a buffered harness can actually surface it.
+#    No --scope needed — the default requests the full grantable verb set (the
+#    approver sees + controls the actual grant). Buffered/blocked harness that
+#    can't read stdout mid-command? add --code-file=<path> — the user_code is
+#    written there as JSON the moment it exists.
+php artisan dispatch:session:request --name="<agent>" --purpose="<why>"
 
-# 2. Show the operator the user_code verbatim, once:
+# 2. Show the operator the user_code verbatim, then collect the token — the poll
+#    blocks until the human decides (most land in ~10s); don't ask them to come
+#    back and say "approved":
 #    "Approve in the Agent Sessions UI (/dispatch/agent-sessions on the target
 #     instance) — confirm the code reads <user_code>."
-#    Don't ask them to come back and say "approved" — --wait returns on its own.
+php artisan dispatch:session:status --wait
+#    (--wait ON session:request folds request→collect into ONE call — the
+#     shortcut for a HUMAN at a terminal, not a buffered agent.)
 
 # 3. Survey. While the token is active EVERY verb targets production by
 #    default (each call announces "→ remote: <host>"; --local overrides).
@@ -59,11 +66,22 @@ Notes on the loop:
   flags waiting human direction — `dispatch:show <CODE> --json` reads the full
   brief before you commit to a claim. `dispatch:schema` prints the frozen JSON
   contract when you need field-level truth.
+- `attachment_count > 0` on a task (or a comment) means a human hung evidence the
+  API **can't hand you** (no URL, no binary) — a screenshot or file. Ask the
+  operator to transcribe it before you act on that brief; don't guess past it.
+- `next`/`claim` are **focus-steered** — production runs a Focus that steers you
+  to the sanctioned work first (it never starves; empty/busy focuses fall
+  through). That's the mandate and normally what you WANT. Use `--no-focus` only
+  when the commission explicitly says to ignore it. (`queue` isn't steered;
+  claim-by-code ignores steering.)
 - Claim is atomic and race-safe. A named code is honored only while the task is
   still unclaimed (open/triage) — an empty, non-zero result means someone else
   has it: skip it, don't force it.
 - The backlog is **live** — other agents and humans work it too. Re-run
   `dispatch:queue` between tasks; claim each item only when you START it.
+- On close, record **`result.resolution`** — `built | already-implemented |
+  obsolete` (free-form allowed) — so the board can tell what you built from what
+  was already there (the vet's "already-implemented" close should stamp it).
 - Long or multi-line inputs always have a file escape hatch: `--result-file`,
   `--body-file`, `--description-file` (or `-` for stdin).
 
@@ -122,6 +140,10 @@ checklist into a manifest.
 
 ## When things go wrong
 
+- **Lost track of where you stand?** `dispatch:session:status` is the safe first
+  probe — a local, exit-0 read of your state that names the next verb: ACTIVE
+  (token live), DROPPED (names `session:refresh` / `session:end`), or NONE (names
+  `session:request`). Only a still-pending request actually polls the remote.
 - **`expired` / `revoked` / mid-loop `401`** — the local token is cleared and a
   **drop marker** goes up: bare verbs now FAIL LOUD instead of silently serving
   the local dev DB as if it were production (that masquerade reads as data

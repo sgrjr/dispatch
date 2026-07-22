@@ -261,6 +261,7 @@ UI classes exist in the package (`dispatch.routes.enabled`, default `true`):
 | `dispatch.board` | `/dispatch/board` | `TaskBoard` (kanban) | same |
 | `dispatch.create` | `/dispatch/new` | `TaskCreate` | same |
 | `dispatch.show` | `/dispatch/{task:code}` | `TaskShow` | same |
+| `dispatch.focuses` | `/dispatch/focuses` | `FocusPanel` (staff focus mgmt) | same |
 | `dispatch.portal` | `/dispatch/mine` | `MySubmissions` | `dispatch.routes.portal_middleware` |
 | `dispatch.attachments.store` | `POST /dispatch/attachments` | `AttachmentController@store` | same |
 | `dispatch.attachments.download` | `GET /dispatch/attachments/{attachment}/download` | `AttachmentController@download` | same |
@@ -286,9 +287,11 @@ dispatch:add    <title> [--type=] [--priority=] [--status=] [--description=]
                 [--public] [--label=]*  [--submitter=]
                 → create a task (goes through DispatchTaskService — never a bare Task::create)
 
-dispatch:next   [--type=] [--label=] [--json]
+dispatch:next   [--type=] [--label=] [--no-focus] [--json]
                 → the single highest-priority open task, ordered
                   in_progress > open > triage, then blocker > high > medium > low
+                  (focus-steered by default — see "Labels & focus"; --no-focus
+                  bypasses)
 
 dispatch:queue  [--n=10] [--type=] [--priority=] [--label=] [--status=]*
                 → the next N tasks in the same priority order, as a table
@@ -313,6 +316,8 @@ dispatch:push   [--path=] [--skip-export]
                 → export local task state and push it to the remote install
 ```
 
+Repeatable `--label` is a **union** (any-of); an all-of filter isn't available.
+
 A typical agent session:
 
 ```bash
@@ -334,6 +339,76 @@ package* (e.g. local dev ↔ production) over `dispatch.sync.remote_url` +
 `dispatch.sync.token`. Leave those unset and the two commands no-op with an
 instructive error instead of failing silently — the rest of the verb loop
 works fine without them.
+
+---
+
+## Labels & focus
+
+Labels do double duty: some are a **navigational axis** you steer the board by,
+others are **bookkeeping** you only want on a task's detail page. Dispatch sorts
+them with a per-label **kind** so the signal labels lead and the plumbing stays
+out of the way.
+
+**Label kinds.** A label's kind comes from its name's namespace (the part before
+the first `:`), mapped in `config('dispatch.labels.namespace_kinds')`:
+
+```php
+// config/dispatch.php
+'labels' => [
+    'namespace_kinds' => [
+        'area'   => 'elevated',   // area:*  — the load-bearing axis
+        'epic'   => 'elevated',   // epic:*  — swim-lane / group by these
+        'source' => 'meta',       // source:* — provenance
+        'kind'   => 'meta',       // kind:*   — bookkeeping
+    ],
+],
+```
+
+- **`elevated`** — the load-bearing axis (`area:*`, `epic:*`). Elevated chips
+  **lead** a card / row, and a board can swim-lane or group by them.
+- **`meta`** — provenance/plumbing (`source:*`, `kind:*`). Rendered **only in the
+  detail view** — kept off cards and list rows so they don't crowd the signal.
+- Any namespace not listed (and any prefixless label) is a **plain** label.
+
+A per-label override lives in the `dispatch_labels.kind` **column**: set it and
+that one label's kind wins over its namespace default (`Label::effectiveKind()`).
+Both the map and the column are in-code-defaulted, so an unpublished or older
+`config/dispatch.php` still gets the shipped `area/epic → elevated`,
+`source/kind → meta` map. Filter popovers on the board and list are grouped into
+the same sections — each elevated namespace, then a plain **Labels** section,
+then **Meta**.
+
+**Swimlanes & group-by.** The board can lane every column a second time by each
+task's first elevated label — toggle it with `?lanes=1` (tasks with no elevated
+label collect in a `—` lane; the done-column cap stays **global**, lanes just
+split what the cap already kept). The list has a lighter, **page-scoped**
+group-by: `?group=<namespace>` (an elevated namespace, e.g. `area`) lanes only
+the rows on the *current page* — pure presentation that never touches the query
+or pagination, so it groups what you can see, not the whole backlog.
+
+**Focus — a saved steering lens.** A **Focus** (`dispatch_focuses`;
+`config('dispatch.models.focus')`) is a named, ranked filter over three axes
+only — labels (any-of), types, priorities. Its job is to **steer** the agent
+verbs toward matching work, not to window the board away:
+
+- `dispatch:next` and `dispatch:claim` (CLI **and** the agent API) surface the
+  top-ranked **active** focus's matches first. It **steers, never starves**: a
+  focus whose matches are all absent — or, when claiming, all locked — falls
+  through to the next active focus, then to the unsteered base, so the loop
+  never blocks on a busy or empty focus.
+- `--no-focus` (`?no_focus=1` on the API) bypasses steering for one call.
+- **Claim-by-code ignores steering** — naming a task claims exactly that task.
+- `dispatch:queue` is **not** steered — it's a full list, not a single pick.
+
+Steer the UI too: the board and list carry a focus switcher (`?focus=<id>`), a
+"save current filters as focus" action (it stores only the axes you actually
+constrained), and a staff-only `/focuses` page to rank, activate, rename, and
+delete them.
+
+> **An epic is just a single-label focus now.** `Label::isEpic()` is gone — there
+> is no special epic type. Model an epic as an `epic:<slug>` elevated label plus a
+> Focus that constrains to it; the board's swimlanes / group-by then give you the
+> epic view for free.
 
 ---
 
@@ -386,7 +461,7 @@ the drop. Hosts opt out of sticky remote with
 ### Agent-CLI verbs
 
 ```
-dispatch:claim  {code?} {--type=} {--label=*} {--assignee=} {--json} {--remote} {--local}
+dispatch:claim  {code?} {--type=} {--label=*} {--assignee=} {--no-focus} {--json} {--remote} {--local}
                 → atomically claim an actionable task: marks it in_progress +
                   assigns it in one transaction, so two agents (or an agent and
                   a human) never grab the same task. With no argument it claims
@@ -402,7 +477,7 @@ dispatch:add    {title} ... {--description=} {--description-file=} {--key=} {--r
                   creating a duplicate. --description-file=PATH (or `-` for
                   stdin) reads a long body from a file instead of inline
 
-dispatch:next   {--status=} {--type=} {--label=*} {--json} {--remote} {--local}
+dispatch:next   {--status=} {--type=} {--label=*} {--no-focus} {--json} {--remote} {--local}
 dispatch:queue  {--status=} {--type=} {--label=*} {--limit=} {--count} {--json} {--remote} {--local}
                 → filter to only agent-appropriate work, e.g. --label agent:ok;
                   --limit=N caps the rows to the top N of the priority order so
@@ -450,6 +525,10 @@ dispatch:doctor {--strict} {--json}
                   stale config cache — the stale-published-config trap, surfaced
                   before it 403s/401s a real call (see UPGRADING.md)
 ```
+
+Repeatable `--label` is a **union** (any-of); an all-of filter isn't available.
+`next`/`claim` are **focus-steered** by default (see "Labels & focus"); pass
+`--no-focus` to ignore active focuses for one call.
 
 A compact verb loop, claiming a task labeled for agent work and closing it
 out with a structured result:
@@ -500,6 +579,15 @@ fields plus `description`, `context`, and the full `comments[]` thread — becau
 a claiming agent needs the human's direction, which lives there. Run
 `php artisan dispatch:schema` to get both shapes as data instead of relying on
 this example.
+
+**Attachment signals.** The summary shape carries an `attachment_count`; the
+full shape adds an `attachments[]` array (`filename`, `mime`, `size_bytes`,
+`is_image`) plus a per-comment `attachment_count`. These are **signals only** —
+there is no fetch URL, and binaries never travel the agent API. An agent that
+sees `attachment_count > 0` should read it as "a human attached evidence I can't
+retrieve" and **ask for a transcription** of the screenshot/file before
+proceeding rather than guessing. (`dispatch:show`'s human output lists the
+attachments so a person can relay them.)
 
 ### Batch memorialize — one hit instead of forty
 
@@ -661,6 +749,18 @@ per-model rate table in
 trusting a baked-in dollar figure — cache writes default to the 5-minute-TTL
 rate (1.25× input).
 
+On success, `done --with-metrics` prints a `task metrics attached → 📊 … ·
+window basis: <basis>` receipt on the **stderr side channel** (so a piped
+`--json` stdout stays contract-pure) — its presence confirms the numbers were
+computed from a located transcript. A run with **no transcript** attaches nothing
+and prints no receipt (it warns instead).
+
+**Recording how a task resolved.** On close, the recommended convention is a
+`result.resolution` key — `built`, `already-implemented`, or `obsolete`
+(free-form allowed) — so the board can distinguish a task you *implemented* from
+one that was *already in the tree* or *obsolete*. `php artisan dispatch:schema`
+documents it under the `done` key.
+
 **Locating the transcript.** By default the command derives the transcript
 directory from the project path and picks the active session's file, so it
 works with **no setup**. To pin the exact session when several run against one
@@ -729,18 +829,31 @@ API so an agent can work the **authoritative production backlog** from
 somewhere else — a laptop, a different CI job, another project entirely —
 **without a standing credential**. It's an RFC-8628 device-flow shape:
 
-1. The agent requests a session: `dispatch:session:request --name=... --purpose=... --wait`.
-   This prints a short `user_code` and (with `--wait`) blocks in-process until a
-   human decides, then stores the token — the whole commissioning in **one
-   command**. With no `--scope` it requests the **full grantable verb set** (the
-   approver sees and controls the actual grant); pass `--scope=...` only to
-   deliberately narrow a session.
+1. **The agent recipe is two-step.** The agent requests a session with **no
+   `--wait`** — the `user_code` prints and the command **exits** at once, so a
+   buffered agent harness can actually surface it:
+   `dispatch:session:request --name=... --purpose=...`. With no `--scope` it
+   requests the **full grantable verb set** (the approver sees and controls the
+   actual grant); pass `--scope=...` only to deliberately narrow a session. A
+   blocked/buffered harness that can't read stdout mid-command can have the code
+   written out-of-band with `--code-file=<path>` — a `{user_code, public_id,
+   expires_at}` JSON written the moment the code exists. (`--wait` folds request
+   → show → poll → collect into one blocking command; it's the shortcut for a
+   **human at a terminal**, not a buffered agent.)
 2. A human approves or denies it in production's "Agent Sessions" UI — a
    staff-gated Livewire page at `/dispatch/agent-sessions` — confirming the
-   `user_code` matches what the agent displayed.
-3. (Only without `--wait`:) the agent polls with `dispatch:session:status --wait`
-   (async + human-gated — back off, don't spin). On approval, a short-TTL bearer
-   token is stored in a dotfile outside the repo, owner-only (`0600`).
+   `user_code` matches what the agent displayed. The approve row carries a
+   **session-length** select (Default = the configured `session_ttl`, or presets
+   1h / 3h / 8h / 24h).
+3. The agent collects the token with `dispatch:session:status --wait` (async +
+   human-gated — back off, don't spin). `session:status` is a **three-state
+   local probe**: a stored token reports the session **ACTIVE** from the dotfile
+   (no HTTP, exit 0; past its `expires_at` it warns and names `session:refresh`);
+   a drop marker reports **DROPPED** (names `session:refresh` / `session:end`);
+   nothing reports **NONE** (names `session:request`) — all exit 0. Only a
+   genuinely **pending** request polls the remote (still exiting non-zero on
+   denied/revoked/expired). On approval, a short-TTL bearer token is stored in a
+   dotfile outside the repo, owner-only (`0600`).
 4. The agent then drives the same verb loop — while the token is active the
    verbs target production **by default** (sticky remote: each call announces
    `→ remote: <host>`, and `--local` overrides). A `401` mid-session means the

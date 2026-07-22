@@ -53,8 +53,50 @@ Quick diagnosis:
   directly (missing verb, unset secret, still-cached config) instead of leaving
   you to infer it from a `403`/`401`/`503`.
 
-## Unreleased — `backburner` status + multi-select board/list filters
+## Unreleased — label kinds & focus steering + `backburner` status + multi-select board/list filters
 
+- **Two new migrations** — `dispatch_labels.kind` (the per-label facet column)
+  and `dispatch_focuses` (saved steering lenses). Run `php artisan migrate` (they
+  load from the package automatically; publish with `--tag=dispatch-migrations`
+  only to edit them in your own `database/migrations/`). Without them the label
+  kind facet and Focus steering have no storage.
+- **Focus steering on `next`/`claim`.** `dispatch:next` and `dispatch:claim`
+  (CLI **and** the agent API) now surface the top-ranked **active** Focus's
+  matches first, falling through to lower-ranked focuses and then the unsteered
+  base — it steers, never starves. It is **default-on but inert with zero
+  focuses**: no active focus ⇒ identical ordering to before. `--no-focus`
+  (`?no_focus=1`) bypasses it for a call; `dispatch:queue` is not steered and
+  claim-by-code ignores steering.
+- **`dispatch:session:status` exit-code change.** The old zero-state (no token
+  and no pending request) exited **1**; it is now a three-state exit-**0** probe
+  — ACTIVE / DROPPED / NONE all exit 0 and name the next verb. A genuinely
+  pending request still polls, and denied/revoked/expired still exit 1. **Update
+  any script that asserted `session:status` fails when no session exists.**
+- **Claim bridge template changed.** `dispatch:claim` now echoes a
+  ready-to-paste close command that includes `--commit=<sha>` (plus
+  `--result-file` and `--with-metrics --since=<claimed_at>` placeholders) on the
+  stderr side channel. Anything that scraped the old bridge text should re-read
+  it.
+- **Meta labels demoted off cards/rows.** `source:*` / `kind:*` (any `meta`-kind
+  namespace) no longer render on board cards or list rows — a **visual change**
+  only; the detail view still shows them, and elevated labels (`area:*` /
+  `epic:*`) now lead.
+- **`Label::isEpic()` removed.** There is no special epic type — an epic is now a
+  single-label Focus (an `epic:<slug>` elevated label plus a Focus constrained to
+  it). No known consumers.
+- **New config keys** `dispatch.labels.namespace_kinds` and
+  `dispatch.models.focus`. In-code fallbacks cover an unpublished or older
+  `config/dispatch.php` (the shipped `area/epic → elevated`, `source/kind → meta`
+  map and the package `Focus` model), so nothing errors — **re-publish, or add
+  the keys, to pin/customize them** (same shallow-`mergeConfigFrom` trap as the
+  other blocks here).
+- **Per-approval session TTL.** The Agent Sessions approve row gains a
+  session-length select (Default = the configured `agent.session_ttl`, presets
+  1h / 3h / 8h / 24h) — no migration or config change required.
+- **Agent contract additive keys.** The `--json` summary shape gains
+  `attachment_count`; the full shape gains an `attachments[]` array and a
+  per-comment `attachment_count`. **Additive — existing parsers are unaffected**
+  (signals only: no fetch URL, binaries never travel the agent API).
 - **New default status `backburner`** sits between `verifying` and `done`:
   parked — consciously not actionable now or anytime soon, or code-done but
   blocked on an external date — distinct from `triage` (unprocessed) and
