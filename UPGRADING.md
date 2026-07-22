@@ -53,7 +53,7 @@ Quick diagnosis:
   directly (missing verb, unset secret, still-cached config) instead of leaving
   you to infer it from a `403`/`401`/`503`.
 
-## Unreleased — label kinds & focus steering + `backburner` status + multi-select board/list filters
+## v0.7.0 — label kinds & focus steering + `backburner` status + multi-select board/list filters
 
 - **Two new migrations** — `dispatch_labels.kind` (the per-label facet column)
   and `dispatch_focuses` (saved steering lenses). Run `php artisan migrate` (they
