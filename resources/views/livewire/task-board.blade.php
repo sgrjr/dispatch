@@ -117,6 +117,10 @@
             @include('dispatch::livewire.partials.filter-group', ['property' => 'labelFilter', 'options' => $labels->pluck('name', 'name')])
         </div>
         <div>
+            <span class="dispatch-label">Due</span>
+            @include('dispatch::livewire.partials.filter-group', ['property' => 'dueFilter', 'options' => $dueBucketLabels])
+        </div>
+        <div>
             <span class="dispatch-label">Columns</span>
             @include('dispatch::livewire.partials.filter-group', ['property' => 'columnFilter', 'options' => $statusLabels])
         </div>
@@ -235,6 +239,7 @@
                                 @if ($isStale)
                                     <span class="dispatch-badge is-warning" title="No update in over {{ $staleThresholdDays }} days">stale</span>
                                 @endif
+                                @include('dispatch::livewire.partials.due-badge', ['task' => $task])
                                 @if ($task->assignee)
                                     <span style="font-size: 0.7rem; color: var(--dispatch-text-muted);">{{ $task->assignee->name }}</span>
                                 @endif

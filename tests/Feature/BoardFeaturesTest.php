@@ -421,3 +421,47 @@ test('the board updated window filters cards by activity, cumulatively like the 
     $component->set('updatedFilter', 'month');
     expect($component->viewData('byStatus')->get('open'))->toHaveCount(2);
 });
+
+test('the due filter thins the board, including the capped done column, through the shared closure', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'Open and overdue', 'status' => 'open', 'due_at' => now()->subDays(2)]);
+    $svc->create(['title' => 'Open, no due date', 'status' => 'open']);
+    $svc->create(['title' => 'Done, past-due date', 'status' => 'done', 'due_at' => now()->subDays(2)]);
+
+    // 'overdue' never matches an inactive task — the done column empties.
+    $component = Livewire::test(TaskBoard::class)->set('dueFilter', ['overdue']);
+    expect($component->viewData('byStatus')->get('open'))->toHaveCount(1);
+    expect($component->viewData('doneTotal'))->toBe(0);
+
+    // 'dated' does match it, through the same closure the done cap uses.
+    $component->set('dueFilter', ['dated']);
+    expect($component->viewData('doneTotal'))->toBe(1);
+});
+
+test('due badges render tiered by bucket, and inactive tasks with a due date render the muted badge', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'Open and overdue', 'status' => 'open', 'due_at' => now()->subDays(2)]);
+    $svc->create(['title' => 'Open, due today', 'status' => 'open', 'due_at' => now()]);
+    $svc->create(['title' => 'Done, past-due date', 'status' => 'done', 'due_at' => now()->subDays(2)]);
+    $svc->create(['title' => 'Open, no due date', 'status' => 'open']);
+
+    $html = Livewire::test(TaskBoard::class)->html();
+
+    // One badge per dated task (three), none for the undated one.
+    expect(substr_count($html, 'title="Due '))->toBe(3);
+    expect(substr_count($html, '>due today<'))->toBe(1);
+    expect(substr_count($html, '>due 2d ago<'))->toBe(2);
+
+    // Tiers: the open overdue task is the ONLY red badge; due-today wears
+    // is-warning alongside any stale badges (none here); the done past-due
+    // task renders the muted default badge — its "due 2d ago" is never red.
+    expect(substr_count($html, 'dispatch-badge is-danger" title="Due '))->toBe(1);
+    expect(substr_count($html, 'dispatch-badge is-warning" title="Due '))->toBe(1);
+    expect(substr_count($html, 'dispatch-badge" title="Due '))->toBe(1);
+});

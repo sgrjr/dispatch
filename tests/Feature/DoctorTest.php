@@ -87,6 +87,47 @@ test('dispatch:doctor warns on a non-HTTPS remote target outside local', functio
     expect(doctorFinding($out, 'remote.url')['level'])->toBe('warn');
 });
 
+test('dispatch:doctor reports touch_time ok on the package defaults', function () {
+    [, $out] = doctorRun();
+
+    $finding = doctorFinding($out, 'metrics.touch_time');
+    expect($finding['level'])->toBe('ok')
+        ->and($finding['message'])->toContain('v1');
+});
+
+test('dispatch:doctor warns when a published metrics block predates touch_time (GAP-3 shallow-merge drift)', function () {
+    // A host `metrics` array published before v0.6.0: the key is ABSENT (not
+    // present-null), so mergeConfigFrom drops the package default wholesale.
+    $metrics = config('dispatch.metrics');
+    unset($metrics['touch_time']);
+    config(['dispatch.metrics' => $metrics]);
+
+    [$exit, $out] = doctorRun();
+
+    $finding = doctorFinding($out, 'metrics.touch_time');
+    expect($finding['level'])->toBe('warn')
+        ->and($finding['message'])->toContain('est. human time')
+        ->and($exit)->toBe(0);  // a warning alone doesn't fail the exit code
+});
+
+test('dispatch:doctor treats an explicit null touch_time as the documented opt-out, not drift', function () {
+    config(['dispatch.metrics.touch_time' => null]);
+
+    [, $out] = doctorRun();
+
+    expect(doctorFinding($out, 'metrics.touch_time')['level'])->toBe('info');
+});
+
+test('dispatch:doctor warns on a touch_time block missing its version or base_minutes', function () {
+    config(['dispatch.metrics.touch_time' => ['base_minutes' => ['default' => 10]]]);
+
+    [, $out] = doctorRun();
+
+    $finding = doctorFinding($out, 'metrics.touch_time');
+    expect($finding['level'])->toBe('warn')
+        ->and($finding['message'])->toContain('version');
+});
+
 test('dispatch:doctor flags a stale published config that omits agent keys', function () {
     // Simulate a published agent block that predates several keys: drop them so
     // the key is ABSENT (not present-null), the real GAP-3 shape.

@@ -65,6 +65,10 @@
                 @include('dispatch::livewire.partials.filter-group', ['property' => 'labelFilter', 'options' => $labels->pluck('name', 'name')])
             </div>
             <div>
+                <span class="dispatch-label">Due</span>
+                @include('dispatch::livewire.partials.filter-group', ['property' => 'dueFilter', 'options' => $dueBucketLabels])
+            </div>
+            <div>
                 <label class="dispatch-label">Updated</label>
                 <select wire:model.live="updatedFilter" class="dispatch-select">
                     <option value="">Any time</option>
@@ -86,6 +90,8 @@
                     <option value="oldest">Oldest</option>
                     <option value="updated_desc">Recently updated</option>
                     <option value="updated_asc">Least recently updated</option>
+                    <option value="due_asc">Due (closest first)</option>
+                    <option value="due_desc">Due (furthest first)</option>
                     <option value="code">Code</option>
                     <option value="title">Title</option>
                 </select>
@@ -163,6 +169,7 @@
                             @if ($task->is_public)
                                 <span class="dispatch-badge is-success">public</span>
                             @endif
+                            @include('dispatch::livewire.partials.due-badge', ['task' => $task])
                             @foreach ($task->labels as $label)
                                 <span class="dispatch-badge" style="background-color: {{ $label->color ?: '#94a3b8' }}; color:#fff;">{{ $label->name }}</span>
                             @endforeach

@@ -2,6 +2,7 @@
 
 namespace Sgrjr\Dispatch\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -17,6 +18,13 @@ class Task extends Model
     public const TYPES = ['bug', 'feature', 'chore', 'debt', 'verify'];
     public const PRIORITIES = ['blocker', 'high', 'medium', 'low'];
     public const STATUSES = ['triage', 'open', 'in_progress', 'verifying', 'backburner', 'done', 'declined'];
+
+    /**
+     * Due-date window buckets (MECE partition + the 'dated' convenience union).
+     * Computed windows, NOT a workflow vocab — deliberately not config-driven,
+     * so there is no `dispatch.workflow.*` override for these.
+     */
+    public const DUE_BUCKETS = ['overdue', 'today', 'week', 'month', 'later', 'none', 'dated'];
 
     protected $table = 'dispatch_tasks';
 
@@ -217,6 +225,134 @@ class Task extends Model
         }
 
         return "CASE {$column} ".implode(' ', $whens).' ELSE '.count($values).' END';
+    }
+
+    /**
+     * Statuses excluded from "nag" signals (stale, overdue) — the same trio
+     * the stale checks hardcode (TaskList::isStale(), the board's inline
+     * stale @php). Not config-driven on purpose: names absent from a custom
+     * status vocab simply never match, so overdue degrades to purely
+     * date-based — the same graceful degradation stale already exhibits.
+     *
+     * @return array<int,string>
+     */
+    public static function inactiveStatuses(): array
+    {
+        return ['backburner', 'done', 'declined'];
+    }
+
+    public function isInactive(): bool
+    {
+        return in_array($this->status, static::inactiveStatuses(), true);
+    }
+
+    /**
+     * @return array<int,string>
+     */
+    public static function dueBuckets(): array
+    {
+        return self::DUE_BUCKETS;
+    }
+
+    /**
+     * @return array<string,string>
+     */
+    public static function dueBucketLabels(): array
+    {
+        return [
+            'overdue' => 'Overdue',
+            'today' => 'Due today',
+            'week' => 'Due this week',
+            'month' => 'Due this month',
+            'later' => 'Due later',
+            'none' => 'No due date',
+            'dated' => 'Has due date',
+        ];
+    }
+
+    /**
+     * Half-open [lo, hi) day-boundary instants, app timezone, rolling from
+     * today: overdue < start | today [start, +1d) | week [+1d, +8d) |
+     * month [+8d, +31d) | later >= +31d. Half-open datetime intervals stay
+     * MECE even when due_at carries a time component (the UI writes date-only
+     * midnights; the agent API may write full timestamps).
+     *
+     * @return array{start:\Illuminate\Support\Carbon,tomorrow:\Illuminate\Support\Carbon,weekEnd:\Illuminate\Support\Carbon,monthEnd:\Illuminate\Support\Carbon}
+     */
+    protected static function dueBucketBoundaries(): array
+    {
+        $start = now()->startOfDay();
+
+        return [
+            'start' => $start,
+            'tomorrow' => $start->copy()->addDay(),
+            'weekEnd' => $start->copy()->addDays(8),
+            'monthEnd' => $start->copy()->addDays(31),
+        ];
+    }
+
+    /**
+     * OR'd within-axis due-bucket clauses (mirroring the whereIn semantics of
+     * the other filter axes), AND'd with everything outside the wrapping
+     * where(). 'overdue' applies only to active tasks — an inactive
+     * (backburner/done/declined) task with a past due date matches no range
+     * bucket, only 'dated'. That means a selection of every bucket EXCEPT
+     * 'dated' hides such tasks — by design, not a bug: closed/parked work is
+     * never "overdue".
+     *
+     * Carbon instances are passed straight to where() so the grammar formats
+     * them — portable across SQLite and MySQL with no SQL date functions.
+     *
+     * @param  array<int,string>  $buckets
+     */
+    public function scopeDueInBuckets(Builder $query, array $buckets): Builder
+    {
+        if ($buckets === []) {
+            return $query;
+        }
+
+        $b = static::dueBucketBoundaries();
+
+        return $query->where(function (Builder $q) use ($buckets, $b) {
+            foreach ($buckets as $bucket) {
+                $q->orWhere(function (Builder $w) use ($bucket, $b) {
+                    match ($bucket) {
+                        'overdue' => $w->where('due_at', '<', $b['start'])
+                            ->whereNotIn('status', static::inactiveStatuses()),
+                        'today' => $w->where('due_at', '>=', $b['start'])->where('due_at', '<', $b['tomorrow']),
+                        'week' => $w->where('due_at', '>=', $b['tomorrow'])->where('due_at', '<', $b['weekEnd']),
+                        'month' => $w->where('due_at', '>=', $b['weekEnd'])->where('due_at', '<', $b['monthEnd']),
+                        'later' => $w->where('due_at', '>=', $b['monthEnd']),
+                        'none' => $w->whereNull('due_at'),
+                        'dated' => $w->whereNotNull('due_at'),
+                        default => $w->whereRaw('1 = 0'),
+                    };
+                });
+            }
+        });
+    }
+
+    /**
+     * Which bucket this task's due date falls in — the same boundaries the
+     * due filter queries against, so badge tiers and filter results always
+     * agree. Null when due_at is null, AND for an inactive task with a past
+     * due date (overdue never applies to closed/parked tasks).
+     */
+    public function dueBucket(): ?string
+    {
+        if ($this->due_at === null) {
+            return null;
+        }
+
+        $b = static::dueBucketBoundaries();
+
+        return match (true) {
+            $this->due_at->lt($b['start']) => $this->isInactive() ? null : 'overdue',
+            $this->due_at->lt($b['tomorrow']) => 'today',
+            $this->due_at->lt($b['weekEnd']) => 'week',
+            $this->due_at->lt($b['monthEnd']) => 'month',
+            default => 'later',
+        };
     }
 
     /**

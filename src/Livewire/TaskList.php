@@ -46,6 +46,14 @@ class TaskList extends Component
     #[Url(as: 'labels', except: [])]
     public array $labelFilter = [];
 
+    /**
+     * Due-date window buckets (see Task::dueBuckets()). Alias is singular:
+     * no pre-multi-select scalar `?due=` bookmark ever existed, so there is
+     * nothing to keep inert.
+     */
+    #[Url(as: 'due', except: [])]
+    public array $dueFilter = [];
+
     /** Updated-at window: '', 'today', 'week', 'month', or 'older'. */
     #[Url(as: 'updated', except: '')]
     public string $updatedFilter = '';
@@ -101,6 +109,7 @@ class TaskList extends Component
             'typeFilter' => $taskClass::types(),
             'priorityFilter' => $taskClass::priorities(),
             'labelFilter' => $this->labelNames(),
+            'dueFilter' => $taskClass::dueBuckets(),
         ];
     }
 
@@ -117,7 +126,7 @@ class TaskList extends Component
 
     public function clearFilters(): void
     {
-        $this->reset(['search', 'statusFilter', 'typeFilter', 'priorityFilter', 'labelFilter', 'updatedFilter']);
+        $this->reset(['search', 'statusFilter', 'typeFilter', 'priorityFilter', 'labelFilter', 'dueFilter', 'updatedFilter']);
         $this->resetPage();
         $this->selected = [];
     }
@@ -340,6 +349,9 @@ class TaskList extends Component
         if (null !== ($sel = $this->activeSelection($this->labelFilter, $this->labelNames()))) {
             $query->whereHas('labels', fn (Builder $q) => $q->whereIn('name', $sel));
         }
+        if (null !== ($sel = $this->activeSelection($this->dueFilter, $taskClass::dueBuckets()))) {
+            $query->dueInBuckets($sel);
+        }
 
         // Cumulative windows (today ⊂ week ⊂ month); 'older' is the remainder.
         match ($this->updatedFilter) {
@@ -358,6 +370,7 @@ class TaskList extends Component
             'statusLabels' => $taskClass::statusLabels(),
             'typeLabels' => $taskClass::typeLabels(),
             'priorityLabels' => $taskClass::priorityLabels(),
+            'dueBucketLabels' => $taskClass::dueBucketLabels(),
             'assigneeOptions' => $userClass::query()->orderBy('name')->limit(50)->get(['id', 'name', 'email']),
             'staleEnabled' => $staleEnabled,
         ])->layout('dispatch::components.layout');
@@ -373,6 +386,12 @@ class TaskList extends Component
             'oldest' => $query->orderBy('created_at'),
             'updated_desc' => $query->orderByDesc('updated_at'),
             'updated_asc' => $query->orderBy('updated_at'),
+            // NULLS LAST both directions, portably (SQLite + MySQL); code
+            // tiebreaker matches the default priority sort's stable ordering.
+            'due_asc' => $query->orderByRaw('CASE WHEN due_at IS NULL THEN 1 ELSE 0 END')
+                ->orderBy('due_at')->orderBy('code'),
+            'due_desc' => $query->orderByRaw('CASE WHEN due_at IS NULL THEN 1 ELSE 0 END')
+                ->orderByDesc('due_at')->orderBy('code'),
             'code' => $query->orderBy('code'),
             'title' => $query->orderBy('title'),
             'status' => $query->orderByRaw($taskClass::statusSql())->orderByDesc('updated_at'),

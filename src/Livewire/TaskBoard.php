@@ -43,6 +43,10 @@ class TaskBoard extends Component
     #[Url(as: 'labels', except: [])]
     public array $labelFilter = [];
 
+    /** Due-date window buckets (see Task::dueBuckets(); mirrors TaskList). */
+    #[Url(as: 'due', except: [])]
+    public array $dueFilter = [];
+
     /**
      * Column visibility — hides whole board columns (e.g. backburner or
      * declined) rather than filtering tasks within them, so it composes with
@@ -159,7 +163,7 @@ class TaskBoard extends Component
 
     public function clearFilters(): void
     {
-        $this->reset(['typeFilter', 'priorityFilter', 'labelFilter', 'columnFilter', 'updatedFilter']);
+        $this->reset(['typeFilter', 'priorityFilter', 'labelFilter', 'dueFilter', 'columnFilter', 'updatedFilter']);
     }
 
     /** @var array<int,string>|null Per-request memo (protected: not Livewire state). */
@@ -174,6 +178,7 @@ class TaskBoard extends Component
             'typeFilter' => $taskClass::types(),
             'priorityFilter' => $taskClass::priorities(),
             'labelFilter' => $this->labelNames(),
+            'dueFilter' => $taskClass::dueBuckets(),
             'columnFilter' => $taskClass::statuses(),
         ];
     }
@@ -308,6 +313,9 @@ class TaskBoard extends Component
             if (null !== ($sel = $this->activeSelection($this->labelFilter, $labelNames))) {
                 $query->whereHas('labels', fn ($q) => $q->whereIn('name', $sel));
             }
+            if (null !== ($sel = $this->activeSelection($this->dueFilter, $taskClass::dueBuckets()))) {
+                $query->dueInBuckets($sel);
+            }
 
             // Cumulative activity windows (today ⊂ week ⊂ month); 'older' is
             // the remainder — mirrors TaskList so board and list read the same.
@@ -384,6 +392,7 @@ class TaskBoard extends Component
             'labels' => $labels,
             'typeLabels' => $taskClass::typeLabels(),
             'priorityLabels' => $taskClass::priorityLabels(),
+            'dueBucketLabels' => $taskClass::dueBucketLabels(),
             'doneTotal' => $doneTotal,
             'doneShowing' => $doneItems->count(),
             'doneLimit' => $doneLimit,

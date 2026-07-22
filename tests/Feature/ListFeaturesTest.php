@@ -275,9 +275,78 @@ test('clearFilters restores the checkbox filters to their canonical all state', 
     $component = Livewire::test(TaskList::class)
         ->call('toggleFilter', 'typeFilter', 'bug')
         ->call('toggleFilter', 'priorityFilter', 'low')
+        ->call('toggleFilter', 'dueFilter', 'none')
         ->call('clearFilters');
 
     expect($component->get('typeFilter'))->toBe([]);
     expect($component->get('priorityFilter'))->toBe([]);
+    expect($component->get('dueFilter'))->toBe([]);
     expect($component->viewData('tasks')->total())->toBe(1);
+});
+
+/*
+ * Due filter (Task::dueBuckets()): MECE windows rolling from today —
+ * overdue / today / week / month / later / none — plus the 'dated'
+ * convenience union. OR within the axis, AND with everything else.
+ */
+
+test('the due filter buckets tasks into overdue / today / week / month / later / none windows with OR semantics', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $overdue = $svc->create(['title' => 'Past due', 'status' => 'open', 'due_at' => now()->subDays(2)]);
+    $today = $svc->create(['title' => 'Due today', 'status' => 'open', 'due_at' => now()]);
+    $week = $svc->create(['title' => 'Due within the week', 'status' => 'open', 'due_at' => now()->addDays(3)]);
+    $month = $svc->create(['title' => 'Due within the month', 'status' => 'open', 'due_at' => now()->addDays(15)]);
+    $later = $svc->create(['title' => 'Due way out', 'status' => 'open', 'due_at' => now()->addDays(45)]);
+    $undated = $svc->create(['title' => 'No due date', 'status' => 'open']);
+
+    $component = Livewire::test(TaskList::class);
+    $idsFor = fn (array $buckets): array => $component->set('dueFilter', $buckets)->viewData('tasks')->pluck('id')->all();
+
+    expect($idsFor(['overdue']))->toBe([$overdue->id]);
+    expect($idsFor(['today']))->toBe([$today->id]);
+    expect($idsFor(['week']))->toBe([$week->id]);
+    expect($idsFor(['month']))->toBe([$month->id]);
+    expect($idsFor(['later']))->toBe([$later->id]);
+    expect($idsFor(['none']))->toBe([$undated->id]);
+
+    // OR within the axis: two buckets, both sets of tasks.
+    expect($idsFor(['overdue', 'none']))->toEqualCanonicalizing([$overdue->id, $undated->id]);
+
+    // The convenience union: everything with a due date, nothing without.
+    expect($idsFor(['dated']))->toEqualCanonicalizing([$overdue->id, $today->id, $week->id, $month->id, $later->id]);
+});
+
+test('an overdue-range due date on an inactive task matches only the dated bucket, never overdue', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $open = $svc->create(['title' => 'Actually overdue', 'status' => 'open', 'due_at' => now()->subDays(2)]);
+    $done = $svc->create(['title' => 'Shipped late', 'status' => 'done', 'due_at' => now()->subDays(2)]);
+    $parked = $svc->create(['title' => 'Parked past-due', 'status' => 'backburner', 'due_at' => now()->subDays(2)]);
+
+    $component = Livewire::test(TaskList::class)->set('dueFilter', ['overdue']);
+    expect($component->viewData('tasks')->pluck('id')->all())->toBe([$open->id]);
+
+    $component->set('dueFilter', ['dated']);
+    expect($component->viewData('tasks')->pluck('id')->all())->toEqualCanonicalizing([$open->id, $done->id, $parked->id]);
+});
+
+test('sorting by due_asc and due_desc puts null due dates last in both directions', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $svc = app(DispatchTaskService::class);
+    $near = $svc->create(['title' => 'Due soon', 'status' => 'open', 'due_at' => now()->addDay()]);
+    $far = $svc->create(['title' => 'Due further out', 'status' => 'open', 'due_at' => now()->addDays(10)]);
+    $undated = $svc->create(['title' => 'No due date at all', 'status' => 'open']);
+
+    Livewire::test(TaskList::class)
+        ->set('sort', 'due_asc')
+        ->assertSeeInOrder([$near->code, $far->code, $undated->code])
+        ->set('sort', 'due_desc')
+        ->assertSeeInOrder([$far->code, $near->code, $undated->code]);
 });

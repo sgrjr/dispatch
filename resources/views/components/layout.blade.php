@@ -196,6 +196,9 @@
         .dispatch-badge.is-medium { background: var(--dispatch-warning-bg); color: var(--dispatch-warning); }
         .dispatch-badge.is-low, .dispatch-badge.is-success { background: var(--dispatch-success-bg); color: var(--dispatch-success); }
         .dispatch-badge.is-info { background: var(--dispatch-info-bg); color: var(--dispatch-info); }
+        /* Due-badge 'week' tier — warm attention, softer than is-warning
+           (which the 'today' tier uses): warning wash with muted text. */
+        .dispatch-badge.is-due-week { background: var(--dispatch-warning-bg); color: var(--dispatch-text-muted); }
 
         /* Checkbox multi-filter popovers (board + list filter bars — see
            livewire/partials/filter-group.blade.php). */

@@ -47,6 +47,7 @@ class DispatchDoctor extends Command
         $this->checkBatchCap();
         $this->checkRemote($env);
         $this->checkDroppedSession();
+        $this->checkTouchTime();
         $this->checkConfigCache($cached);
         $this->checkKeyDrift();
 
@@ -151,6 +152,39 @@ class DispatchDoctor extends Command
         }
 
         $this->add('warn', 'dropped_session', 'A previous agent session was dropped — '.($marker['reason'] ?? 'unknown reason').' at '.($marker['at'] ?? '?').'. Bare verbs refuse the silent local fallback until `dispatch:session:refresh --wait` renews it (human approves) or `dispatch:session:end` acknowledges it.');
+    }
+
+    /**
+     * The est.-human-time tile (TouchTime) is render-guarded by
+     * `metrics.touch_time` and hides SILENTLY when the block is absent — the
+     * exact GAP-3/6 shallow-merge trap: a host `metrics` array published
+     * before v0.6.0 swallows the package default wholesale. config()->has()
+     * distinguishes that drift from an intentional `'touch_time' => null`
+     * (the documented way to hide the figure).
+     */
+    protected function checkTouchTime(): void
+    {
+        if (! $this->laravel['config']->has('dispatch.metrics.touch_time')) {
+            $this->add('warn', 'metrics.touch_time', 'Published metrics block predates touch_time — the shallow mergeConfigFrom drops the package default, so the "est. human time" figure is silently hidden everywhere (task page, dispatch:show). Copy the touch_time block from the package config (or re-publish --tag=dispatch-config); see UPGRADING.md.');
+
+            return;
+        }
+
+        $tt = config('dispatch.metrics.touch_time');
+
+        if ($tt === null) {
+            $this->add('info', 'metrics.touch_time', 'touch_time is explicitly null — the est. human time figure is hidden on purpose (documented opt-out).');
+
+            return;
+        }
+
+        if (! is_array($tt) || ! is_string($tt['version'] ?? null) || ($tt['version'] ?? '') === '' || ! is_array($tt['base_minutes'] ?? null)) {
+            $this->add('warn', 'metrics.touch_time', 'touch_time block is present but invalid (needs a string `version` and a `base_minutes` array) — an unversioned figure never renders. Compare against the package config/dispatch.php.');
+
+            return;
+        }
+
+        $this->add('ok', 'metrics.touch_time', "touch_time config present (version {$tt['version']}) — the est. human time figure renders.");
     }
 
     protected function checkConfigCache(bool $cached): void
