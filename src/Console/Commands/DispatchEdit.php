@@ -3,6 +3,8 @@
 namespace Sgrjr\Dispatch\Console\Commands;
 
 use Illuminate\Console\Command;
+use Sgrjr\Dispatch\Console\Commands\Concerns\GuardsLocalOnlyWrites;
+use Sgrjr\Dispatch\Console\Commands\Concerns\ResolvesTextInput;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Support\DueDate;
@@ -13,20 +15,59 @@ use Sgrjr\Dispatch\Support\DueDate;
  * Editing the description is memorialized, not silently overwritten: the OLD
  * body is preserved as an internal EVENT_DESCRIPTION_EDITED timeline comment
  * before the new body is applied, so a description edit never loses history.
+ *
+ * LOCAL-ONLY: this verb has no `--remote` path and `edit` is not in
+ * `agent.verbs` (promoting it is the §13 open decision). GuardsLocalOnlyWrites
+ * makes that boundary loud instead of silent — see the trait for why a quiet
+ * local write here is a data hazard, not just a surprise.
  */
 class DispatchEdit extends Command
 {
+    use GuardsLocalOnlyWrites;
+    use ResolvesTextInput;
+
     protected $signature = 'dispatch:edit
         {code : The task code, e.g. TASK-042}
         {--title= : New title}
         {--description= : New description (markdown ok); the old body is memorialized on the timeline}
+        {--description-file= : Read the new description from a file (or `-` for stdin) instead of inline --description}
         {--due= : New due date (parseable date/time string, e.g. "2026-08-01" or "+3 days"); empty string clears it}
+        {--local : Confirm the LOCAL dev DB is the intended target even while an agent session is active}
         {--json : Emit machine-readable JSON instead of human text}';
 
     protected $description = 'Edit a task\'s title, description, and/or due date.';
 
     public function handle(): int
     {
+        // Before the lookup, so a refusal reads nothing and writes nothing. The
+        // alternatives are the surfaces that genuinely reach the remote today:
+        // batch carries title/description on an `update` op, and W10 routed
+        // due_at through add/done for exactly this reason.
+        if ($this->blockedByActiveAgentSession('dispatch:edit', "overwrite an unrelated local task's body and memorialize the wrong prior version onto its timeline", [
+            'title / description on the remote' => 'a batch manifest `update` op (code + title/description) → php artisan dispatch:batch manifest.json',
+            'due date on the remote' => 'php artisan dispatch:done <code> --due=… (or dispatch:add --due=… at creation)',
+        ])) {
+            return self::FAILURE;
+        }
+
+        // New body from --description (inline) OR --description-file (a path, or
+        // `-` for stdin) — the escape hatch for a body too long or too
+        // quote-heavy for one command line. A description is the LONGEST text
+        // this package writes, so its absence here was the sharper half of the
+        // gap: an agent piping markdown through shell substitution to get around
+        // it is one quoting slip from mangling the body it is memorializing.
+        [$newDescription, $err] = $this->resolveInlineOrFile(
+            $this->option('description'),
+            $this->option('description-file'),
+            '--description',
+            '--description-file',
+        );
+        if ($err !== null) {
+            $this->error($err);
+
+            return self::FAILURE;
+        }
+
         /** @var class-string<Task> $taskModel */
         $taskModel = config('dispatch.models.task');
 
@@ -57,7 +98,6 @@ class DispatchEdit extends Command
         }
 
         $descriptionChanged = false;
-        $newDescription = $this->option('description');
         if ($newDescription !== null && $newDescription !== $task->description) {
             $task->recordEvent(
                 TaskComment::EVENT_DESCRIPTION_EDITED,

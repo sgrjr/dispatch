@@ -91,7 +91,17 @@ Notes on the loop:
   is memorialized on the timeline, so never write the review-by into a note and
   ask the operator to set the real one in the UI — that detour is retired.
 - Long or multi-line inputs always have a file escape hatch: `--result-file`,
-  `--body-file`, `--description-file` (or `-` for stdin).
+  `--body-file`, `--description-file` (on `add` **and** `edit`) — or `-` for
+  stdin. Never pipe a body through shell command substitution to dodge a missing
+  flag; there is always a file.
+- **`dispatch:edit` and `dispatch:merge` do NOT reach the remote** — they are not
+  agent verbs, so mid-session they refuse instead of writing to the local dev DB
+  (codes are minted per-database; the same code names a different task on each
+  side). To change a **title or description** on the remote, write a batch
+  manifest `update` op (`{"op":"update","code":"TASK-042","description":"…"}`)
+  and apply it with `dispatch:batch` — that op carries `title`, `type`,
+  `priority`, `description`, `labels`, `due_at`, and comments. `--due` and
+  `--label` also ride `dispatch:done` for a single task.
 
 ## Decision card — the calls the tool can't make for you
 

@@ -309,6 +309,19 @@ dispatch:done   <code> [--status=done|declined|verifying|backburner] [--ref=] [-
                   now — or code-done but blocked on an external date) without
                   declining; unpark later with --status=open (or triage/verifying)
 
+dispatch:edit   <code> [--title=] [--description=] [--description-file=] [--due=] [--local] [--json]
+                → edit a task's title / description / due date. The OLD description is
+                  memorialized as an internal timeline comment before the new one is
+                  applied, so an edit never loses history. --description-file=PATH
+                  (or `-` for stdin) reads a long body from a file instead of inline —
+                  a description is the longest text this package writes, and inline
+                  markdown on one command line is a quoting hazard
+
+dispatch:merge  <loser> <winner> [--local] [--json]
+                → fold a duplicate into its canonical task: comments reparent, labels
+                  union, both sides get a memorial, and the loser is soft-deleted
+                  with duplicate_of / status stamped
+
 dispatch:pull   [--path=] [--dry-run]
                 → fetch canonical task state from a remote Dispatch install
                   (dispatch.sync.remote_url / dispatch.sync.token) and import it locally
@@ -316,6 +329,24 @@ dispatch:pull   [--path=] [--dry-run]
 dispatch:push   [--path=] [--skip-export]
                 → export local task state and push it to the remote install
 ```
+
+**`dispatch:edit` and `dispatch:merge` are LOCAL-ONLY.** They have no `--remote`
+path and are not agent verbs (promoting `edit` is an open decision — see §13 of
+`ROADMAP.md`). While an agent session is active they now **refuse** rather than
+write to the local dev DB behind a caller who reasonably believes they are on the
+board, because every neighbouring verb has just retargeted itself there. This is a
+data guard, not a courtesy: task codes are minted **per-database**, so `TASK-042`
+exists on both sides and names two *different* tasks — a silent local `edit` could
+rewrite an unrelated task's body (and memorialize the wrong prior version) while
+reporting success, and a silent local `merge` could soft-delete one. Pass `--local`
+to confirm the dev DB is the intended target. The remote equivalents:
+
+| Want to change | On the remote |
+|---|---|
+| title / description | a batch manifest `update` op → `dispatch:batch manifest.json` |
+| due date | `dispatch:done <code> --due=…` (or `dispatch:add --due=…` at creation) |
+| labels | `dispatch:done <code> --label=…` (attaches, never replaces) |
+| merge duplicates | no remote verb — merge on the board (task detail → "merge into") |
 
 Repeatable `--label` is a **union** (any-of); an all-of filter isn't available.
 `--due=` takes anything Carbon parses — an absolute `2026-08-15` or a relative
@@ -564,6 +595,12 @@ dispatch:doctor {--strict} {--json}
 Repeatable `--label` is a **union** (any-of); an all-of filter isn't available.
 `next`/`claim` are **focus-steered** by default (see "Labels & focus"); pass
 `--no-focus` to ignore active focuses for one call.
+
+**The list above is exhaustive: a verb not on it cannot reach the remote.** In
+particular `dispatch:edit` and `dispatch:merge` are local-only and will refuse
+mid-session rather than write to the dev DB — see "The CLI verb loop" for the
+guard and the table of remote equivalents (title/description ride a batch
+`update` op; `--due` and `--label` ride `done`).
 
 A compact verb loop, claiming a task labeled for agent work and closing it
 out with a structured result:

@@ -53,6 +53,42 @@ Quick diagnosis:
   directly (missing verb, unset secret, still-cached config) instead of leaving
   you to infer it from a `403`/`401`/`503`.
 
+## Unreleased (on `master`) — `dispatch:edit` / `dispatch:merge` refuse to write the wrong database
+
+**No migration, no config change.** One **behavior change** worth knowing before
+you upgrade, because it turns a silent success into a loud failure.
+
+- **`dispatch:edit` and `dispatch:merge` now refuse to run while an agent session
+  is active**, unless you pass the new `--local`. Both are local-only verbs (no
+  `--remote`, not in `agent.verbs`) and neither carried any session plumbing, so
+  under a sticky-remote session they were the one place a command wrote to the
+  **local dev DB** while every neighbouring verb targeted production — with no
+  banner, no flag, and exit `0`. Because task codes are minted **per-database**
+  (`Task::nextCode()` is `max + 1` over local rows), the same code names a
+  *different* task on each side: a mid-session `dispatch:edit TASK-042
+  --description=…` could overwrite an unrelated local task's body and memorialize
+  the wrong prior version onto the wrong timeline, reporting success either way.
+  `dispatch:merge` is worse — it soft-deletes one of the two tasks it names. The
+  refusal names the remote alternative (a batch `update` op for
+  title/description; `done --due=` / `done --label=`; the board for a merge).
+
+  **If a script of yours edits or merges during a commissioned session and meant
+  the local DB, add `--local`.** Nothing else changes: with no
+  `agent.remote.url`, no session token, or `agent.remote.sticky=false`, the guard
+  is inert and both verbs behave exactly as before. A **dropped** session (the
+  `.dropped` marker) also trips it, on the same reasoning as the existing
+  dropped-session guard — clear it with `dispatch:session:end`.
+
+- **New: `dispatch:edit --description-file=PATH`** (or `-` for stdin), the same
+  escape hatch `add`/`note`/`done` got in v0.5.4 and `edit` never did — despite
+  writing the longest text in the package. Mutually exclusive with
+  `--description`, resolved *before* any lookup or write, so a bad path is a
+  no-op rather than a half-applied edit.
+
+- **Promoting `edit` to an agent verb remains the open §13 decision.** This
+  change deliberately does not force it: it makes local-only *honest*, which is
+  the opposite of widening the curated-verb posture.
+
 ## v0.8.0 — batch payload ceiling fixed, `dispatch:find`, pre-expiry TTL warning, console-capture guards
 
 **Do this in order.** One migration is load-bearing (it unblocks `dispatch:batch`),

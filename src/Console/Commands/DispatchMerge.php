@@ -4,6 +4,7 @@ namespace Sgrjr\Dispatch\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Auth;
+use Sgrjr\Dispatch\Console\Commands\Concerns\GuardsLocalOnlyWrites;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
 
@@ -13,18 +14,34 @@ use Sgrjr\Dispatch\Services\DispatchTaskService;
  * DispatchTaskService::merge() — comments reparent, labels union, both sides
  * get a memorial EVENT_MERGED comment, and the loser is soft-deleted with
  * duplicate_of/status stamped. See DispatchTaskService::merge() for detail.
+ *
+ * LOCAL-ONLY, and the sharpest case for GuardsLocalOnlyWrites: it takes TWO
+ * per-database codes and SOFT-DELETES one of the tasks they name. Run
+ * mid-session against the wrong DB it could fold together two unrelated local
+ * tasks — a destructive write, reported as a success.
  */
 class DispatchMerge extends Command
 {
+    use GuardsLocalOnlyWrites;
+
     protected $signature = 'dispatch:merge
         {loser : Code of the duplicate task to merge away, e.g. TASK-042}
         {winner : Code of the canonical task it merges into}
+        {--local : Confirm the LOCAL dev DB is the intended target even while an agent session is active}
         {--json : Emit machine-readable JSON instead of human text}';
 
     protected $description = 'Merge a duplicate task into its canonical counterpart.';
 
     public function handle(DispatchTaskService $tasks): int
     {
+        // No remote merge exists to point at — unlike edit, there is no batch op
+        // for it — so the alternative is the board or a deliberate --local.
+        if ($this->blockedByActiveAgentSession('dispatch:merge', 'fold together two unrelated local tasks and SOFT-DELETE one of them', [
+            'no remote merge verb exists' => 'merge on the board (task detail → "merge into"), or ask the human running the session',
+        ])) {
+            return self::FAILURE;
+        }
+
         $loserCode = $this->argument('loser');
         $winnerCode = $this->argument('winner');
 
