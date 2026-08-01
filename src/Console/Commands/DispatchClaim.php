@@ -117,6 +117,11 @@ class DispatchClaim extends Command
             return self::FAILURE;
         }
 
+        // Warn AFTER the claim succeeds: a claim that failed has nothing to
+        // outlive, and the notice belongs next to the work brief the agent is
+        // about to act on (W9-5).
+        $this->warnIfTokenOutlivedByWorkCycle();
+
         $task = $response['task'] ?? null;
 
         $this->line(json_encode($task, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));

@@ -75,6 +75,23 @@ class DispatchBatch extends Command
             return self::FAILURE;
         }
 
+        // Pre-flight the size HERE, before the round-trip (W9-1c). On the remote
+        // path an oversized manifest would otherwise be diagnosed only by the
+        // server — or, past the web server's body limit, not diagnosed at all.
+        // Measuring locally means the caller learns the actual number and the
+        // remedy without spending a request to find out.
+        $max = DispatchBatchService::maxPayloadBytes();
+        $size = strlen((string) json_encode($operations));
+        if ($max > 0 && $size > $max) {
+            $this->error("Manifest is {$size} bytes, over the {$max}-byte batch limit — not sent.");
+            $this->line('  Split it into several smaller batches. Re-submits are safe: keyed adds dedupe,');
+            $this->line('  comments dedupe on (event_type|body), and an unchanged status records no event.');
+            $this->line('  A single oversized comment body is the usual cause — attach or summarise it,');
+            $this->line('  or post it on its own with `dispatch:note --body-file`.');
+
+            return self::FAILURE;
+        }
+
         $dryRun = (bool) $this->option('dry-run');
 
         return $this->targetsRemote()

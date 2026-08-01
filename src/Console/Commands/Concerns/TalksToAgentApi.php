@@ -51,6 +51,14 @@ trait TalksToAgentApi
         }
 
         if ($this->hasOption('remote') && $this->option('remote')) {
+            // Token health is independent of HOW the remote was chosen. The
+            // banner stays sticky-only (an explicit --remote already tells the
+            // caller where they are), but skipping the expiry check here meant
+            // an explicitly-remote agent got NO warning at all — not even the
+            // past-expiry one — which is the loop most exposed to a mid-run
+            // 401 (W9-5).
+            $this->warnIfTokenPastExpiry();
+
             return $this->resolvedRemoteTarget = true;
         }
 
@@ -94,23 +102,108 @@ trait TalksToAgentApi
      * expires_at (stamped at approval) knows when. Warn-only — the server stays
      * authoritative — but the renewal opportunity is surfaced BEFORE the loop
      * gets interrupted, not after.
+     *
+     * Two branches, because "past expiry" alone was never enough: that notice
+     * can only ever arrive on a call that is ALREADY failing. The real hazard is
+     * expiry landing BETWEEN two verbs — a `note` that succeeds and a `done`
+     * that 401s leaves a half-applied close, a task carrying its audit note but
+     * not its status transition. So a token nearing expiry warns while there is
+     * still time to refresh at a safe boundary.
      */
     protected function warnIfTokenPastExpiry(): void
     {
-        $expiresAt = $this->agentTokenFile()['expires_at'] ?? null;
-        if (! is_string($expiresAt) || $expiresAt === '') {
-            return;
-        }
-
-        try {
-            $expiry = Carbon::parse($expiresAt);
-        } catch (\Throwable) {
+        $expiry = $this->tokenExpiry();
+        if ($expiry === null) {
             return;
         }
 
         if ($expiry->isPast()) {
-            $this->sideNote("<comment>⚠ session token is past its expires_at ({$expiresAt}) — the server will likely 401. Renew cleanly with `php artisan dispatch:session:refresh --wait` before it interrupts the loop.</comment>");
+            $this->sideNote("<comment>⚠ session token is past its expires_at ({$expiry->toIso8601String()}) — the server will likely 401. Renew cleanly with `php artisan dispatch:session:refresh --wait` before it interrupts the loop.</comment>");
+
+            return;
         }
+
+        $threshold = $this->remoteIntConfig('expiry_warning_minutes', 'DISPATCH_AGENT_EXPIRY_WARNING_MINUTES', 10);
+        if ($threshold <= 0) {
+            return;
+        }
+
+        $secondsLeft = Carbon::now()->diffInSeconds($expiry, false);
+        if ($secondsLeft > $threshold * 60) {
+            return;
+        }
+
+        $this->sideNote('<comment>⚠ session token expires in '.$this->humanizeSeconds($secondsLeft)." ({$expiry->toIso8601String()}) — refresh NOW, at this boundary, rather than mid-task: an expiry landing between two verbs half-applies the close (the note lands, the status flip 401s). Renew with `php artisan dispatch:session:refresh --wait`.</comment>");
+    }
+
+    /**
+     * Claim-time gate on the same data (W9-5). `claim` is the last natural
+     * boundary before an agent starts work it may not be able to close, so a
+     * token that cannot plausibly survive a work cycle is called out HERE —
+     * where refreshing costs nothing — instead of at the `done` that fails.
+     * Warn-only: the operator may well know this task is a two-minute job.
+     */
+    protected function warnIfTokenOutlivedByWorkCycle(): void
+    {
+        $expiry = $this->tokenExpiry();
+        if ($expiry === null || $expiry->isPast()) {
+            return;   // the past-expiry branch above already spoke
+        }
+
+        $cycle = $this->remoteIntConfig('claim_cycle_minutes', 'DISPATCH_AGENT_CLAIM_CYCLE_MINUTES', 15);
+        if ($cycle <= 0) {
+            return;
+        }
+
+        $secondsLeft = Carbon::now()->diffInSeconds($expiry, false);
+        if ($secondsLeft > $cycle * 60) {
+            return;
+        }
+
+        $this->sideNote('<comment>⚠ claiming with only '.$this->humanizeSeconds($secondsLeft)." of session left (a work cycle is ~{$cycle}m) — this token may not survive to the close, and an expiry between the note and the status flip half-applies it. Refresh before starting: `php artisan dispatch:session:refresh --wait`.</comment>");
+    }
+
+    /**
+     * The token dotfile's `expires_at` as a Carbon, or null when absent or
+     * unparseable (an older token file predates the field — never guess).
+     */
+    private function tokenExpiry(): ?Carbon
+    {
+        $expiresAt = $this->agentTokenFile()['expires_at'] ?? null;
+        if (! is_string($expiresAt) || $expiresAt === '') {
+            return null;
+        }
+
+        try {
+            return Carbon::parse($expiresAt);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /**
+     * An `agent.remote.*` int read honoring the never-republish doctrine: a host
+     * whose published config predates the key (shallow mergeConfigFrom) falls
+     * back to the env var, then to the package default.
+     */
+    private function remoteIntConfig(string $key, string $env, int $default): int
+    {
+        $raw = config("dispatch.agent.remote.{$key}");
+        if ($raw === null) {
+            $raw = env($env, $default);
+        }
+
+        return (int) $raw;
+    }
+
+    /** "8m 30s" / "45s" — a duration an operator can act on at a glance. */
+    private function humanizeSeconds(int $seconds): string
+    {
+        $seconds = max(0, $seconds);
+        $minutes = intdiv($seconds, 60);
+        $rest = $seconds % 60;
+
+        return $minutes > 0 ? "{$minutes}m {$rest}s" : "{$rest}s";
     }
 
     /**

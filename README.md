@@ -504,6 +504,17 @@ dispatch:done   {code} {--status=} {--commit=} {--result=} {--result-file=}
                   dispatch:edit is local-only, so this is the only labelling
                   path for a --remote agent
 
+dispatch:find   {term} {--status=} {--type=} {--label=*} {--limit=}
+                {--json} {--remote} {--local}
+                → text search across title, code, and description — the "does
+                  this already exist?" verb. Spans ALL statuses by default,
+                  the INVERSE of queue: the answers to "was this already
+                  built?" live in done/declined/backburner, exactly what the
+                  actionable queue hides. Newest-first (for a duplicate check
+                  recency beats priority); --limit defaults to 50. Remotely it
+                  rides the existing `queue` scope via ?q=, so a session
+                  commissioned before this verb shipped can still use it
+
 dispatch:show   {code} {--json} {--remote} {--local}
                 → <code> also resolves a task's idempotency key (dedupe_key),
                   so a task minted with `add --key=` is fetchable by that key

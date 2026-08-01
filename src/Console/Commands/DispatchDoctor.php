@@ -5,6 +5,7 @@ namespace Sgrjr\Dispatch\Console\Commands;
 use Illuminate\Console\Command;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 use Sgrjr\Dispatch\Services\AgentSessionService;
+use Sgrjr\Dispatch\Services\DispatchBatchService;
 
 /**
  * Diagnose agent config drift — the recurring "stale published config silently
@@ -50,6 +51,7 @@ class DispatchDoctor extends Command
         $this->checkTouchTime();
         $this->checkConfigCache($cached);
         $this->checkKeyDrift();
+        $this->checkPublishedAssetDrift();
 
         return $this->option('json') ? $this->reportJson($env, $enabled) : $this->reportHuman($env, $enabled);
     }
@@ -116,6 +118,154 @@ class DispatchDoctor extends Command
         } else {
             $this->add('ok', 'batch.max_operations', "Batch cap: {$max} operations/request.");
         }
+
+        // Op-count never bounded SIZE — the gap that let an oversized manifest
+        // die below the app with an opaque 500 instead of a named 422.
+        $bytes = DispatchBatchService::maxPayloadBytes();
+
+        if ($bytes <= 0) {
+            $this->add('warn', 'batch.max_payload_bytes', 'agent.batch.max_payload_bytes is 0 (uncapped) — an oversized manifest is left to die at the web server body limit (post_max_size), where no dispatch error can reach the caller. Set a cap under that limit.');
+
+            return;
+        }
+
+        // A cap at or above the server's own limit can never fire first, which
+        // defeats the point: the caller still gets the opaque failure.
+        $postMax = $this->bytesFromIni((string) ini_get('post_max_size'));
+
+        if ($postMax > 0 && $bytes >= $postMax) {
+            $this->add('warn', 'batch.max_payload_bytes', "Batch byte cap ({$bytes}) is at or above PHP post_max_size ({$postMax}) — an oversized manifest dies below the app with an opaque error before the legible 422 can fire. Lower agent.batch.max_payload_bytes beneath post_max_size (or raise post_max_size).");
+
+            return;
+        }
+
+        $this->add('ok', 'batch.max_payload_bytes', "Batch byte cap: {$bytes} bytes/request".($postMax > 0 ? " (under post_max_size {$postMax})" : '').'.');
+    }
+
+    /**
+     * Published-ASSET drift (W9-6) — the blind spot beside config drift.
+     *
+     * `vendor:publish` COPIES files out of the package; from then on the two
+     * copies drift silently in both directions and nothing reports it. Both
+     * directions are hazards, and they are different hazards:
+     *
+     *   - published OLDER than the package: the host is running a stale asset
+     *     and a fix that shipped upstream is simply not live, with no signal.
+     *   - published NEWER / hand-edited: a `vendor:publish --force` will
+     *     OVERWRITE it. When the hand-edit is a hotfix applied ahead of a
+     *     release, that republish silently reintroduces the bug it fixed.
+     *
+     * Only the trees a host is meant to track byte-for-byte are checked. Views
+     * are excluded on purpose — overriding them is their entire point, so drift
+     * there is a feature, not a finding. Config has its own key-drift check.
+     */
+    protected function checkPublishedAssetDrift(): void
+    {
+        $trees = [
+            'dispatch-vue' => [__DIR__.'/../../../resources/js', resource_path('js/vendor/dispatch')],
+            'dispatch-assets' => [__DIR__.'/../../../resources/dist', public_path('vendor/dispatch')],
+        ];
+
+        foreach ($trees as $tag => [$source, $published]) {
+            if (! is_dir($source)) {
+                continue;   // package tree absent (partial checkout) — nothing to compare
+            }
+
+            if (! is_dir($published)) {
+                $this->add('info', "assets.{$tag}", "Not published (no {$published}) — fine if this host doesn't use the {$tag} tag.");
+
+                continue;
+            }
+
+            $drifted = [];
+            $missing = [];
+
+            foreach ($this->filesUnder($source) as $relative => $absolute) {
+                $target = $published.DIRECTORY_SEPARATOR.$relative;
+
+                if (! is_file($target)) {
+                    $missing[] = $relative;
+
+                    continue;
+                }
+
+                // Compare CONTENT, normalising line endings: a Windows host's
+                // CRLF checkout is not drift, and flagging it would train the
+                // operator to ignore this check.
+                if ($this->normalizedHash($absolute) !== $this->normalizedHash($target)) {
+                    $drifted[] = $relative;
+                }
+            }
+
+            if ($drifted === [] && $missing === []) {
+                $this->add('ok', "assets.{$tag}", 'Published assets match the installed package.');
+
+                continue;
+            }
+
+            $parts = [];
+            if ($drifted !== []) {
+                $parts[] = count($drifted).' differ ('.implode(', ', array_slice($drifted, 0, 3)).(count($drifted) > 3 ? ', …' : '').')';
+            }
+            if ($missing !== []) {
+                $parts[] = count($missing).' missing ('.implode(', ', array_slice($missing, 0, 3)).(count($missing) > 3 ? ', …' : '').')';
+            }
+
+            $this->add('warn', "assets.{$tag}", 'Published assets drift from the installed package: '.implode('; ', $parts).
+                ". If the PUBLISHED copy is the stale one, re-publish: vendor:publish --tag={$tag} --force. ".
+                'If it carries a hand-applied fix the installed package does NOT have yet (a hotfix ahead of a release), do NOT --force — that would overwrite the fix with the older vendor copy.');
+        }
+    }
+
+    /**
+     * Relative-path => absolute-path map of every file under a directory.
+     *
+     * @return array<string,string>
+     */
+    private function filesUnder(string $dir): array
+    {
+        $out = [];
+
+        $iterator = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS)
+        );
+
+        foreach ($iterator as $file) {
+            if (! $file->isFile()) {
+                continue;
+            }
+            $relative = ltrim(str_replace($dir, '', $file->getPathname()), '\\/');
+            $out[str_replace('\\', '/', $relative)] = $file->getPathname();
+        }
+
+        return $out;
+    }
+
+    /** Content hash with line endings normalised, so CRLF/LF is never "drift". */
+    private function normalizedHash(string $path): string
+    {
+        $contents = (string) @file_get_contents($path);
+
+        return md5(str_replace(["\r\n", "\r"], "\n", $contents));
+    }
+
+    /** "8M" / "512K" / "1024" -> bytes; 0 when unlimited or unparseable. */
+    private function bytesFromIni(string $value): int
+    {
+        $value = trim($value);
+        if ($value === '' || $value === '-1' || $value === '0') {
+            return 0;   // unlimited (or unset) — nothing to compare against
+        }
+
+        $unit = strtolower(substr($value, -1));
+        $n = (int) $value;
+
+        return match ($unit) {
+            'g' => $n * 1024 * 1024 * 1024,
+            'm' => $n * 1024 * 1024,
+            'k' => $n * 1024,
+            default => $n,
+        };
     }
 
     protected function checkRemote(string $env): void

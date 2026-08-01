@@ -92,16 +92,24 @@ class AgentController extends Controller
             ]);
         }
 
+        $filters = array_filter([
+            'type' => $request->query('type'),
+            'label' => $request->query('label'),
+        ]);
+
+        // ?q= — text search (W9-7). Rides the EXISTING queue scope rather than a
+        // new verb, so no session needs re-commissioning to gain it. Note the
+        // status default inverts: search spans the whole board (including
+        // done/declined/backburner) because "was this already built?" is the
+        // question it exists to answer.
+        $q = trim((string) $request->query('q', ''));
+
         // The list path's filter + eager-load + priority ordering lives in the
         // service (the count census above keeps its own bespoke aggregate). Not
         // focus-steered — the queue is a full list, not a single pick.
-        $query = app(DispatchTaskService::class)->queueQuery(
-            array_filter([
-                'type' => $request->query('type'),
-                'label' => $request->query('label'),
-            ]),
-            $request->query('status'),
-        );
+        $query = $q !== ''
+            ? app(DispatchTaskService::class)->searchQuery($q, $filters, $request->query('status'))
+            : app(DispatchTaskService::class)->queueQuery($filters, $request->query('status'));
 
         $limit = (int) $request->query('limit', 0);
         if ($limit > 0) {

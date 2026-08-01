@@ -971,3 +971,100 @@ test('dispatch:done without --label sends no labels key (W9-2)', function () {
 
     Http::assertSent(fn ($request) => ! array_key_exists('labels', $request->data()));
 });
+
+/*
+ * W9-5 — pre-expiry TTL surfacing. The failure this prevents is a HALF-APPLIED
+ * close: a note that lands, then a done that 401s, leaving a task with its
+ * audit trail but not its status transition.
+ */
+
+test('a token nearing expiry warns while there is still time to refresh (W9-5)', function () {
+    seedAgentToken();
+    // Rewrite the token file with an expiry inside the warning threshold.
+    $path = config('dispatch.agent.remote.token_path');
+    file_put_contents($path, json_encode([
+        'token' => 'test-remote-token',
+        'expires_at' => now()->addMinutes(4)->toIso8601String(),
+    ]));
+
+    Http::fake(['agent.example.test/*' => Http::response(['task' => ['code' => 'TASK-920']], 200)]);
+
+    Artisan::call('dispatch:show', ['code' => 'TASK-920', '--remote' => true]);
+    $out = Artisan::output();
+
+    expect($out)->toContain('session token expires in')
+        ->and($out)->toContain('dispatch:session:refresh')
+        // the WHY must travel with the warning — this is the half-applied close
+        ->and($out)->toContain('half-applies');
+});
+
+test('a token with plenty of TTL left stays quiet (W9-5)', function () {
+    seedAgentToken();
+    $path = config('dispatch.agent.remote.token_path');
+    file_put_contents($path, json_encode([
+        'token' => 'test-remote-token',
+        'expires_at' => now()->addHours(2)->toIso8601String(),
+    ]));
+
+    Http::fake(['agent.example.test/*' => Http::response(['task' => ['code' => 'TASK-921']], 200)]);
+
+    Artisan::call('dispatch:show', ['code' => 'TASK-921', '--remote' => true]);
+
+    expect(Artisan::output())->not->toContain('session token expires in');
+});
+
+test('an already-expired token still gets the past-expiry notice, not the countdown (W9-5)', function () {
+    seedAgentToken();
+    $path = config('dispatch.agent.remote.token_path');
+    file_put_contents($path, json_encode([
+        'token' => 'test-remote-token',
+        'expires_at' => now()->subMinutes(3)->toIso8601String(),
+    ]));
+
+    Http::fake(['agent.example.test/*' => Http::response(['task' => ['code' => 'TASK-922']], 200)]);
+
+    Artisan::call('dispatch:show', ['code' => 'TASK-922', '--remote' => true]);
+    $out = Artisan::output();
+
+    expect($out)->toContain('past its expires_at')
+        ->and($out)->not->toContain('session token expires in');
+});
+
+test('expiry_warning_minutes=0 disables the countdown (W9-5)', function () {
+    config(['dispatch.agent.remote.expiry_warning_minutes' => 0]);
+    seedAgentToken();
+    $path = config('dispatch.agent.remote.token_path');
+    file_put_contents($path, json_encode([
+        'token' => 'test-remote-token',
+        'expires_at' => now()->addMinutes(2)->toIso8601String(),
+    ]));
+
+    Http::fake(['agent.example.test/*' => Http::response(['task' => ['code' => 'TASK-923']], 200)]);
+
+    Artisan::call('dispatch:show', ['code' => 'TASK-923', '--remote' => true]);
+
+    expect(Artisan::output())->not->toContain('session token expires in');
+});
+
+test('claim warns when the token cannot outlive a work cycle (W9-5)', function () {
+    seedAgentToken();
+    $path = config('dispatch.agent.remote.token_path');
+    // Outside the 10m banner threshold, inside the 15m work-cycle window — so
+    // this asserts the claim-time gate specifically, not the banner.
+    file_put_contents($path, json_encode([
+        'token' => 'test-remote-token',
+        'expires_at' => now()->addMinutes(12)->toIso8601String(),
+    ]));
+
+    Http::fake([
+        'agent.example.test/*' => Http::response([
+            'task' => ['code' => 'TASK-924', 'title' => 'short fuse', 'status' => 'in_progress'],
+        ], 200),
+    ]);
+
+    Artisan::call('dispatch:claim', ['code' => 'TASK-924', '--remote' => true]);
+    $out = Artisan::output();
+
+    expect($out)->toContain('claiming with only')
+        ->and($out)->toContain('may not survive to the close');
+});

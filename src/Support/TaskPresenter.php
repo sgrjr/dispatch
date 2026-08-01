@@ -171,6 +171,7 @@ class TaskPresenter
                 'limits' => [
                     'max_operations' => (int) config('dispatch.agent.batch.max_operations', 200).' — ops per request (0 = uncapped); over it: 422 "Batch too large".',
                     'max_comment_body_bytes' => DispatchBatchService::MAX_COMMENT_BODY_BYTES.' — BYTES per comment body (not characters); over it: 422 naming the operation index and the actual size. Attach or summarise instead of splitting mid-sentence.',
+                    'max_payload_bytes' => DispatchBatchService::maxPayloadBytes().' — BYTES for the WHOLE manifest (json_encode of operations[]); over it: 422 naming the actual size. dispatch:batch also checks this locally and refuses to send, so you learn it without spending a request.',
                     'note' => 'These bound the app layer only. A manifest large enough to exceed the web server / PHP body limit (post_max_size) is rejected BELOW the app, where no dispatch error message can reach you — split a very large run into several batches rather than relying on a message.',
                 ],
                 'semantics' => [

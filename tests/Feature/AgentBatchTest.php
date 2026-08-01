@@ -6,6 +6,7 @@ use Sgrjr\Dispatch\Models\AgentSession;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Services\AgentSessionService;
+use Sgrjr\Dispatch\Services\DispatchBatchService;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
 
 /*
@@ -162,4 +163,73 @@ test('dispatch:batch --remote posts the manifest operations to the agent API', f
 
     @unlink($path);
     @unlink($tokenPath);
+});
+
+/*
+ * W9-1(b)/(c) — the WHOLE-manifest byte guard. The per-comment cap bounds one
+ * field; nothing bounded the sum, so a manifest of individually-legal ops could
+ * still die at the web server's body limit, BELOW the app, where no dispatch
+ * error can reach the caller.
+ */
+
+test('a manifest over the payload cap is refused with a message naming the size (W9-1b)', function () {
+    config(['dispatch.agent.batch.max_payload_bytes' => 4096]);
+
+    $ops = [];
+    for ($i = 0; $i < 8; $i++) {
+        // Each op is individually legal — only the SUM crosses the cap, which is
+        // exactly the case the per-comment guard could not catch.
+        $ops[] = ['op' => 'add', 'title' => "task {$i}", 'description' => str_repeat('x', 1024)];
+    }
+
+    expect(fn () => app(DispatchBatchService::class)->apply($ops))
+        ->toThrow(InvalidArgumentException::class);
+
+    try {
+        app(DispatchBatchService::class)->apply($ops);
+    } catch (InvalidArgumentException $e) {
+        expect($e->getMessage())->toContain('over the 4096-byte limit')
+            ->and($e->getMessage())->toContain('Split it')
+            // re-submits being safe is what makes "split it" actionable advice
+            ->and($e->getMessage())->toContain('dedupe');
+    }
+
+    // Nothing was written — the guard runs before any op is applied.
+    expect(Task::count())->toBe(0);
+});
+
+test('the payload cap is checked before the op-count cap and before any write (W9-1b)', function () {
+    config(['dispatch.agent.batch.max_payload_bytes' => 512]);
+
+    $ops = [['op' => 'add', 'title' => str_repeat('t', 2048)]];
+
+    expect(fn () => app(DispatchBatchService::class)->apply($ops, [], null, true))
+        ->toThrow(InvalidArgumentException::class);
+
+    // Even a --dry-run must fail on size: dry-run is a rollback-to-observe
+    // transaction, so it genuinely executes the writes it discards.
+    expect(Task::count())->toBe(0);
+});
+
+test('max_payload_bytes=0 disables the whole-manifest guard (W9-1b)', function () {
+    config(['dispatch.agent.batch.max_payload_bytes' => 0]);
+
+    $outcome = app(DispatchBatchService::class)->apply([
+        ['op' => 'add', 'title' => 'uncapped', 'description' => str_repeat('x', 5000)],
+    ]);
+
+    expect($outcome['summary']['tasks_created'])->toBe(1);
+});
+
+test('POST batch answers an oversized manifest with a 422 naming the limit, not a 500 (W9-1b)', function () {
+    config(['dispatch.agent.batch.max_payload_bytes' => 2048]);
+    $token = batchAgentToken();
+
+    $response = $this->withToken($token)->postJson('api/dispatch/agent/batch', [
+        'operations' => [['op' => 'add', 'title' => 'big', 'description' => str_repeat('x', 4096)]],
+    ]);
+
+    // The whole point of the wave: a size problem must SAY it is a size problem.
+    $response->assertStatus(422);
+    expect($response->json('message'))->toContain('byte limit');
 });

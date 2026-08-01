@@ -143,3 +143,62 @@ test('dispatch:doctor flags a stale published config that omits agent keys', fun
         ->and($drift['message'])->toContain('session_ttl')
         ->and($drift['message'])->toContain('poll_interval');
 });
+
+/*
+ * W9-6 — published-ASSET drift. Config drift had a check; asset drift did not,
+ * which is how a hand-synced hotfix can be silently overwritten by a
+ * `vendor:publish --force` that looks routine.
+ */
+
+test('doctor reports published assets that are not published at all (W9-6)', function () {
+    $out = Artisan::call('dispatch:doctor', ['--json' => true]);
+    expect($out)->toBeIn([0, 1]);
+
+    $findings = collect(json_decode(Artisan::output(), true)['findings'] ?? []);
+    $vue = $findings->firstWhere('check', 'assets.dispatch-vue');
+
+    // Testbench has no published vendor JS, so the honest report is "not
+    // published" at info level — never a warning, which would be noise.
+    expect($vue)->not->toBeNull()
+        ->and($vue['level'])->toBe('info')
+        ->and($vue['message'])->toContain('Not published');
+});
+
+test('doctor warns when a published asset drifts from the package copy (W9-6)', function () {
+    $published = resource_path('js/vendor/dispatch');
+    @mkdir($published, 0777, true);
+    file_put_contents($published.'/dispatchConsole.js', '// a hand-edited hotfix the vendor copy does not have');
+
+    Artisan::call('dispatch:doctor', ['--json' => true]);
+    $findings = collect(json_decode(Artisan::output(), true)['findings'] ?? []);
+    $vue = $findings->firstWhere('check', 'assets.dispatch-vue');
+
+    expect($vue['level'])->toBe('warn')
+        ->and($vue['message'])->toContain('dispatchConsole.js')
+        // Both directions must be named — a bare "re-publish to fix" would be
+        // exactly the advice that destroys an ahead-of-release hotfix.
+        ->and($vue['message'])->toContain('do NOT --force');
+
+    array_map('unlink', glob($published.'/*'));
+    @rmdir($published);
+});
+
+test('doctor treats a CRLF-only difference as in-sync, not drift (W9-6)', function () {
+    $source = __DIR__.'/../../resources/js';
+    $published = resource_path('js/vendor/dispatch');
+    @mkdir($published, 0777, true);
+
+    foreach (glob($source.'/*') as $file) {
+        // Same bytes, Windows line endings — a checkout artifact, not a change.
+        $crlf = str_replace("\n", "\r\n", str_replace("\r\n", "\n", (string) file_get_contents($file)));
+        file_put_contents($published.'/'.basename($file), $crlf);
+    }
+
+    Artisan::call('dispatch:doctor', ['--json' => true]);
+    $findings = collect(json_decode(Artisan::output(), true)['findings'] ?? []);
+
+    expect($findings->firstWhere('check', 'assets.dispatch-vue')['level'])->toBe('ok');
+
+    array_map('unlink', glob($published.'/*'));
+    @rmdir($published);
+});

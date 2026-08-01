@@ -381,6 +381,64 @@ class DispatchTaskService
     }
 
     /**
+     * Text search across the board (W9-7) — the query behind `dispatch:find` and
+     * the queue endpoint's `?q=`.
+     *
+     * Deliberately the INVERSE of queueQuery's default: no status filter unless
+     * one is asked for. The dominant reason an agent searches is "has this
+     * already been filed, or already built?", and the answers to that live in
+     * exactly the statuses the actionable queue excludes — `done`, `declined`,
+     * `backburner`. Defaulting to the actionable board here would make the verb
+     * confidently wrong in its most important use, which is worse than not
+     * having it. Ordering is newest-first: for a duplicate check, recency beats
+     * priority.
+     *
+     * Matches title, code, and description. `description` is included because a
+     * duplicate is often recognisable only from the body (a wiring identifier, a
+     * PROD_NO) that never made it into the title.
+     *
+     * @param  array<string,mixed>  $filters  type/label, same shape as queueQuery
+     */
+    public function searchQuery(string $term, array $filters = [], ?string $status = null): Builder
+    {
+        /** @var class-string<Task> $taskModel */
+        $taskModel = config('dispatch.models.task');
+
+        $type = $filters['type'] ?? null;
+        $label = $filters['label'] ?? null;
+
+        // Escape the LIKE wildcards so a term containing % or _ searches for
+        // those characters instead of silently matching everything — a false
+        // "already filed" is worse than no search at all.
+        //
+        // The escape character is declared explicitly, and is `!` rather than a
+        // backslash, because backslash is NOT portable here: MySQL treats it as
+        // the default LIKE escape, SQLite has no default at all, and Postgres
+        // reads `'\\'` differently depending on standard_conforming_strings. An
+        // explicit ESCAPE with a character that is inert in every dialect's
+        // string literals behaves identically on all three.
+        $escaped = str_replace(['!', '%', '_'], ['!!', '!%', '!_'], trim($term));
+        $like = '%'.$escaped.'%';
+
+        $table = (new $taskModel)->getTable();
+
+        return $this->eagerForRead(
+            $taskModel::query()
+                ->where(function (Builder $q) use ($like, $table) {
+                    $q->whereRaw("{$table}.title LIKE ? ESCAPE '!'", [$like])
+                        ->orWhereRaw("{$table}.code LIKE ? ESCAPE '!'", [$like])
+                        ->orWhereRaw("{$table}.description LIKE ? ESCAPE '!'", [$like]);
+                })
+                ->when($status, fn ($q, $s) => $q->where('status', $s))
+                ->when($type, fn ($q, $type) => $q->where('type', $type))
+                ->when($label, fn ($q, $label) => $q->whereHas(
+                    'labels',
+                    fn ($lq) => $lq->whereIn('name', (array) $label)
+                ))
+        )->orderByDesc('updated_at')->orderByDesc('id');
+    }
+
+    /**
      * Atomically claim an actionable task for an agent (C1). Picks only
      * UNSTARTED work (status open/triage, never `in_progress`, so two agents
      * can't grab the same in-flight task), mirroring dispatch:next's ordering so

@@ -362,6 +362,14 @@ return [
         // (0 = uncapped — not recommended on a public instance).
         'batch' => [
             'max_operations' => (int) env('DISPATCH_AGENT_BATCH_MAX', 200),
+
+            // Whole-manifest byte cap. Op-count alone never bounded SIZE, and a
+            // payload that dies at the web server's body limit does so BELOW the
+            // app, where no dispatch error can reach the caller — an opaque 500
+            // with no cause. Set under a typical 8M post_max_size so the legible
+            // 422 wins the race; raise it only alongside the server limit.
+            // 0 = uncapped (not recommended). See DispatchBatchService.
+            'max_payload_bytes' => (int) env('DISPATCH_AGENT_BATCH_MAX_BYTES', 4194304),
         ],
 
         'remote' => [
@@ -373,6 +381,21 @@ return [
             // call, and --local overrides per call. Set false to require the
             // explicit --remote flag on every call instead.
             'sticky' => env('DISPATCH_AGENT_STICKY', true),
+
+            // Pre-expiry warning threshold, in MINUTES. A session dies by TTL
+            // mid-loop, and the failure mode is not a clean stop: a `note` that
+            // succeeds followed by a `done` that 401s leaves a HALF-APPLIED
+            // close — the task carries its full audit note but not its status
+            // transition, reading as in-flight with no agent on it. Warning only
+            // once the token is already past expiry arrives on the call that is
+            // already failing, so the remaining TTL is surfaced while there is
+            // still time to `session:refresh` at a safe boundary. 0 disables.
+            'expiry_warning_minutes' => (int) env('DISPATCH_AGENT_EXPIRY_WARNING_MINUTES', 10),
+
+            // Whether a work cycle plausibly fits before expiry, in MINUTES —
+            // checked at CLAIM time, the last natural boundary before an agent
+            // starts work it may not be able to close.
+            'claim_cycle_minutes' => (int) env('DISPATCH_AGENT_CLAIM_CYCLE_MINUTES', 15),
         ],
     ],
 

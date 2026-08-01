@@ -231,6 +231,7 @@ class DispatchServiceProvider extends ServiceProvider
             \Sgrjr\Dispatch\Console\Commands\DispatchAdd::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchNext::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchQueue::class,
+            \Sgrjr\Dispatch\Console\Commands\DispatchFind::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchShow::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchNote::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchDone::class,

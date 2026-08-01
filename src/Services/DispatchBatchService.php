@@ -54,6 +54,39 @@ class DispatchBatchService
      */
     public const MAX_COMMENT_BODY_BYTES = 1048576;
 
+    /**
+     * Runaway-payload backstop for the WHOLE manifest, in BYTES.
+     *
+     * The per-comment cap above bounds one field; nothing bounded the sum, so a
+     * manifest of many individually-legal ops could still exceed the web
+     * server's request-body limit (PHP `post_max_size`, nginx
+     * `client_max_body_size`). That death happens BELOW the application, where
+     * no dispatch error message can reach the caller — the caller sees a bare
+     * 500/413 with no cause, which is precisely the opaque failure this whole
+     * guard exists to eliminate.
+     *
+     * Deliberately set under a typical 8M `post_max_size` so the legible
+     * app-level 422 fires FIRST and names the limit. A host that has raised its
+     * server limit can raise this to match (`DISPATCH_AGENT_BATCH_MAX_BYTES`);
+     * 0 disables the check.
+     */
+    public const MAX_PAYLOAD_BYTES = 4194304;
+
+    /**
+     * The configured whole-manifest byte cap, honoring the never-republish
+     * doctrine (published config predating the key falls back to env, then the
+     * package default).
+     */
+    public static function maxPayloadBytes(): int
+    {
+        $raw = config('dispatch.agent.batch.max_payload_bytes');
+        if ($raw === null) {
+            $raw = env('DISPATCH_AGENT_BATCH_MAX_BYTES', self::MAX_PAYLOAD_BYTES);
+        }
+
+        return (int) $raw;
+    }
+
     public function __construct(protected DispatchTaskService $tasks) {}
 
     /**
@@ -122,6 +155,22 @@ class DispatchBatchService
      */
     protected function validate(array $operations): array
     {
+        // Whole-manifest size first: it is the cheapest check and the one whose
+        // absence produces the least legible failure (an opaque death below the
+        // app). Both the CLI and the HTTP endpoint route through here, so the
+        // cap is stated once.
+        $max = self::maxPayloadBytes();
+        if ($max > 0) {
+            $size = strlen((string) json_encode($operations));
+            if ($size > $max) {
+                throw new \InvalidArgumentException(
+                    "Manifest is {$size} bytes, over the {$max}-byte limit for a single batch. ".
+                    'Split it into several smaller batches — re-submits are safe (keyed adds dedupe, '.
+                    'comments dedupe on (event_type|body), an unchanged status records no event).'
+                );
+            }
+        }
+
         $out = [];
 
         foreach ($operations as $i => $op) {
