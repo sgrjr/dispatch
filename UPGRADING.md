@@ -53,6 +53,90 @@ Quick diagnosis:
   directly (missing verb, unset secret, still-cached config) instead of leaving
   you to infer it from a `403`/`401`/`503`.
 
+## v0.8.0 — batch payload ceiling fixed, `dispatch:find`, pre-expiry TTL warning, console-capture guards
+
+**Do this in order.** One migration is load-bearing (it unblocks `dispatch:batch`),
+and one asset republish is now safe that previously was not.
+
+```bash
+composer update sgrjr/dispatch
+php artisan migrate                 # 000015 — REQUIRED, see below
+php artisan optimize:clear
+php artisan dispatch:doctor         # two new checks; see below
+php artisan vendor:publish --tag=dispatch-vue --force   # only if you use the JS capture widget
+```
+
+- **One new migration, and it fixes data loss — run it.** `000015` widens
+  `dispatch_task_comments.body` from `text` to `longText`. The old column capped
+  at **65,535 BYTES** (~16k characters of 4-byte UTF-8 — well short of what
+  "text" suggests), and an agent comment over that ceiling raised
+  `SQLSTATE[22001] Data too long` *mid-transaction*, rolling back the **entire**
+  batch manifest and surfacing to the caller as a bare
+  `HTTP 500 {"message":"Server Error"}` that named nothing. If you ever saw
+  "batch 500s on an op with a long comment body," this was it — the size was the
+  cause, not the op. Until you migrate, that ceiling is still live.
+
+- **The runaway-payload guard now names the operation.** A comment body over
+  1 MB (`DispatchBatchService::MAX_COMMENT_BODY_BYTES`) raises a 422 naming the
+  op index and the actual byte count instead of a raw SQLSTATE.
+
+- **New: a whole-manifest byte cap.** `agent.batch.max_payload_bytes`
+  (`DISPATCH_AGENT_BATCH_MAX_BYTES`, default **4 MB**, `0` disables). Op-count
+  alone never bounded *size*, so a manifest of individually-legal ops could still
+  die at the web server's body limit — **below** the application, where no
+  dispatch error can reach the caller. The default sits deliberately under a
+  typical 8M `post_max_size` so the legible 422 wins the race. `dispatch:batch`
+  also measures the manifest locally and refuses to send an oversized one, so you
+  learn the number without spending a request. `dispatch:doctor` warns if your cap
+  is at or above `post_max_size`, where it could never fire first.
+
+- **New verb: `dispatch:find <term>`.** Text search over title, code, and
+  description. **It spans ALL statuses by default** — the inverse of
+  `dispatch:queue`, and deliberately so: "has this already been filed or already
+  built?" is answered by the `done`/`declined`/`backburner` work the actionable
+  queue hides. Remotely it rides the **existing `queue` scope** via `?q=`, so
+  sessions commissioned before this release gain the verb with no re-approval and
+  no re-commissioning.
+
+- **New: pre-expiry session warnings.** `agent.remote.expiry_warning_minutes`
+  (default 10) and `agent.remote.claim_cycle_minutes` (default 15). Previously
+  the only expiry notice fired once the token was *already* past `expires_at` —
+  i.e. on the call that was already failing. The hazard that motivated this is a
+  **half-applied close**: a `note` that succeeds followed by a `done` that 401s
+  leaves a task carrying its full audit note but not its status transition,
+  reading as in-flight with no agent on it. Also fixed: an explicit `--remote`
+  previously skipped the expiry check entirely, so explicitly-remote runs got no
+  warning at all — only sticky (bare-verb) runs did.
+
+- **`dispatch:done --label=<name>` (repeatable).** Attaches labels on close,
+  never replaces. Note `dispatch:edit` is local-only and `edit` is not an agent
+  verb, so on a remote session `done` is the only way to label a task without a
+  batch manifest.
+
+- **Smaller surfaces:** `--json` on `dispatch:note` (its output was already the
+  JSON shape); `dispatch:show <key>` now resolves a `dedupe_key` when the code
+  lookup misses, so a task minted with `add --key=` is fetchable by that key;
+  `dispatch:schema`'s `batch` key now documents its `limits`.
+
+- **`dispatch:doctor` gains published-ASSET drift detection.** It compares your
+  published `dispatch-vue` / `dispatch-assets` trees against the installed
+  package (content-hashed, line endings normalised, so a CRLF checkout is never
+  reported as drift). **Read the direction before acting:** if the *published*
+  copy is stale, re-publish; but if it carries a fix the installed package does
+  not have yet, do **not** `--force` — that overwrites the fix with the older
+  vendor copy.
+
+- **`dispatchConsole.js` capture guards (republish to take them).** `stringify()`
+  is now total — the old `catch { return String(v) }` blew up on exactly the
+  input it existed to rescue (a Vue component proxy resolving neither `valueOf`
+  nor `toString`, where `JSON.stringify` has already failed as circular). Capture
+  is wrapped separately from passthrough and the original console method now runs
+  **unconditionally**, so a capture failure can never swallow the host's own
+  error. Non-plain objects are no longer probed at all — class instances,
+  framework proxies and DOM nodes report by internal class via
+  `Object.prototype.toString`, which runs no user code; output is capped at 500
+  chars. Covered by a dependency-free node test (`node tests/js/console-capture.test.mjs`).
+
 ## v0.7.0 — label kinds & focus steering + `backburner` status + multi-select board/list filters
 
 - **Two new migrations** — `dispatch_labels.kind` (the per-label facet column)
