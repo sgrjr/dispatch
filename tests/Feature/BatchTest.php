@@ -152,6 +152,61 @@ test('an add op without a title is rejected', function () {
         ->toThrow(InvalidArgumentException::class);
 });
 
+/*
+ * Comment `body` shape + size. Both of these used to escape validate() and blow
+ * up deeper in the stack, killing the whole transaction with an error that named
+ * neither the operation nor the field.
+ */
+test('a structured (array) comment body is rejected by name, not an Array-to-string crash', function () {
+    // Previously hit `(string) $array` in validate() — a PHP warning that
+    // Laravel's handler promotes to ErrorException, so the batch died with a
+    // bare "Array to string conversion".
+    expect(fn () => app(DispatchBatchService::class)->apply([
+        ['op' => 'add', 'title' => 'structured body', 'comments' => [['body' => ['vetted' => true, 'note' => 'x']]]],
+    ]))->toThrow(InvalidArgumentException::class, 'must be a string');
+
+    expect(Task::count())->toBe(0);
+});
+
+test('an oversized comment body is rejected up front rather than as a raw SQLSTATE', function () {
+    // Previously reached the INSERT and failed with
+    // SQLSTATE[22001] "Data too long for column 'body'", rolling back every
+    // other operation in the manifest.
+    $huge = str_repeat('y', DispatchBatchService::MAX_COMMENT_BODY_BYTES + 1);
+
+    expect(fn () => app(DispatchBatchService::class)->apply([
+        ['op' => 'add', 'title' => 'huge body', 'comments' => [['body' => $huge]]],
+    ]))->toThrow(InvalidArgumentException::class, 'over the');
+
+    expect(Task::count())->toBe(0);
+});
+
+test('a long-but-legal comment body persists intact — the column is longText now', function () {
+    // 100k bytes: over the old `text` ceiling of 65,535, under the guard. This
+    // is the case the widening exists for — agent result payloads and file
+    // listings that must not be truncated.
+    $long = str_repeat('a', 100000);
+
+    $out = app(DispatchBatchService::class)->apply([
+        ['op' => 'add', 'title' => 'long note', 'comments' => [['body' => $long]]],
+    ]);
+
+    expect($out['summary']['comments_added'])->toBe(1);
+
+    $task = Task::where('title', 'long note')->firstOrFail();
+    expect(strlen($task->comments()->where('event_type', TaskComment::EVENT_COMMENT)->firstOrFail()->body))->toBe(100000);
+});
+
+test('a null or blank comment body is still rejected', function () {
+    expect(fn () => app(DispatchBatchService::class)->apply([
+        ['op' => 'add', 'title' => 'blank body', 'comments' => [['body' => '   ']]],
+    ]))->toThrow(InvalidArgumentException::class);
+
+    expect(fn () => app(DispatchBatchService::class)->apply([
+        ['op' => 'add', 'title' => 'null body', 'comments' => [[]]],
+    ]))->toThrow(InvalidArgumentException::class);
+});
+
 // --- re-submit safety ------------------------------------------------------
 
 test('re-applying the same manifest is safe: keyed adds dedupe and comments do not double-post', function () {

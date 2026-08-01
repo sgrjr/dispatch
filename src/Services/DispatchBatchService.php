@@ -42,6 +42,18 @@ class DispatchBatchService
     /** The operation kinds a manifest may contain. */
     public const OPS = ['add', 'update'];
 
+    /**
+     * Runaway-payload backstop for a comment body, in BYTES.
+     *
+     * The column is longText (4GB), so this is not a content limit — agent
+     * result payloads and file listings legitimately run long and must not be
+     * truncated, because the comment IS the durable record. It exists so a
+     * caller bug (a serialised buffer, a runaway loop) fails with an
+     * operation-scoped message instead of either a raw SQLSTATE 22001 or a
+     * multi-megabyte row landing in the board.
+     */
+    public const MAX_COMMENT_BODY_BYTES = 1048576;
+
     public function __construct(protected DispatchTaskService $tasks) {}
 
     /**
@@ -135,8 +147,41 @@ class DispatchBatchService
             $this->assertVocab($i, 'status', $op['status'] ?? null, Task::statuses());
 
             foreach (($op['comments'] ?? []) as $c) {
-                if (! is_array($c) || trim((string) ($c['body'] ?? '')) === '') {
+                if (! is_array($c)) {
+                    throw new \InvalidArgumentException("Operation {$i}: every comment must be an object with a `body`.");
+                }
+
+                $body = $c['body'] ?? null;
+
+                // `body` must be a STRING. Guard before the (string) cast below:
+                // an agent that sends a structured body (an array/object of
+                // findings, say) used to hit `(string) $array` here, which is a
+                // PHP warning promoted to ErrorException by Laravel's handler —
+                // so the whole batch died with a bare "Array to string
+                // conversion" naming no operation and no field. Say what is
+                // wrong and where instead.
+                if (is_array($body) || is_object($body)) {
+                    throw new \InvalidArgumentException(
+                        "Operation {$i}: comment `body` must be a string, got ".
+                        (is_object($body) ? get_class($body) : 'array').
+                        '. Render structured content to text (or JSON-encode it) before sending.'
+                    );
+                }
+
+                if (! is_scalar($body) || trim((string) $body) === '') {
                     throw new \InvalidArgumentException("Operation {$i}: every comment needs a non-empty `body`.");
+                }
+
+                // The column is longText, so this is a runaway-payload backstop,
+                // not a content limit. Rejecting here names the operation;
+                // letting it through produced a raw SQLSTATE[22001] "Data too
+                // long for column 'body'" mid-transaction.
+                $length = strlen((string) $body);
+                if ($length > self::MAX_COMMENT_BODY_BYTES) {
+                    throw new \InvalidArgumentException(
+                        "Operation {$i}: comment `body` is {$length} bytes, over the ".
+                        self::MAX_COMMENT_BODY_BYTES.'-byte limit. Attach or summarise it instead.'
+                    );
                 }
             }
 
