@@ -26,6 +26,7 @@ class DispatchDone extends Command
         {code : The task code, e.g. TASK-042}
         {--status=done : Target status — ANY configured workflow status, not just terminal (done | declined | verifying, backburner to park it out of the queue without declining, or e.g. open to greenlight a triaged task)}
         {--commit= : SHA of the code change}
+        {--label=* : Label name(s) to ATTACH on close; auto-created if missing, never replaces existing labels. Repeatable — so "park these and tag them" is one verb, not a batch manifest.}
         {--result= : JSON blob stored under context.result}
         {--result-file= : Read the JSON result from a file (or `-` for stdin) instead of inline --result — avoids the multi-line-quoting hazard}
         {--with-metrics : Compute agent-run metrics from the local transcript and fold them under context.result.metrics (so the staff "Agent run" panel renders). Status-agnostic — works with any --status (done OR verifying), since both mean "agent finished, about to release the token".}
@@ -52,6 +53,14 @@ class DispatchDone extends Command
         }
 
         $commit = $this->option('commit');
+
+        // Attach-never-replace, same semantics as `add --label` and the batch op
+        // `labels` key (W9-2). Empty/blank names are dropped rather than minting
+        // a nameless label.
+        $labels = array_values(array_filter(
+            array_map('trim', (array) $this->option('label')),
+            fn ($name) => $name !== '',
+        ));
 
         // Result JSON comes from --result (inline) OR --result-file (a path, or
         // `-` for stdin) — the file/stdin path is the escape hatch for a large
@@ -104,6 +113,7 @@ class DispatchDone extends Command
                 'status' => $status,
                 'commit' => $commit,
                 'result' => $result,
+                'labels' => $labels ?: null,
             ], fn ($v) => $v !== null));
 
             if ($r === null) {
@@ -151,6 +161,10 @@ class DispatchDone extends Command
 
         if ($commit !== null || $result !== null) {
             $tasks->recordResult($task, $result ?? [], $commit);
+        }
+
+        if ($labels !== []) {
+            $tasks->attachLabels($task, $labels);
         }
 
         $this->emitMetricsReceipt($metrics);

@@ -595,3 +595,62 @@ test('AgentSessions flags an ENDED session that closed work but recorded nothing
 
     Livewire::test(AgentSessions::class)->assertSee('metrics: none recorded');
 });
+
+/*
+ * ── 9th-wave surfaces (§18 📦) ────────────────────────────────────────────
+ * W9-4 (show resolves a dedupe_key) and W9-2's server half (done attaches
+ * labels additively).
+ */
+
+test('GET show resolves a task by its dedupe_key when the code misses (W9-4)', function () {
+    $token = agentApiToken();
+
+    $task = app(DispatchTaskService::class)->firstOrCreateByKey('host-key-abc', ['title' => 'minted by key']);
+
+    // The key an agent gets back from `add --key=` must be a usable handle —
+    // it is a first-class field of the presented summary shape, so a 404 on it
+    // leaves the agent holding an identifier only the write paths can resolve.
+    $response = $this->withToken($token)->getJson('api/dispatch/agent/show/host-key-abc');
+
+    $response->assertOk();
+    expect($response->json('task.code'))->toBe($task->code)
+        ->and($response->json('task.dedupe_key'))->toBe('host-key-abc');
+});
+
+test('GET show still 404s on an identifier that is neither a code nor a key (W9-4)', function () {
+    $token = agentApiToken();
+
+    $this->withToken($token)->getJson('api/dispatch/agent/show/NOPE-123')->assertNotFound();
+});
+
+test('GET show prefers an exact code over a colliding dedupe_key (W9-4)', function () {
+    $token = agentApiToken();
+
+    $byCode = app(DispatchTaskService::class)->create(['title' => 'the real code holder']);
+    // A second task whose KEY is the first task's CODE — the fallback must never
+    // shadow a real code match.
+    app(DispatchTaskService::class)->firstOrCreateByKey($byCode->code, ['title' => 'impostor keyed task']);
+
+    $response = $this->withToken($token)->getJson('api/dispatch/agent/show/'.$byCode->code);
+
+    $response->assertOk();
+    expect($response->json('task.title'))->toBe('the real code holder');
+});
+
+test('POST done attaches labels additively and never replaces (W9-2)', function () {
+    $token = agentApiToken();
+
+    $task = app(DispatchTaskService::class)->create(['title' => 'remote park'], ['keep-me']);
+
+    $response = $this->withToken($token)->postJson('api/dispatch/agent/done', [
+        'code' => $task->code,
+        'status' => 'backburner',
+        'labels' => ['rust-api', 'parked'],
+    ]);
+
+    $response->assertOk();
+
+    $names = $task->fresh()->labels->pluck('name')->sort()->values()->all();
+    expect($names)->toBe(['keep-me', 'parked', 'rust-api'])
+        ->and($response->json('task.status'))->toBe('backburner');
+});

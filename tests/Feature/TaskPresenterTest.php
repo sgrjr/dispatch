@@ -117,3 +117,17 @@ test('schema() documents the import (backfill-with-history) shape', function () 
         ->and($import['task'])->toHaveKeys(['code', 'key', 'title', 'status', 'comments', 'createdAt', 'updatedAt'])
         ->and($import['label'])->toHaveKeys(['name', 'color', 'description']);
 });
+
+test('schema() documents the batch size limits, not just the op shape (W9-1)', function () {
+    $batch = TaskPresenter::schema()['batch'];
+
+    // Sizing a manifest by op-count alone was exactly the trap: the schema
+    // invited it while the real ceiling was a per-comment BYTE limit.
+    expect($batch)->toHaveKey('limits')
+        ->and($batch['limits'])->toHaveKeys(['max_operations', 'max_comment_body_bytes', 'note'])
+        ->and($batch['limits']['max_comment_body_bytes'])
+        ->toContain((string) \Sgrjr\Dispatch\Services\DispatchBatchService::MAX_COMMENT_BODY_BYTES)
+        // the below-the-app caveat must be stated: no dispatch error can reach a
+        // caller whose payload died at post_max_size.
+        ->and($batch['limits']['note'])->toContain('post_max_size');
+});

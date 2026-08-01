@@ -5,6 +5,7 @@ namespace Sgrjr\Dispatch\Support;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskAttachment;
 use Sgrjr\Dispatch\Models\TaskComment;
+use Sgrjr\Dispatch\Services\DispatchBatchService;
 
 /**
  * THE canonical Task -> machine JSON shaper (§17C C5).
@@ -162,6 +163,15 @@ class TaskPresenter
                     'commit' => 'string|null (stored under context.result.commit)',
                     'result' => 'object|null (stored under context.result)',
                     'comments' => '[{body:string, internal:bool}]',
+                ],
+                // Sizing a manifest by op-count alone is not enough — a single
+                // oversized comment body used to blow a column ceiling and take
+                // the whole transaction with it. Both caps are stated here so the
+                // contract an agent actually reads answers "how big may this be?"
+                'limits' => [
+                    'max_operations' => (int) config('dispatch.agent.batch.max_operations', 200).' — ops per request (0 = uncapped); over it: 422 "Batch too large".',
+                    'max_comment_body_bytes' => DispatchBatchService::MAX_COMMENT_BODY_BYTES.' — BYTES per comment body (not characters); over it: 422 naming the operation index and the actual size. Attach or summarise instead of splitting mid-sentence.',
+                    'note' => 'These bound the app layer only. A manifest large enough to exceed the web server / PHP body limit (post_max_size) is rejected BELOW the app, where no dispatch error message can reach you — split a very large run into several batches rather than relying on a message.',
                 ],
                 'semantics' => [
                     'add mints a new task (server-minted code); status defaults to triage.',

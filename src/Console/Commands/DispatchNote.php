@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Auth;
 use Sgrjr\Dispatch\Console\Commands\Concerns\ResolvesTextInput;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 use Sgrjr\Dispatch\Models\TaskComment;
+use Sgrjr\Dispatch\Support\TaskPresenter;
 
 /**
  * Trusted CLI surface: queries tasks directly (no DispatchGate::scopeVisible).
@@ -23,7 +24,8 @@ class DispatchNote extends Command
         {--body-file= : Read the comment body from a file (or `-` for stdin) instead of the inline body argument}
         {--internal : Mark the comment internal (default: public)}
         {--remote : Act on the configured remote agent API (the default while an agent session token is active)}
-        {--local : Act on the local DB even while an agent session token is active (overrides sticky-remote)}';
+        {--local : Act on the local DB even while an agent session token is active (overrides sticky-remote)}
+        {--json : Emit machine-readable JSON instead of human text}';
 
     protected $description = 'Append a comment to a task\'s discussion timeline.';
 
@@ -79,6 +81,17 @@ class DispatchNote extends Command
             'is_internal' => (bool) $this->option('internal'),
             'event_type' => TaskComment::EVENT_COMMENT,
         ]);
+
+        // Same {task, comment_id} shape the remote path emits, so `--json` reads
+        // identically whichever DB answered (W9-3).
+        if ($this->option('json')) {
+            $this->line(json_encode([
+                'task' => TaskPresenter::toArray($task->fresh(), false),
+                'comment_id' => $comment->id,
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+            return self::SUCCESS;
+        }
 
         $this->info("Noted on {$task->code} (comment id={$comment->id}, ".($comment->is_internal ? 'internal' : 'public').').');
 

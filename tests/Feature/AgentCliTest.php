@@ -894,3 +894,80 @@ test('dispatch:claim --json local decodes cleanly with the attachment relations 
     expect($decoded)->toBeArray()
         ->and($decoded['code'])->toBe($task->code);
 });
+
+/*
+ * ── 9th-wave surfaces (§18 📦) ────────────────────────────────────────────
+ * W9-3 (`note --json`) and W9-2 (`done --label`). Both close the same class of
+ * seam: a single-task verb missing a flag its siblings already carry, forcing
+ * an agent into a batch manifest — the detour that produced W9-1.
+ */
+
+test('dispatch:note --json emits the same {task, comment_id} shape the remote path does (W9-3)', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'note json shape']);
+
+    $exit = Artisan::call('dispatch:note', [
+        'code' => $task->code,
+        'body' => 'a local comment',
+        '--json' => true,
+    ]);
+    expect($exit)->toBe(0);
+
+    $decoded = dispatchJson(Artisan::output());
+
+    // The point of the flag: the LOCAL path must parse identically to the
+    // remote one, so an agent piping every verb needs no per-verb special case.
+    expect($decoded)->toBeArray()
+        ->and($decoded)->toHaveKeys(['task', 'comment_id'])
+        ->and($decoded['task']['code'])->toBe($task->code)
+        ->and($decoded['comment_id'])->toBeInt();
+});
+
+test('dispatch:done --label attaches labels without replacing existing ones (W9-2)', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'park and tag'], ['keep-me']);
+
+    $exit = Artisan::call('dispatch:done', [
+        'code' => $task->code,
+        '--status' => 'backburner',
+        '--label' => ['rust-api', 'parked'],
+    ]);
+    expect($exit)->toBe(0);
+
+    $names = $task->fresh()->labels->pluck('name')->sort()->values()->all();
+
+    // Attach-never-replace: the pre-existing label survives the close, and the
+    // new ones were auto-created — same semantics as `add --label`.
+    expect($names)->toBe(['keep-me', 'parked', 'rust-api'])
+        ->and($task->fresh()->status)->toBe('backburner');
+});
+
+test('dispatch:done --label posts labels on the remote path too (W9-2)', function () {
+    seedAgentToken();
+    Http::fake([
+        'agent.example.test/*' => Http::response(['task' => ['code' => 'TASK-910', 'title' => 'remote park', 'status' => 'backburner']], 200),
+    ]);
+
+    $exit = Artisan::call('dispatch:done', [
+        'code' => 'TASK-910',
+        '--status' => 'backburner',
+        '--label' => ['rust-api'],
+        '--remote' => true,
+    ]);
+    expect($exit)->toBe(0);
+
+    // The remote path is the one that matters: `dispatch:edit` is local-only and
+    // `edit` is not an agent verb, so `done` is the ONLY way a remote agent can
+    // label a task without a batch manifest.
+    Http::assertSent(fn ($request) => str_contains($request->url(), '/api/dispatch/agent/done')
+        && $request->data()['labels'] === ['rust-api']);
+});
+
+test('dispatch:done without --label sends no labels key (W9-2)', function () {
+    seedAgentToken();
+    Http::fake([
+        'agent.example.test/*' => Http::response(['task' => ['code' => 'TASK-911', 'status' => 'done']], 200),
+    ]);
+
+    Artisan::call('dispatch:done', ['code' => 'TASK-911', '--remote' => true]);
+
+    Http::assertSent(fn ($request) => ! array_key_exists('labels', $request->data()));
+});

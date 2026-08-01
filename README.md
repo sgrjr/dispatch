@@ -489,7 +489,7 @@ dispatch:queue  {--status=} {--type=} {--label=*} {--limit=} {--count} {--json} 
                   — the true backlog size without probing --limit
 
 dispatch:done   {code} {--status=} {--commit=} {--result=} {--result-file=}
-                {--with-metrics} {--since=} {--json} {--remote} {--local}
+                {--label=*} {--with-metrics} {--since=} {--json} {--remote} {--local}
                 → record a structured completion: --commit=<sha> plus
                   --result='{...}' land under context.result, tying the task
                   to the exact code change and verification that closed it.
@@ -497,12 +497,20 @@ dispatch:done   {code} {--status=} {--commit=} {--result=} {--result-file=}
                   reads the JSON from a file instead of inline — no multi-line
                   quoting on one command line. --with-metrics folds agent-run
                   metrics under context.result.metrics (any --status; --since=<claim
-                  time> windows a remote task) — see "Agent run metrics"
+                  time> windows a remote task) — see "Agent run metrics".
+                  --label=<name> (repeatable, auto-created) ATTACHES labels on
+                  close — never replaces — so "park these and tag them" is one
+                  verb instead of a batch manifest. Works remotely; note that
+                  dispatch:edit is local-only, so this is the only labelling
+                  path for a --remote agent
 
 dispatch:show   {code} {--json} {--remote} {--local}
-dispatch:note   {code} {body?} {--body-file=} {--internal} {--remote} {--local}
+                → <code> also resolves a task's idempotency key (dedupe_key),
+                  so a task minted with `add --key=` is fetchable by that key
+dispatch:note   {code} {body?} {--body-file=} {--internal} {--json} {--remote} {--local}
                 → --body-file=PATH (or `-` for stdin) supplies a long/multi-line
-                  comment body instead of the inline argument
+                  comment body instead of the inline argument; --json emits the
+                  {task, comment_id} shape (identical local and remote)
 
 dispatch:batch  {path} {--remote} {--local} {--dry-run} {--json}
                 → apply a whole manifest of add/update ops in ONE transaction:

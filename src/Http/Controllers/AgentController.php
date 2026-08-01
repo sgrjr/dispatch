@@ -118,10 +118,19 @@ class AgentController extends Controller
         /** @var class-string<Task> $taskModel */
         $taskModel = config('dispatch.models.task');
 
+        // Resolve by code, then fall back to the idempotency key (W9-4). An agent
+        // that minted a task with `add --key=` gets `dedupe_key` back in the very
+        // shape it reads (TaskPresenter summary), so the key it holds must be a
+        // usable handle — otherwise losing the code leaves it with an identifier
+        // that only the write paths (batch/import) can resolve.
         $task = $taskModel::query()
             ->with(['labels', 'submitter', 'assignee', 'comments.user', 'attachments', 'comments.attachments'])
             ->where('code', $code)
-            ->first();
+            ->first()
+            ?? $taskModel::query()
+                ->with(['labels', 'submitter', 'assignee', 'comments.user', 'attachments', 'comments.attachments'])
+                ->where('dedupe_key', $code)
+                ->first();
 
         abort_if($task === null, 404);
 
@@ -248,6 +257,8 @@ class AgentController extends Controller
             'status' => ['nullable', 'string'],
             'commit' => ['nullable', 'string'],
             'result' => ['nullable', 'array'],
+            'labels' => ['nullable', 'array'],
+            'labels.*' => ['string'],
         ]);
 
         /** @var class-string<Task> $taskModel */
@@ -274,6 +285,13 @@ class AgentController extends Controller
 
         if (array_key_exists('commit', $v) || array_key_exists('result', $v)) {
             app(DispatchTaskService::class)->recordResult($task, $v['result'] ?? [], $v['commit'] ?? null);
+        }
+
+        // Labels ATTACH on close — never replace (W9-2), matching `add` and the
+        // batch op shape. Closing a task can only ever widen its labels, so the
+        // additive, server-bounded posture of the curated verbs is preserved.
+        if (! empty($v['labels'])) {
+            app(DispatchTaskService::class)->attachLabels($task, $v['labels']);
         }
 
         return response()->json([
