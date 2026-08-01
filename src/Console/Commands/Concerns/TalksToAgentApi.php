@@ -6,6 +6,8 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
+use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Output\OutputInterface;
 
 /**
  * Shared `--remote` client for the agent-loop verbs (§20 Phase 2).
@@ -26,10 +28,33 @@ use Illuminate\Support\Facades\Http;
 trait TalksToAgentApi
 {
     /**
-     * Memoized target resolution, so the banner prints once per command even
-     * when targetsRemote() is consulted more than once (e.g. done + metrics).
+     * Memoized target resolution, so the banner prints once per RUN even when
+     * targetsRemote() is consulted more than once (e.g. done + metrics).
+     *
+     * Its lifetime is exactly ONE INVOCATION: initialize() below clears it at
+     * the top of every run. Artisan resolves one command instance per process
+     * and reuses it across in-process calls, so a memo that outlived the run
+     * would answer the NEXT call with the previous call's target.
      */
     private ?bool $resolvedRemoteTarget = null;
+
+    /**
+     * Symfony's pre-execute hook, called by Command::run() on EVERY invocation
+     * — including each Artisan::call() against the same reused instance.
+     *
+     * The memo above is a within-run device; here is where that run begins. A
+     * stale answer made a second in-process call silently inherit the first
+     * call's --remote/--local: `Artisan::call('dispatch:queue', ['--local'])`
+     * then `['--remote']` stayed LOCAL, hitting the dev DB while the caller
+     * believed it was on production. A real one-shot CLI never sees it (one
+     * process, one invocation); host app code, queued jobs, and tests do.
+     */
+    protected function initialize(InputInterface $input, OutputInterface $output): void
+    {
+        parent::initialize($input, $output);
+
+        $this->resolvedRemoteTarget = null;
+    }
 
     /**
      * Resolve whether this invocation acts on the remote agent API.

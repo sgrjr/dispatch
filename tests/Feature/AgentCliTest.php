@@ -1238,6 +1238,65 @@ test('dispatch:done --due rejects an unparseable date before any request or writ
         ->and($fresh->comments()->count())->toBe(0);
 });
 
+/*
+ * ── W10-3: the target memo must not outlive its invocation ────────────────
+ * Artisan resolves ONE command instance per process and reuses it, so
+ * TalksToAgentApi's $resolvedRemoteTarget — a within-run device that keeps the
+ * sticky banner to one line — leaked across in-process calls: the second
+ * `Artisan::call()` of a verb answered with the FIRST call's target and ignored
+ * its own --remote/--local. Invisible to a real one-shot CLI, sharp for host
+ * code, queued jobs, and the suite. initialize() resets it per run.
+ */
+
+test('a second in-process call honors its own --remote after a --local first (W10-3)', function () {
+    seedAgentToken();
+    Http::fake([
+        'agent.example.test/*' => Http::response(['tasks' => [
+            ['code' => 'TASK-940', 'title' => 'the remote board'],
+        ]], 200),
+    ]);
+    app(DispatchTaskService::class)->create(['title' => 'local only', 'status' => 'open']);
+
+    Artisan::call('dispatch:queue', ['--local' => true, '--json' => true]);
+    Artisan::output(); // BufferedOutput::fetch() clears — drop the first call's
+
+    $exit = Artisan::call('dispatch:queue', ['--remote' => true, '--json' => true]);
+    $out = Artisan::output();
+
+    // The memo leak's exact shape: without the per-run reset the second call
+    // stayed LOCAL, so it served the dev DB's throwaway task while the caller
+    // believed it was reading production — no request, no banner, no signal.
+    expect($exit)->toBe(0)
+        ->and(dispatchJson($out)[0]['code'])->toBe('TASK-940')
+        ->and($out)->not->toContain('local only');
+
+    Http::assertSent(fn ($request) => $request->method() === 'GET'
+        && str_contains($request->url(), '/api/dispatch/agent/queue'));
+});
+
+test('a second in-process call honors its own --local after a --remote first (W10-3)', function () {
+    seedAgentToken();
+    Http::fake([
+        'agent.example.test/*' => Http::response(['tasks' => []], 200),
+    ]);
+    app(DispatchTaskService::class)->create(['title' => 'local only', 'status' => 'open']);
+
+    Artisan::call('dispatch:queue', ['--remote' => true, '--json' => true]);
+    Artisan::output();
+
+    $exit = Artisan::call('dispatch:queue', ['--local' => true, '--json' => true]);
+    $out = Artisan::output();
+
+    // The inverse leak is the costlier direction: an inherited remote would
+    // have spent a second production request for a call that asked for the
+    // local DB. Exactly one request total — the first call's.
+    expect($exit)->toBe(0)
+        ->and(dispatchJson($out))->toHaveCount(1)
+        ->and(dispatchJson($out)[0]['title'])->toBe('local only');
+
+    Http::assertSentCount(1);
+});
+
 test('claim warns when the token cannot outlive a work cycle (W9-5)', function () {
     seedAgentToken();
     $path = config('dispatch.agent.remote.token_path');
