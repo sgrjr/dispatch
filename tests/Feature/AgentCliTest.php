@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Http;
 use Sgrjr\Dispatch\Models\Task;
+use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
 
 /*
@@ -1044,6 +1045,197 @@ test('expiry_warning_minutes=0 disables the countdown (W9-5)', function () {
     Artisan::call('dispatch:show', ['code' => 'TASK-923', '--remote' => true]);
 
     expect(Artisan::output())->not->toContain('session token expires in');
+});
+
+/*
+ * ── 10th wave (§18 📅) — `--due` on add + done ────────────────────────────
+ * These two flags are the ONLY way a remote agent can set a review-by date:
+ * `dispatch:edit --due` is local-only and `edit` is not an agent verb, so under
+ * a sticky-remote session it would have edited the local dev DB. The flag
+ * resolves on THIS box's clock and travels as ISO 8601, so "+3 days" means
+ * three days from the agent — not from whenever the server parsed it.
+ */
+
+test('dispatch:add --due sets the due date on the new task (W10-1)', function () {
+    $exit = Artisan::call('dispatch:add', [
+        'title' => 'review by mid-August',
+        '--due' => '2026-08-15',
+    ]);
+
+    expect($exit)->toBe(0)
+        ->and(Task::where('title', 'review by mid-August')->firstOrFail()->due_at?->toDateString())
+        ->toBe('2026-08-15');
+});
+
+test('dispatch:add --remote sends the resolved due date as ISO 8601 (W10-1)', function () {
+    seedAgentToken();
+    Http::fake([
+        'agent.example.test/*' => Http::response(['task' => ['code' => 'TASK-930', 'title' => 'remote due add']], 200),
+    ]);
+
+    $exit = Artisan::call('dispatch:add', [
+        'title' => 'remote due add',
+        '--due' => '2026-08-15',
+        '--remote' => true,
+    ]);
+    expect($exit)->toBe(0);
+
+    Http::assertSent(fn ($request) => $request->method() === 'POST'
+        && str_contains($request->url(), '/api/dispatch/agent/add')
+        && str_starts_with($request->data()['due_at'], '2026-08-15T'));
+
+    expect(Task::count())->toBe(0);
+});
+
+test('dispatch:add --due="" is simply no due date — a blank never parses to "now" (W10-1)', function () {
+    $exit = Artisan::call('dispatch:add', ['title' => 'blank due', '--due' => '']);
+
+    // `Carbon::parse('')` quietly returns NOW, which is why the clear-sentinel
+    // check comes first. Unlike the verbs that EDIT a date, a task being minted
+    // has nothing to clear — so blank is simply "unset".
+    expect($exit)->toBe(0)
+        ->and(Task::where('title', 'blank due')->firstOrFail()->due_at)->toBeNull();
+});
+
+test('dispatch:add --remote with a blank --due sends no due_at key (W10-1)', function () {
+    seedAgentToken();
+    Http::fake([
+        'agent.example.test/*' => Http::response(['task' => ['code' => 'TASK-933', 'title' => 'blank due']], 200),
+    ]);
+
+    Artisan::call('dispatch:add', ['title' => 'blank due', '--due' => '', '--remote' => true]);
+
+    Http::assertSent(fn ($request) => str_contains($request->url(), '/api/dispatch/agent/add')
+        && ! array_key_exists('due_at', $request->data()));
+});
+
+test('dispatch:add --due rejects an unparseable date before any request or write (W10-1)', function () {
+    seedAgentToken();
+    Http::fake();
+
+    $exit = Artisan::call('dispatch:add', [
+        'title' => 'never filed',
+        '--due' => 'not-a-real-date',
+        '--remote' => true,
+    ]);
+
+    expect($exit)->toBe(1)
+        ->and(Artisan::output())->toContain('--due could not be parsed as a date');
+
+    // The whole point of resolving up front: a bad date costs nothing but the
+    // error — no request spent, no half-made task.
+    Http::assertNothingSent();
+    expect(Task::count())->toBe(0);
+});
+
+test('dispatch:done --due sets the review-by at close and memorializes it once (W10-2)', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'hand back for review', 'status' => 'in_progress']);
+
+    $exit = Artisan::call('dispatch:done', [
+        'code' => $task->code,
+        '--status' => 'verifying',
+        '--due' => '2026-08-15',
+    ]);
+    expect($exit)->toBe(0);
+
+    $fresh = $task->fresh();
+    expect($fresh->status)->toBe('verifying')
+        ->and($fresh->due_at?->toDateString())->toBe('2026-08-15');
+
+    // Word-for-word the Livewire editor's memorial, so the timeline reads the
+    // same whether the board or an agent moved the date.
+    $events = $fresh->comments()->where('event_type', TaskComment::EVENT_COMMENT)->get();
+    expect($events)->toHaveCount(1)
+        ->and($events[0]->body)->toBe('Due date set to 2026-08-15.')
+        ->and($events[0]->meta['due_at'])->toBe(['from' => null, 'to' => '2026-08-15']);
+});
+
+test('dispatch:done --due="" clears the date and memorializes the clear (W10-2)', function () {
+    $task = app(DispatchTaskService::class)->create([
+        'title' => 'no longer time-boxed', 'status' => 'in_progress', 'due_at' => '2026-08-01',
+    ]);
+
+    $exit = Artisan::call('dispatch:done', ['code' => $task->code, '--due' => '']);
+
+    expect($exit)->toBe(0)
+        ->and($task->fresh()->due_at)->toBeNull();
+
+    $event = $task->fresh()->comments()->where('event_type', TaskComment::EVENT_COMMENT)->firstOrFail();
+    expect($event->body)->toBe('Due date cleared.')
+        ->and($event->meta['due_at'])->toBe(['from' => '2026-08-01', 'to' => null]);
+});
+
+test('dispatch:done without --due leaves the stored due date untouched (W10-1)', function () {
+    $task = app(DispatchTaskService::class)->create([
+        'title' => 'keep my date', 'status' => 'in_progress', 'due_at' => '2026-08-01',
+    ]);
+
+    $exit = Artisan::call('dispatch:done', ['code' => $task->code]);
+
+    // Absent is not clear — a close that says nothing about the date must not
+    // silently blank it.
+    expect($exit)->toBe(0)
+        ->and($task->fresh()->due_at?->toDateString())->toBe('2026-08-01')
+        ->and($task->fresh()->comments()->where('event_type', TaskComment::EVENT_COMMENT)->count())->toBe(0);
+});
+
+test('dispatch:done --remote sends ISO for a set and "" for a clear (W10-1)', function () {
+    seedAgentToken();
+    Http::fake([
+        'agent.example.test/*' => Http::response(['task' => ['code' => 'TASK-931', 'status' => 'verifying']], 200),
+    ]);
+
+    Artisan::call('dispatch:done', [
+        'code' => 'TASK-931', '--status' => 'verifying', '--due' => '2026-08-15', '--remote' => true,
+    ]);
+    Artisan::call('dispatch:done', ['code' => 'TASK-931', '--due' => '', '--remote' => true]);
+
+    Http::assertSent(fn ($request) => str_contains($request->url(), '/api/dispatch/agent/done')
+        && str_starts_with((string) $request->data()['due_at'], '2026-08-15T'));
+
+    // The empty string is deliberate: it survives the payload's null filter (a
+    // null would have been dropped, turning "clear" back into "absent"), and the
+    // server reads key-present-blank as the clear it is.
+    Http::assertSent(fn ($request) => str_contains($request->url(), '/api/dispatch/agent/done')
+        && array_key_exists('due_at', $request->data())
+        && $request->data()['due_at'] === '');
+});
+
+test('dispatch:done without --due sends no due_at key (W10-1)', function () {
+    seedAgentToken();
+    Http::fake([
+        'agent.example.test/*' => Http::response(['task' => ['code' => 'TASK-932', 'status' => 'done']], 200),
+    ]);
+
+    Artisan::call('dispatch:done', ['code' => 'TASK-932', '--remote' => true]);
+
+    Http::assertSent(fn ($request) => ! array_key_exists('due_at', $request->data()));
+});
+
+test('dispatch:done --due rejects an unparseable date before any request or write (W10-1)', function () {
+    seedAgentToken();
+    Http::fake();
+
+    $task = app(DispatchTaskService::class)->create([
+        'title' => 'guarded close', 'status' => 'open', 'due_at' => '2026-08-01',
+    ]);
+
+    // Remote first: if the guard ever slipped BEHIND the target resolution, this
+    // ordering is the one that catches it (a request would be recorded).
+    $remote = Artisan::call('dispatch:done', ['code' => $task->code, '--due' => 'not-a-real-date', '--remote' => true]);
+    $local = Artisan::call('dispatch:done', ['code' => $task->code, '--due' => 'not-a-real-date', '--local' => true]);
+
+    expect($remote)->toBe(1)
+        ->and($local)->toBe(1);
+
+    Http::assertNothingSent();
+
+    // Not half-closed: the status transition never happened either, because the
+    // date is resolved before any write.
+    $fresh = $task->fresh();
+    expect($fresh->status)->toBe('open')
+        ->and($fresh->due_at?->toDateString())->toBe('2026-08-01')
+        ->and($fresh->comments()->count())->toBe(0);
 });
 
 test('claim warns when the token cannot outlive a work cycle (W9-5)', function () {

@@ -207,6 +207,145 @@ test('a null or blank comment body is still rejected', function () {
     ]))->toThrow(InvalidArgumentException::class);
 });
 
+// --- due dates: the tri-state (§18 W10) ------------------------------------
+
+/*
+ * `due_at` is TRI-state on every op: the key ABSENT leaves the stored date
+ * alone, `null`/`""` clears it, anything else must parse. Before this wave a
+ * `due_at` key passed validation and was silently dropped — the batch reported
+ * success and the date never landed.
+ */
+
+test('an add op sets the due date on the new task — creation, so no timeline event', function () {
+    $out = app(DispatchBatchService::class)->apply([
+        ['op' => 'add', 'title' => 'due next month', 'due_at' => '2026-08-15'],
+    ]);
+
+    $task = Task::where('code', $out['results'][0]['code'])->firstOrFail();
+
+    expect($task->due_at?->toDateString())->toBe('2026-08-15')
+        // The date is part of CREATION, not a change — only `update` memorializes.
+        ->and($task->comments()->where('event_type', TaskComment::EVENT_COMMENT)->count())->toBe(0);
+});
+
+test('an update op sets a due date on an existing task', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'needs a review-by', 'status' => 'open']);
+
+    app(DispatchBatchService::class)->apply([
+        ['op' => 'update', 'code' => $task->code, 'due_at' => '2026-08-15'],
+    ]);
+
+    expect($task->fresh()->due_at?->toDateString())->toBe('2026-08-15');
+});
+
+test('an update op clears the due date with null — and "" is the same sentinel', function () {
+    $svc = app(DispatchTaskService::class);
+    $viaNull = $svc->create(['title' => 'cleared by null', 'status' => 'open', 'due_at' => '2026-08-01']);
+    $viaBlank = $svc->create(['title' => 'cleared by blank', 'status' => 'open', 'due_at' => '2026-08-01']);
+
+    app(DispatchBatchService::class)->apply([
+        ['op' => 'update', 'code' => $viaNull->code, 'due_at' => null],
+        ['op' => 'update', 'code' => $viaBlank->code, 'due_at' => ''],
+    ]);
+
+    expect($viaNull->fresh()->due_at)->toBeNull()
+        ->and($viaBlank->fresh()->due_at)->toBeNull();
+
+    // A clear is a change, so it memorializes in the editor's own words.
+    $event = $viaNull->fresh()->comments()->where('event_type', TaskComment::EVENT_COMMENT)->firstOrFail();
+    expect($event->body)->toBe('Due date cleared.')
+        ->and($event->meta['due_at'])->toBe(['from' => '2026-08-01', 'to' => null]);
+});
+
+test('an update op that omits due_at leaves the stored date untouched', function () {
+    // The trap this pins: `due_at` cannot ride the `!== null` field loop, which
+    // is structurally unable to tell "absent" from "clear".
+    $task = app(DispatchTaskService::class)->create(['title' => 'keep my date', 'status' => 'open', 'due_at' => '2026-08-01']);
+
+    app(DispatchBatchService::class)->apply([
+        ['op' => 'update', 'code' => $task->code, 'status' => 'in_progress'],
+    ]);
+
+    expect($task->fresh()->due_at?->toDateString())->toBe('2026-08-01')
+        ->and($task->fresh()->comments()->where('event_type', TaskComment::EVENT_COMMENT)->count())->toBe(0);
+});
+
+test('an unparseable due_at is rejected up front, naming the operation, with nothing persisted', function () {
+    // Thrown from validate(), so the transaction never opens — the add before it
+    // is not written and then rolled back; it is never attempted.
+    expect(fn () => app(DispatchBatchService::class)->apply([
+        ['op' => 'add', 'title' => 'would be created first'],
+        ['op' => 'add', 'title' => 'bad date', 'due_at' => 'not-a-real-date'],
+    ]))->toThrow(InvalidArgumentException::class, 'Operation 1: `due_at` could not be parsed as a date: not-a-real-date');
+
+    expect(Task::count())->toBe(0);
+});
+
+test('a structured (array) due_at is rejected by name, not an Array-to-string crash', function () {
+    // Same class of bug as the structured comment body above: casting the value
+    // into the message would raise the PHP warning Laravel promotes to an
+    // ErrorException, replacing a legible error with a bare crash.
+    expect(fn () => app(DispatchBatchService::class)->apply([
+        ['op' => 'add', 'title' => 'structured date', 'due_at' => ['date' => '2026-08-15']],
+    ]))->toThrow(InvalidArgumentException::class, 'Operation 0: `due_at` could not be parsed as a date: array');
+
+    expect(Task::count())->toBe(0);
+});
+
+test('a real due-date change is memorialized in the Livewire editor wording (W10-2)', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'move the date', 'status' => 'open', 'due_at' => '2026-08-01']);
+
+    app(DispatchBatchService::class)->apply([
+        ['op' => 'update', 'code' => $task->code, 'due_at' => '2026-08-15'],
+    ]);
+
+    // Word-for-word what TaskShow records, so a human reading the timeline can't
+    // tell (and needn't care) whether the board or an agent moved the date.
+    $event = $task->fresh()->comments()->where('event_type', TaskComment::EVENT_COMMENT)->firstOrFail();
+    expect($event->body)->toBe('Due date set to 2026-08-15.')
+        ->and($event->meta['due_at'])->toBe(['from' => '2026-08-01', 'to' => '2026-08-15']);
+});
+
+test('re-submitting the same due date mints no second event (W10-2)', function () {
+    $svc = app(DispatchBatchService::class);
+    $task = app(DispatchTaskService::class)->create(['title' => 're-run me', 'status' => 'open']);
+
+    $manifest = [['op' => 'update', 'code' => $task->code, 'due_at' => '2026-08-15']];
+
+    $svc->apply($manifest);
+    $svc->apply($manifest);
+
+    // Nothing to do with the (event_type|body) comment dedupe — the memorial is
+    // a recordEvent, not an appended comment. Idempotence comes from comparing
+    // the date grain, exactly like the Livewire editor.
+    expect($task->fresh()->comments()->where('event_type', TaskComment::EVENT_COMMENT)->count())->toBe(1)
+        ->and($task->fresh()->due_at?->toDateString())->toBe('2026-08-15');
+});
+
+test('a keyed idempotent re-add leaves the existing task due_at alone', function () {
+    $svc = app(DispatchBatchService::class);
+
+    $svc->apply([['op' => 'add', 'key' => 'batch:due', 'title' => 'once', 'due_at' => '2026-08-15']]);
+    $svc->apply([['op' => 'add', 'key' => 'batch:due', 'title' => 'once', 'due_at' => '2026-12-31']]);
+
+    // The existing-task branch folds in only labels/comments/result — fields are
+    // never clobbered, and `due_at` is a field like any other.
+    expect(Task::where('dedupe_key', 'batch:due')->count())->toBe(1)
+        ->and(Task::where('dedupe_key', 'batch:due')->firstOrFail()->due_at?->toDateString())->toBe('2026-08-15');
+});
+
+test('dispatch:batch --dry-run with a due_at reports without persisting', function () {
+    $path = batchManifest([['op' => 'add', 'title' => 'phantom date', 'due_at' => '2026-08-15']]);
+
+    $exit = Artisan::call('dispatch:batch', ['path' => $path, '--dry-run' => true, '--json' => true]);
+    $decoded = json_decode(Artisan::output(), true);
+
+    expect($exit)->toBe(0)
+        ->and($decoded['applied'])->toBeFalse()
+        ->and($decoded['summary']['tasks_created'])->toBe(1) // counted, then rolled back
+        ->and(Task::count())->toBe(0);
+});
+
 // --- re-submit safety ------------------------------------------------------
 
 test('re-applying the same manifest is safe: keyed adds dedupe and comments do not double-post', function () {

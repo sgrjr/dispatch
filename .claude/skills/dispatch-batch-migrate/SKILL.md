@@ -111,6 +111,15 @@ done signal.
   shows the whole migrated cohort). For an `add` that a re-run might re-file, set a
   **stable `key`** derived from the source (`sha1(file|first-line)` is the
   convention) so re-applying upserts instead of duplicating (MIGRATING.md §6).
+- **`due_at`** — a line carrying a deadline ("by Friday", "due 8/15", "ship
+  before the 20th", `{due:2026-08-15}`) → resolve it to an **iso8601 date** on
+  the op (`"due_at": "2026-08-15"`), same on add and update. It is **tri-state**:
+  leave the key out and the due date is untouched (the default for every line
+  with no deadline in it); `null` or `""` clears an existing one — only emit
+  that when the source explicitly drops the deadline ("no longer time-boxed").
+  A relative phrase resolves against *today* — if that reading is a guess
+  ("soon", "this sprint"), leave it out rather than invent a date, and an
+  unparseable value fails the whole manifest by op index anyway.
 - **`commit`** — a trailing `(commit <sha>)` / `#<sha>` → the op's `commit`.
 - **`comments`** — trailing notes after `—`, `:`, or an indented sub-bullet
   become a `comment` (`{"body": "…"}`). Mark it `"internal": true` unless it's

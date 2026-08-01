@@ -3,9 +3,9 @@
 namespace Sgrjr\Dispatch\Console\Commands;
 
 use Illuminate\Console\Command;
-use Illuminate\Support\Carbon;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
+use Sgrjr\Dispatch\Support\DueDate;
 
 /**
  * Trusted CLI surface: queries tasks directly (no DispatchGate::scopeVisible).
@@ -38,21 +38,21 @@ class DispatchEdit extends Command
         }
 
         // Resolve --due up front so a bad date string fails loudly before any
-        // other change (including the description memorial) is applied.
+        // other change (including the description memorial) is applied. Absent
+        // flag → untouched; empty string → cleared; anything else must parse
+        // (the shared tri-state rule every write surface honors).
         $dueProvided = $this->option('due') !== null;
         $dueAt = $task->due_at;
         if ($dueProvided) {
             $raw = trim((string) $this->option('due'));
-            if ($raw === '') {
-                $dueAt = null;
-            } else {
-                try {
-                    $dueAt = Carbon::parse($raw);
-                } catch (\Throwable) {
-                    $this->error("--due could not be parsed as a date: {$raw}");
+            try {
+                $dueAt = DueDate::resolve($raw);
+            } catch (\InvalidArgumentException) {
+                // The helper's message names the WIRE field; this surface is a
+                // flag, so it keeps its own wording.
+                $this->error("--due could not be parsed as a date: {$raw}");
 
-                    return self::FAILURE;
-                }
+                return self::FAILURE;
             }
         }
 

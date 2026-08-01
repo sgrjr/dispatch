@@ -82,6 +82,14 @@ Notes on the loop:
 - On close, record **`result.resolution`** — `built | already-implemented |
   obsolete` (free-form allowed) — so the board can tell what you built from what
   was already there (the vet's "already-implemented" close should stamp it).
+- **Due dates are yours to set — don't hand them back to the human.** `--due=`
+  on `dispatch:add` files a task with its deadline already on it; `--due=` on
+  `dispatch:done` sets the review-by as you close (the natural pairing with
+  `--status=verifying`). Anything Carbon parses works — `2026-08-15` or
+  `"+3 days"`, resolved on YOUR clock and sent as ISO 8601; `done --due=""`
+  clears an existing date and omitting the flag leaves it untouched. The change
+  is memorialized on the timeline, so never write the review-by into a note and
+  ask the operator to set the real one in the UI — that detour is retired.
 - Long or multi-line inputs always have a file escape hatch: `--result-file`,
   `--body-file`, `--description-file` (or `-` for stdin).
 
@@ -93,7 +101,7 @@ feels finished.**
 | Close as | When |
 |---|---|
 | `done` | You verified the change end-to-end yourself and it's self-contained. Still the common case — don't hedge. |
-| `--status=verifying` | Something only a human can do remains: a visual/UX check, a deploy or migration, a prod-data/credential check, high blast radius (auth, billing, data integrity), or the task asked for sign-off. **Name the exact check** in the result or a note — a bare `verifying` with no stated ask is noise. Can't articulate a check? It's `done` (or you're not finished — keep `in_progress`). |
+| `--status=verifying` | Something only a human can do remains: a visual/UX check, a deploy or migration, a prod-data/credential check, high blast radius (auth, billing, data integrity), or the task asked for sign-off. **Name the exact check** in the result or a note — a bare `verifying` with no stated ask is noise. If the check has a deadline, attach it in the same call with `--due=` instead of writing it in prose. Can't articulate a check? It's `done` (or you're not finished — keep `in_progress`). |
 | `--status=declined` | Won't-do: obsolete, wrong, or solved elsewhere — say why in a note. |
 | `--status=backburner` | Real but consciously parked: not actionable now or anytime soon (someday-item out of triage), OR code-done but blocked on an external event — a launch date, an ops cutover window. Not rejection (`declined`) and not a pending human check (`verifying`) — say what unblocks it in a note. **Never self-park a commissioned task unless the commission says so.** |
 
@@ -134,9 +142,11 @@ php artisan dispatch:batch run.json
 `dispatch:schema` documents the manifest under its `batch` key. What matters:
 `add` mints (defaults to triage — never assumes done); `update` upserts work on
 an existing code (status moves only if you set it — memorialize honest
-statuses); labels attach; comments dedupe; keyed re-submits are safe. Needs the
-`batch` scope. The `dispatch-batch-migrate` skill converts a `todo.md`-style
-checklist into a manifest.
+statuses); labels attach; comments dedupe; keyed re-submits are safe; `due_at`
+is tri-state on either op kind — omit it to leave the date alone, `null`/`""`
+to clear, an ISO date to set. Needs the `batch` scope. The
+`dispatch-batch-migrate` skill converts a `todo.md`-style checklist into a
+manifest.
 
 ## When things go wrong
 

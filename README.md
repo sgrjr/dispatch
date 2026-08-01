@@ -284,7 +284,7 @@ Every command that emits data supports `--json` for machine consumption.
 
 ```
 dispatch:add    <title> [--type=] [--priority=] [--status=] [--description=]
-                [--public] [--label=]*  [--submitter=]
+                [--public] [--label=]*  [--submitter=] [--due=]
                 → create a task (goes through DispatchTaskService — never a bare Task::create)
 
 dispatch:next   [--type=] [--label=] [--no-focus] [--json]
@@ -303,6 +303,7 @@ dispatch:note   <code> <body> [--public] [--author=]
                 → append a comment; internal by default, --public makes it customer-visible
 
 dispatch:done   <code> [--status=done|declined|verifying|backburner] [--ref=] [--note=] [--author=]
+                [--due=]
                 → close out a task with an optional commit/PR ref and closing note;
                   --status=backburner parks it (triaged, consciously not actionable
                   now — or code-done but blocked on an external date) without
@@ -317,6 +318,10 @@ dispatch:push   [--path=] [--skip-export]
 ```
 
 Repeatable `--label` is a **union** (any-of); an all-of filter isn't available.
+`--due=` takes anything Carbon parses — an absolute `2026-08-15` or a relative
+`+3 days`, resolved on the caller's clock; an unparseable value fails the
+command before anything is written. Omit it and the due date is untouched; on
+`done`, `--due=""` **clears** it.
 
 A typical agent session:
 
@@ -471,11 +476,15 @@ dispatch:claim  {code?} {--type=} {--label=*} {--assignee=} {--no-focus} {--json
                   task still never steals in-flight work. A named-but-unclaimable
                   code exits non-zero.
 
-dispatch:add    {title} ... {--description=} {--description-file=} {--key=} {--remote} {--local}
+dispatch:add    {title} ... {--description=} {--description-file=} {--key=} {--due=}
+                {--remote} {--local}
                 → idempotent create: pass --key=<dedupe key> and a re-run
                   with the same key returns the existing task instead of
                   creating a duplicate. --description-file=PATH (or `-` for
-                  stdin) reads a long body from a file instead of inline
+                  stdin) reads a long body from a file instead of inline.
+                  --due=<date> files the task with a due date already on it —
+                  parseable date/time, e.g. 2026-08-15 or "+3 days", resolved
+                  on the agent's clock and sent as ISO 8601
 
 dispatch:next   {--status=} {--type=} {--label=*} {--no-focus} {--json} {--remote} {--local}
 dispatch:queue  {--status=} {--type=} {--label=*} {--limit=} {--count} {--json} {--remote} {--local}
@@ -489,7 +498,8 @@ dispatch:queue  {--status=} {--type=} {--label=*} {--limit=} {--count} {--json} 
                   — the true backlog size without probing --limit
 
 dispatch:done   {code} {--status=} {--commit=} {--result=} {--result-file=}
-                {--label=*} {--with-metrics} {--since=} {--json} {--remote} {--local}
+                {--label=*} {--due=} {--with-metrics} {--since=} {--json}
+                {--remote} {--local}
                 → record a structured completion: --commit=<sha> plus
                   --result='{...}' land under context.result, tying the task
                   to the exact code change and verification that closed it.
@@ -502,7 +512,13 @@ dispatch:done   {code} {--status=} {--commit=} {--result=} {--result-file=}
                   close — never replaces — so "park these and tag them" is one
                   verb instead of a batch manifest. Works remotely; note that
                   dispatch:edit is local-only, so this is the only labelling
-                  path for a --remote agent
+                  path for a --remote agent.
+                  --due=<date> sets the review-by at close — the natural pairing
+                  with --status=verifying ("handing this back; look at it by
+                  Friday"). Parseable date/time (2026-08-15, "+3 days"),
+                  resolved locally and sent as ISO 8601; --due="" clears an
+                  existing date, and omitting the flag leaves it untouched.
+                  Either way the change lands on the task's timeline
 
 dispatch:find   {term} {--status=} {--type=} {--label=*} {--limit=}
                 {--json} {--remote} {--local}
@@ -631,7 +647,7 @@ verbs:
       "comments": [{ "body": "spotted while working TASK-042" }] },
 
     { "op": "update", "code": "TASK-042", "status": "in_progress",
-      "commit": "abc1234", "labels": ["needs-review"],
+      "commit": "abc1234", "labels": ["needs-review"], "due_at": "2026-08-15",
       "comments": [{ "body": "partial: after-tax path fixed, pre-tax remains",
                      "internal": true }] }
   ]
@@ -657,6 +673,13 @@ package↔package snapshot `apply`):
   **partially-completed** work is memorialized honestly.
 - **Labels attach additively** (never replace-all), so a batch can't strip a
   task's existing labels.
+- **`due_at` is tri-state** on both op kinds: **omit** the key and the due date
+  is untouched; send **`null` or `""`** to clear it (on an `add`, nothing to
+  clear — a no-op); send any parseable date (`"2026-08-15"`) to set it — so a
+  partial-progress `update` can attach a review-by without disturbing anything
+  else. An unparseable value fails validation by op index *before* the
+  transaction opens, and on `update` a real change is memorialized on the
+  timeline in the same words the human editor uses.
 - **Comments dedupe** on content and **the whole manifest is one transaction** —
   a bad op rolls it all back, and a re-submit is safe (keyed adds dedupe,
   duplicate comments are skipped, an unchanged status records no event).

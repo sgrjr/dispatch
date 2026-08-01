@@ -118,6 +118,21 @@ test('schema() documents the import (backfill-with-history) shape', function () 
         ->and($import['label'])->toHaveKeys(['name', 'color', 'description']);
 });
 
+test('schema() documents due_at on the batch op and at close (W10-1)', function () {
+    $schema = TaskPresenter::schema();
+
+    // The gap this closes: a `due_at` key in a manifest used to pass validation
+    // and vanish, and nothing an agent could read said the field existed at all.
+    expect($schema['batch']['op'])->toHaveKey('due_at')
+        ->and($schema['batch']['op']['due_at'])->toContain('iso8601')
+        // The tri-state must be IN the contract, not just in the code.
+        ->and($schema['batch']['op']['due_at'])->toContain('clears')
+        ->and($schema['batch']['op']['due_at'])->toContain('untouched')
+        // `done` is the close-time route to the same field (the CLI's --due).
+        ->and($schema['done'])->toHaveKey('due_at')
+        ->and($schema['done']['due_at'])->toContain('--due');
+});
+
 test('schema() documents the batch size limits, not just the op shape (W9-1)', function () {
     $batch = TaskPresenter::schema()['batch'];
 

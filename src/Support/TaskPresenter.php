@@ -139,6 +139,7 @@ class TaskPresenter
                 'commit' => 'sha stored at context.result.commit',
                 'result' => 'object stored at context.result (a new close replaces it; metrics accumulate)',
                 'resolution' => 'recommended result key on close: result.resolution = built | already-implemented | obsolete (free-form allowed) — records HOW the task resolved, so the board can measure pre-resolved briefs',
+                'due_at' => 'iso8601|null (CLI --due) — set or clear the review-by date AT CLOSE, e.g. when handing back with status=verifying: a date sets it, null or "" clears it, absent leaves it untouched. A real change is memorialized on the timeline.',
             ],
             // The `dispatch:batch` / POST agent/batch manifest — apply a whole
             // run of ops in one transaction. Additive + server-bounded: `add`
@@ -157,6 +158,7 @@ class TaskPresenter
                     'type' => Task::types(),
                     'priority' => Task::priorities(),
                     'status' => Task::statuses(),
+                    'due_at' => 'iso8601|null — set the due date; null or "" clears it; absent leaves it untouched',
                     'description' => 'string|null',
                     'public' => 'bool (optional)',
                     'labels' => 'string[] (ATTACHED additively — never replaces existing labels)',

@@ -11,6 +11,7 @@ use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
 use Sgrjr\Dispatch\Support\AgentMetrics;
+use Sgrjr\Dispatch\Support\DueDate;
 use Sgrjr\Dispatch\Support\TaskPresenter;
 use Sgrjr\Dispatch\Support\TranscriptLocator;
 
@@ -25,6 +26,7 @@ class DispatchDone extends Command
     protected $signature = 'dispatch:done
         {code : The task code, e.g. TASK-042}
         {--status=done : Target status — ANY configured workflow status, not just terminal (done | declined | verifying, backburner to park it out of the queue without declining, or e.g. open to greenlight a triaged task)}
+        {--due= : Set (or clear) the review-by date at close — pairs naturally with --status=verifying. Parseable date/time string, e.g. "2026-08-01" or "+3 days"; empty string clears it}
         {--commit= : SHA of the code change}
         {--label=* : Label name(s) to ATTACH on close; auto-created if missing, never replaces existing labels. Repeatable — so "park these and tag them" is one verb, not a batch manifest.}
         {--result= : JSON blob stored under context.result}
@@ -50,6 +52,31 @@ class DispatchDone extends Command
             $this->error('--status must be one of: '.implode(', ', Task::statuses()));
 
             return self::FAILURE;
+        }
+
+        // Tri-state --due, resolved before the metrics work and before any
+        // request or write, so a bad date costs nothing but the error. Flag
+        // absent → the stored date is untouched; empty string → cleared;
+        // anything else must parse, on THIS box's clock (so "+3 days" means
+        // three days from the agent's now).
+        $dueProvided = $this->option('due') !== null;
+        $dueClear = false;
+        $due = null;
+        if ($dueProvided) {
+            $raw = trim((string) $this->option('due'));
+            if (DueDate::isClear($raw)) {
+                $dueClear = true;
+            } else {
+                try {
+                    $due = DueDate::parseOrFail($raw);
+                } catch (\InvalidArgumentException) {
+                    // The helper's message names the WIRE field; this surface is
+                    // a flag, so it keeps its own wording.
+                    $this->error("--due could not be parsed as a date: {$raw}");
+
+                    return self::FAILURE;
+                }
+            }
         }
 
         $commit = $this->option('commit');
@@ -114,6 +141,14 @@ class DispatchDone extends Command
                 'commit' => $commit,
                 'result' => $result,
                 'labels' => $labels ?: null,
+                // Only a flag that was PASSED puts the key on the wire — an
+                // absent key is what tells the server to leave the date alone.
+                // The empty string is deliberate, not sloppiness: it survives
+                // the null filter below (which is the point), and the server
+                // reads it as the clear it is — over HTTP the host's
+                // ConvertEmptyStringsToNull rewrites it to null with the key
+                // intact, and key-present-null is the endpoint's clear.
+                'due_at' => $dueProvided ? ($dueClear ? '' : $due->toIso8601String()) : null,
             ], fn ($v) => $v !== null));
 
             if ($r === null) {
@@ -149,6 +184,16 @@ class DispatchDone extends Command
             $this->warn("Task {$task->code} is already in status `{$status}`.");
         }
 
+        // Captured BEFORE the assignment, and date-grained like the Livewire
+        // editor: re-closing with the due date the task already carries changes
+        // nothing and so mints no event.
+        $dueFrom = $task->due_at?->toDateString();
+        $dueTo = $dueFrom;
+        if ($dueProvided) {
+            $task->due_at = $dueClear ? null : $due;
+            $dueTo = $task->due_at?->toDateString();
+        }
+
         $task->status = $status;
         $task->save();
 
@@ -158,6 +203,18 @@ class DispatchDone extends Command
             ['from' => $previous, 'to' => $status],
             "Status changed from `{$previous}` to `{$status}`."
         );
+
+        // Memorialized in the SAME words the Livewire editor and the batch/HTTP
+        // paths use, so the timeline reads identically no matter which surface
+        // moved the date.
+        if ($dueTo !== $dueFrom) {
+            $task->recordEvent(
+                TaskComment::EVENT_COMMENT,
+                Auth::id(),
+                ['due_at' => ['from' => $dueFrom, 'to' => $dueTo]],
+                $dueTo ? "Due date set to {$dueTo}." : 'Due date cleared.',
+            );
+        }
 
         if ($commit !== null || $result !== null) {
             $tasks->recordResult($task, $result ?? [], $commit);

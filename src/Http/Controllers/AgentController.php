@@ -12,6 +12,7 @@ use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Services\AgentSessionService;
 use Sgrjr\Dispatch\Services\DispatchBatchService;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
+use Sgrjr\Dispatch\Support\DueDate;
 use Sgrjr\Dispatch\Support\TaskPresenter;
 
 /**
@@ -198,6 +199,7 @@ class AgentController extends Controller
             'labels.*' => ['string'],
             'public' => ['nullable', 'boolean'],
             'key' => ['nullable', 'string'],
+            'due_at' => ['nullable', 'string'],
         ]);
 
         $attributes = array_filter([
@@ -209,6 +211,18 @@ class AgentController extends Controller
             'submitter_user_id' => null,
             'is_public' => (bool) ($v['public'] ?? false),
         ];
+
+        // The due date is part of creation — set silently, no timeline event
+        // (only a CHANGE is memorialized, and a task being minted has no prior
+        // date to change). A clear sentinel is nothing to carry. Parse before
+        // the task is minted so a bad date costs 422, not an orphan task.
+        if (array_key_exists('due_at', $v) && ! DueDate::isClear($v['due_at'])) {
+            try {
+                $attributes['due_at'] = DueDate::parseOrFail($v['due_at']);
+            } catch (\InvalidArgumentException $e) {
+                abort(422, $e->getMessage());
+            }
+        }
 
         $labels = $v['labels'] ?? [];
 
@@ -267,6 +281,7 @@ class AgentController extends Controller
             'result' => ['nullable', 'array'],
             'labels' => ['nullable', 'array'],
             'labels.*' => ['string'],
+            'due_at' => ['nullable', 'string'],
         ]);
 
         /** @var class-string<Task> $taskModel */
@@ -280,6 +295,31 @@ class AgentController extends Controller
 
         abort_unless(in_array($to, $taskModel::statuses(), true), 422);
 
+        // Tri-state due date at close — the review-by an agent sets when handing
+        // work back (verifying/in_review). Key ABSENT leaves it untouched; a
+        // present null clears it. Note a sent `""` never survives the host's
+        // ConvertEmptyStringsToNull middleware — it arrives as null with the KEY
+        // intact (thanks to `nullable`), which is exactly the clear case, so the
+        // wire contract holds either way. Resolved before any write: a bad date
+        // must cost a 422, not a half-closed task.
+        $dueProvided = array_key_exists('due_at', $v);
+        $dueFrom = $task->due_at?->toDateString();
+        $dueTo = $dueFrom;
+        if ($dueProvided) {
+            $due = null;
+            try {
+                $due = DueDate::resolve($v['due_at']);
+            } catch (\InvalidArgumentException $e) {
+                abort(422, $e->getMessage());
+            }
+
+            $task->due_at = $due;
+            $dueTo = $due?->toDateString();
+        }
+        // Date-grained, matching the Livewire editor: re-closing with the same
+        // due date mints no event.
+        $dueChanged = $dueProvided && $dueFrom !== $dueTo;
+
         $from = $task->status;
         $task->status = $to;
         $task->save();
@@ -290,6 +330,17 @@ class AgentController extends Controller
             $this->agentMeta($s, ['from' => $from, 'to' => $to]),
             "Status changed from {$from} to {$to}.",
         );
+
+        // Memorialized in the SAME words the Livewire editor uses, so the
+        // timeline reads identically whether the board or an agent moved it.
+        if ($dueChanged) {
+            $task->recordEvent(
+                TaskComment::EVENT_COMMENT,
+                null,
+                $this->agentMeta($s, ['due_at' => ['from' => $dueFrom, 'to' => $dueTo]]),
+                $dueTo ? "Due date set to {$dueTo}." : 'Due date cleared.',
+            );
+        }
 
         if (array_key_exists('commit', $v) || array_key_exists('result', $v)) {
             app(DispatchTaskService::class)->recordResult($task, $v['result'] ?? [], $v['commit'] ?? null);

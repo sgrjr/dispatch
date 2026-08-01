@@ -166,6 +166,100 @@ test('dispatch:batch --remote posts the manifest operations to the agent API', f
 });
 
 /*
+ * §18 W10 — `due_at` on batch ops. Before this wave the key passed validation
+ * and was silently dropped: the endpoint answered 200 and the date never landed.
+ */
+
+test('POST batch applies due_at on both add and update ops (W10-1)', function () {
+    $existing = app(DispatchTaskService::class)->create(['title' => 'set my review-by', 'status' => 'open']);
+
+    $token = batchAgentToken();
+
+    $response = $this->withToken($token)->postJson('api/dispatch/agent/batch', [
+        'operations' => [
+            ['op' => 'add', 'ref' => 'd1', 'title' => 'filed with a date', 'due_at' => '2026-08-15'],
+            ['op' => 'update', 'code' => $existing->code, 'due_at' => '2026-09-01'],
+        ],
+    ])->assertOk();
+
+    $new = Task::where('code', $response->json('results.0.code'))->firstOrFail();
+
+    expect($new->due_at?->toDateString())->toBe('2026-08-15')
+        ->and($existing->fresh()->due_at?->toDateString())->toBe('2026-09-01');
+
+    // The CHANGE is memorialized (the creation is not), carrying agent meta so
+    // the timeline says who moved the date.
+    $event = $existing->fresh()->comments()->where('event_type', TaskComment::EVENT_COMMENT)->firstOrFail();
+    expect($event->body)->toBe('Due date set to 2026-09-01.')
+        ->and($event->user_id)->toBeNull()
+        ->and($event->meta['agent_name'])->toBe('claude-remote')
+        ->and($event->meta['due_at'])->toBe(['from' => null, 'to' => '2026-09-01']);
+});
+
+test('POST batch with an unparseable due_at 422s naming the operation and writes nothing (W10-1)', function () {
+    $token = batchAgentToken();
+
+    $response = $this->withToken($token)->postJson('api/dispatch/agent/batch', [
+        'operations' => [
+            ['op' => 'add', 'title' => 'good'],
+            ['op' => 'add', 'title' => 'bad date', 'due_at' => 'not-a-real-date'],
+        ],
+    ]);
+
+    $response->assertStatus(422);
+    expect($response->json('message'))->toContain('Operation 1')
+        ->and($response->json('message'))->toContain('due_at');
+
+    expect(Task::count())->toBe(0);
+});
+
+test('dispatch:batch --remote sends due_at through in the operations (W10-1)', function () {
+    config([
+        'dispatch.agent.remote.url' => 'https://agent.example.test/api/dispatch/agent',
+        'dispatch.agent.remote.token_path' => $tokenPath = sys_get_temp_dir().'/dispatch-batch-remote-'.uniqid().'.json',
+    ]);
+    file_put_contents($tokenPath, json_encode(['token' => 'test-remote-token']));
+
+    Http::fake([
+        'agent.example.test/*' => Http::response([
+            'applied' => true,
+            'dry_run' => false,
+            'summary' => ['tasks_created' => 1, 'tasks_updated' => 1, 'comments_added' => 0, 'statuses_changed' => 0],
+            'results' => [
+                ['ref' => 'd1', 'op' => 'add', 'code' => 'TASK-951', 'created' => true],
+                ['op' => 'update', 'code' => 'TASK-043', 'status' => 'open'],
+            ],
+        ], 200),
+    ]);
+
+    $path = sys_get_temp_dir().'/dispatch-batch-remote-manifest-'.uniqid().'.json';
+    file_put_contents($path, json_encode(['operations' => [
+        ['op' => 'add', 'ref' => 'd1', 'title' => 'filed with a date', 'due_at' => '2026-08-15'],
+        ['op' => 'update', 'code' => 'TASK-043', 'due_at' => null],
+    ]]));
+
+    $exit = Artisan::call('dispatch:batch', ['path' => $path, '--remote' => true, '--json' => true]);
+
+    expect($exit)->toBe(0);
+
+    // The manifest travels verbatim — including the null that means "clear",
+    // which a payload filter would have eaten on the way out.
+    Http::assertSent(function ($request) {
+        $ops = $request->data()['operations'];
+
+        return str_contains($request->url(), '/api/dispatch/agent/batch')
+            && $ops[0]['due_at'] === '2026-08-15'
+            && array_key_exists('due_at', $ops[1])
+            && $ops[1]['due_at'] === null;
+    });
+
+    expect(Task::count())->toBe(0); // never touches the local DB
+
+    @unlink($path);
+    @unlink($tokenPath);
+});
+
+/*
  * W9-1(b)/(c) — the WHOLE-manifest byte guard. The per-comment cap bounds one
  * field; nothing bounded the sum, so a manifest of individually-legal ops could
  * still die at the web server's body limit, BELOW the app, where no dispatch

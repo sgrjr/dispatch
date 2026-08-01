@@ -637,6 +637,148 @@ test('GET show prefers an exact code over a colliding dedupe_key (W9-4)', functi
     expect($response->json('task.title'))->toBe('the real code holder');
 });
 
+/*
+ * ── 10th wave (§18 📅) — `due_at` on the add/done endpoints ───────────────
+ * One tri-state rule: the key ABSENT leaves the stored date alone, a present
+ * null (which is also what a sent `""` becomes once the host's
+ * ConvertEmptyStringsToNull middleware has run) clears it, anything else must
+ * parse or cost a 422 — never a half-applied write.
+ */
+
+test('POST add accepts a due_at and sets it silently — creation is not a change (W10-1)', function () {
+    $token = agentApiToken();
+
+    $response = $this->withToken($token)->postJson('api/dispatch/agent/add', [
+        'title' => 'filed with a review-by',
+        'due_at' => '2026-08-15',
+    ])->assertCreated();
+
+    $task = Sgrjr\Dispatch\Models\Task::where('code', $response->json('task.code'))->firstOrFail();
+
+    expect($task->due_at?->toDateString())->toBe('2026-08-15')
+        // Presented back on the frozen shape, so the agent can read it without a show.
+        ->and($response->json('task.due_at'))->toStartWith('2026-08-15T')
+        // A minted task has no prior date, so there is nothing to memorialize.
+        ->and($task->comments()->count())->toBe(0);
+});
+
+test('POST add with an unparseable due_at 422s and mints no task (W10-1)', function () {
+    $token = agentApiToken();
+
+    $response = $this->withToken($token)->postJson('api/dispatch/agent/add', [
+        'title' => 'never filed',
+        'due_at' => 'not-a-real-date',
+    ]);
+
+    $response->assertStatus(422);
+    expect($response->json('message'))->toContain('due_at');
+
+    // Parsed before the task is minted — a bad date costs a 422, not an orphan.
+    expect(Sgrjr\Dispatch\Models\Task::count())->toBe(0);
+});
+
+test('POST done sets the review-by and memorializes it in the editor wording (W10-2)', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'hand back', 'status' => 'in_progress']);
+
+    $token = agentApiToken();
+
+    $this->withToken($token)->postJson('api/dispatch/agent/done', [
+        'code' => $task->code,
+        'status' => 'verifying',
+        'due_at' => '2026-08-15',
+    ])->assertOk()
+        ->assertJsonPath('task.status', 'verifying');
+
+    expect($task->fresh()->due_at?->toDateString())->toBe('2026-08-15');
+
+    $event = $task->fresh()->comments()
+        ->where('event_type', Sgrjr\Dispatch\Models\TaskComment::EVENT_COMMENT)->firstOrFail();
+
+    expect($event->body)->toBe('Due date set to 2026-08-15.')
+        ->and($event->user_id)->toBeNull()
+        ->and($event->meta['agent_name'])->toBe('claude-remote')
+        ->and($event->meta['due_at'])->toBe(['from' => null, 'to' => '2026-08-15']);
+});
+
+test('POST done clears the date on a null due_at — and on the "" the CLI sends (W10-2)', function () {
+    $svc = app(DispatchTaskService::class);
+    $viaNull = $svc->create(['title' => 'cleared by null', 'status' => 'in_progress', 'due_at' => '2026-08-01']);
+    $viaBlank = $svc->create(['title' => 'cleared by blank', 'status' => 'in_progress', 'due_at' => '2026-08-01']);
+
+    $token = agentApiToken();
+
+    // Both spellings must land in the same place: `dispatch:done --due=""` puts
+    // a literal `""` on the wire (it survives the payload's null filter, which a
+    // null would not), and the host's ConvertEmptyStringsToNull rewrites it to
+    // null with the KEY intact — which is exactly this clear.
+    $this->withToken($token)->postJson('api/dispatch/agent/done', [
+        'code' => $viaNull->code, 'due_at' => null,
+    ])->assertOk();
+
+    $this->withToken($token)->postJson('api/dispatch/agent/done', [
+        'code' => $viaBlank->code, 'due_at' => '',
+    ])->assertOk();
+
+    expect($viaNull->fresh()->due_at)->toBeNull()
+        ->and($viaBlank->fresh()->due_at)->toBeNull();
+
+    $event = $viaNull->fresh()->comments()
+        ->where('event_type', Sgrjr\Dispatch\Models\TaskComment::EVENT_COMMENT)->firstOrFail();
+
+    expect($event->body)->toBe('Due date cleared.')
+        ->and($event->meta['due_at'])->toBe(['from' => '2026-08-01', 'to' => null]);
+});
+
+test('POST done without a due_at key leaves the stored date untouched (W10-1)', function () {
+    $task = app(DispatchTaskService::class)->create([
+        'title' => 'keep my date', 'status' => 'in_progress', 'due_at' => '2026-08-01',
+    ]);
+
+    $token = agentApiToken();
+
+    $this->withToken($token)->postJson('api/dispatch/agent/done', ['code' => $task->code])->assertOk();
+
+    // Absent is not clear: a close that says nothing about the date must not
+    // blank it, and must mint no memorial for a change that didn't happen.
+    expect($task->fresh()->due_at?->toDateString())->toBe('2026-08-01')
+        ->and($task->fresh()->comments()
+            ->where('event_type', Sgrjr\Dispatch\Models\TaskComment::EVENT_COMMENT)->count())->toBe(0);
+});
+
+test('POST done 404s an unknown code even when the due_at is unparseable (W10-1)', function () {
+    $token = agentApiToken();
+
+    // The date is read AFTER the lookup — a wrong code is still a 404, not a
+    // 422 that would send an agent hunting the wrong problem.
+    $this->withToken($token)->postJson('api/dispatch/agent/done', [
+        'code' => 'TASK-DOESNOTEXIST',
+        'due_at' => 'not-a-real-date',
+    ])->assertStatus(404);
+});
+
+test('POST done answers a bad status with the status 422, not the due date one (W10-1)', function () {
+    $task = app(DispatchTaskService::class)->create([
+        'title' => 'untouched', 'status' => 'open', 'due_at' => '2026-08-01',
+    ]);
+
+    $token = agentApiToken();
+
+    $response = $this->withToken($token)->postJson('api/dispatch/agent/done', [
+        'code' => $task->code,
+        'status' => 'not-a-status',
+        'due_at' => 'not-a-real-date',
+    ]);
+
+    $response->assertStatus(422);
+    expect((string) $response->json('message'))->not->toContain('due_at');
+
+    // Both guards run before any write — the task is exactly as it was.
+    $fresh = $task->fresh();
+    expect($fresh->status)->toBe('open')
+        ->and($fresh->due_at?->toDateString())->toBe('2026-08-01')
+        ->and($fresh->comments()->count())->toBe(0);
+});
+
 test('POST done attaches labels additively and never replaces (W9-2)', function () {
     $token = agentApiToken();
 

@@ -5,6 +5,7 @@ namespace Sgrjr\Dispatch\Services;
 use Illuminate\Support\Facades\DB;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
+use Sgrjr\Dispatch\Support\DueDate;
 
 /**
  * Applies a MANIFEST of task operations in a single transaction — the batch
@@ -194,6 +195,7 @@ class DispatchBatchService
             $this->assertVocab($i, 'type', $op['type'] ?? null, Task::types());
             $this->assertVocab($i, 'priority', $op['priority'] ?? null, Task::priorities());
             $this->assertVocab($i, 'status', $op['status'] ?? null, Task::statuses());
+            $this->assertDueAt($i, $op);
 
             foreach (($op['comments'] ?? []) as $c) {
                 if (! is_array($c)) {
@@ -254,6 +256,28 @@ class DispatchBatchService
     }
 
     /**
+     * A settable `due_at` must parse HERE, with the rest of the manifest —
+     * i.e. before the transaction opens. Discovering it mid-apply would still
+     * roll back cleanly, but only after the run had written earlier ops, and
+     * "validation fails before anything is attempted" is the contract the batch
+     * sells. The clear sentinel (null/"") is legal and needs no parse.
+     *
+     * @param  array<string,mixed>  $op
+     */
+    protected function assertDueAt(int $i, array $op): void
+    {
+        if (! array_key_exists('due_at', $op) || DueDate::isClear($op['due_at'])) {
+            return;
+        }
+
+        try {
+            DueDate::parseOrFail($op['due_at']);
+        } catch (\InvalidArgumentException $e) {
+            throw new \InvalidArgumentException("Operation {$i}: ".$e->getMessage());
+        }
+    }
+
+    /**
      * Insert a new task (defaulting to triage), or — when an idempotency `key`
      * resolves to an existing task — leave its fields untouched and only fold in
      * new labels/comments/result. New tasks carry a null submitter; their agent
@@ -294,6 +318,14 @@ class DispatchBatchService
             'is_public' => (bool) ($op['public'] ?? false),
         ];
 
+        // A due date is part of CREATION here, not a change — so it is set
+        // silently, with no timeline event (the `update` op memorializes).
+        // A clear sentinel is simply nothing to carry: a brand-new task has no
+        // due date to remove. Already validated, so this cannot throw.
+        if (array_key_exists('due_at', $op) && ! DueDate::isClear($op['due_at'])) {
+            $attributes['due_at'] = DueDate::parseOrFail($op['due_at']);
+        }
+
         $task = $key !== null
             ? $this->tasks->firstOrCreateByKey($key, $attributes, $labels)
             : $this->tasks->create($attributes, $labels);
@@ -312,8 +344,9 @@ class DispatchBatchService
 
     /**
      * Upsert the WORK on an existing task: apply the provided fields, record a
-     * status transition on the timeline when the status actually changes, fold in
-     * labels/comments/result. Missing code rolls the whole batch back.
+     * status transition on the timeline when the status actually changes, ditto
+     * a due-date change, fold in labels/comments/result. Missing code rolls the
+     * whole batch back.
      *
      * @param  array<string,mixed>  $op
      * @param  array<string,mixed>  $actorMeta
@@ -344,6 +377,23 @@ class DispatchBatchService
             $task->is_public = (bool) $op['public'];
         }
 
+        // `due_at` is tri-state, so it CANNOT ride the loop above: that loop's
+        // `!== null` test is what protects the other fields from being blanked
+        // by a partial memorialize, and it is therefore structurally unable to
+        // express a clear. Key presence decides here; null/"" clears.
+        $dueFrom = null;
+        $dueTo = null;
+        $dueChanged = false;
+        if (array_key_exists('due_at', $op)) {
+            $dueFrom = $task->due_at?->toDateString();
+            $due = DueDate::resolve($op['due_at']); // validated up front
+            $task->due_at = $due;
+            $dueTo = $due?->toDateString();
+            // Date-grained, matching the Livewire editor: re-submitting the same
+            // due date is idempotent and mints no event.
+            $dueChanged = $dueFrom !== $dueTo;
+        }
+
         $from = $task->status;
         $to = $op['status'] ?? null;
         $statusChanged = $to !== null && $to !== $from;
@@ -361,6 +411,18 @@ class DispatchBatchService
                 "Status changed from {$from} to {$to}.",
             );
             $summary['statuses_changed']++;
+        }
+
+        // Memorialize an agent-caused due-date change in the SAME words the
+        // Livewire editor uses, so a human reading the timeline can't tell (and
+        // needn't care) whether the board or an agent moved the date.
+        if ($dueChanged) {
+            $task->recordEvent(
+                TaskComment::EVENT_COMMENT,
+                $actorUserId,
+                $actorMeta + ['due_at' => ['from' => $dueFrom, 'to' => $dueTo]],
+                $dueTo ? "Due date set to {$dueTo}." : 'Due date cleared.',
+            );
         }
 
         $this->tasks->attachLabels($task, $this->labelNames($op['labels'] ?? []));
