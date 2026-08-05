@@ -240,6 +240,15 @@ return [
 
         'exception_label' => 'source:exception',
         'trace_frames' => 20,
+
+        // fromException() writes a task BODY as well as a title, because the
+        // title is truncated at 120 chars and everything else would otherwise
+        // be buried in the raw context JSON. The body carries the full message
+        // plus the first N stack frames (application frames marked `»`).
+        // Deliberately not the whole trace — the meat is near the top, but
+        // rarely in the first frame or two. 0 frames = message only.
+        'description_frames' => 30,
+        'description_message_chars' => 4000,
     ],
 
     /*

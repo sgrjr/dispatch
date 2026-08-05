@@ -58,6 +58,9 @@ class DispatchManager
             [(string) config('dispatch.reporter.exception_label', 'source:exception')],
         )));
         $options['context'] = array_merge($this->exceptionContext($e), $options['context'] ?? []);
+        // Only when the caller didn't write one — and only on the initial
+        // create, since capture() never rewrites an existing task's body.
+        $options['description'] ??= $this->describeException($e);
 
         $title = $options['title'] ?? $this->titleFor($e);
         unset($options['title']);
@@ -242,6 +245,116 @@ class DispatchManager
             'first_seen' => now()->toIso8601String(),
             'last_seen' => now()->toIso8601String(),
         ];
+    }
+
+    /**
+     * Build the task BODY for an exception-sourced task.
+     *
+     * Without this, an auto-filed exception task carries a title and nothing
+     * else — and the title is necessarily short (truncated at 120 chars by
+     * titleFor), so the one thing that identifies the bug is clipped. Everything
+     * else sat in the raw `context` JSON, which no reader of the board sees.
+     *
+     * So the body carries the two things that actually identify an exception:
+     * the FULL message, and enough stack to place it.
+     *
+     * Deliberately NOT the whole trace — that's noise. The meat is near the top
+     * but rarely in the first frame or two (those are usually the generic throw
+     * site), so the leading frames are kept rather than skipped, and application
+     * frames are marked with `»` so the eye lands on the app's own code instead
+     * of the vendor scaffolding between it. Paths are relativized to the app
+     * root because the deploy prefix is the single noisiest thing in a Windows
+     * stack trace.
+     */
+    protected function describeException(Throwable $e): string
+    {
+        $parts = ['**'.class_basename($e).'** in `'
+            .$this->relativePath($e->getFile()).':'.$e->getLine().'`'];
+
+        // Fenced rather than inline: a raw message is full of backslashes,
+        // underscores and asterisks that markdown would otherwise eat.
+        $message = trim($e->getMessage());
+        if ($message !== '') {
+            $limit = (int) config('dispatch.reporter.description_message_chars', 4000);
+            $parts[] = "```\n".($limit > 0 ? Str::limit($message, $limit) : $message)."\n```";
+        }
+
+        // A wrapped exception (a QueryException around a PDOException, say)
+        // hides the real cause a level down. Surface the chain compactly.
+        $causes = [];
+        $previous = $e->getPrevious();
+        while ($previous !== null && count($causes) < 3) {
+            $causes[] = '- `'.class_basename($previous).'` at `'
+                .$this->relativePath($previous->getFile()).':'.$previous->getLine().'` — '
+                .Str::limit(trim($previous->getMessage()), 200);
+            $previous = $previous->getPrevious();
+        }
+        if ($causes !== []) {
+            $parts[] = "**Caused by**\n".implode("\n", $causes);
+        }
+
+        $lines = $this->traceLines($e, (int) config('dispatch.reporter.description_frames', 30));
+        if ($lines !== []) {
+            // Say plainly whether frames were dropped — "first 20 frames" on a
+            // 20-frame trace reads as though there were more to find.
+            $total = count($e->getTrace());
+            $parts[] = '**Stack** — '.(count($lines) < $total ? 'first '.count($lines).' of '.$total : $total)
+                .' frames, `»` marks application code:';
+            $parts[] = "```\n".implode("\n", $lines)."\n```";
+        }
+
+        return implode("\n\n", $parts);
+    }
+
+    /**
+     * The trimmed, app-marked frame list used by describeException().
+     *
+     * @return array<int,string>
+     */
+    protected function traceLines(Throwable $e, int $limit): array
+    {
+        if ($limit <= 0) {
+            return [];
+        }
+
+        return collect($e->getTrace())
+            ->take($limit)
+            ->map(function (array $frame): string {
+                $path = $this->relativePath((string) ($frame['file'] ?? ''));
+                $isApp = $path !== '' && ! str_starts_with($path, 'vendor/');
+                $call = ($frame['class'] ?? '').($frame['type'] ?? '').($frame['function'] ?? '').'()';
+
+                return ($isApp ? '» ' : '  ')
+                    .($path !== '' ? $path.':'.($frame['line'] ?? '?') : '[internal]')
+                    .'  '.$call;
+            })
+            ->all();
+    }
+
+    /**
+     * Strip the application root from an absolute path. The deploy prefix
+     * ("C:\inetpub\wwwroot\sites\production_customer\staff\") is pure noise in
+     * a task body, and dropping it is what makes a `vendor/` frame obvious at a
+     * glance. Case-insensitive because Windows hands back inconsistent drive
+     * casing; returns the path unchanged when it isn't under the app root.
+     */
+    protected function relativePath(string $path): string
+    {
+        if ($path === '') {
+            return '';
+        }
+
+        $normalized = str_replace('\\', '/', $path);
+
+        try {
+            $base = rtrim(str_replace('\\', '/', base_path()), '/').'/';
+        } catch (Throwable) {
+            return $normalized;
+        }
+
+        return stripos($normalized, $base) === 0
+            ? substr($normalized, strlen($base))
+            : $normalized;
     }
 
     protected function signatureFor(Throwable $e): string
