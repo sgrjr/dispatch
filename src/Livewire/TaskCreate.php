@@ -24,6 +24,14 @@ class TaskCreate extends Component
     public string $priority = 'medium';
     public bool $is_public = false;
 
+    /**
+     * W13-5: unchecked (default) = the participants-only circle; checked =
+     * share with all staff at creation. The service's actor-based default
+     * would land 'participants' for a staff creator anyway — this just
+     * surfaces the opt-in at the moment of creation.
+     */
+    public bool $share_with_staff = false;
+
     /** @var array<int,string> Label names attached on create (existing or new). */
     public array $labelNames = [];
     public string $labelInput = '';
@@ -47,6 +55,7 @@ class TaskCreate extends Component
             'type' => 'required|in:'.implode(',', $taskClass::types()),
             'priority' => 'required|in:'.implode(',', $taskClass::priorities()),
             'is_public' => 'boolean',
+            'share_with_staff' => 'boolean',
             'newAttachments.*' => 'nullable|file',
         ];
     }
@@ -106,6 +115,9 @@ class TaskCreate extends Component
             'type' => $this->type,
             'priority' => $this->priority,
             'is_public' => $this->is_public,
+            'visibility' => $this->share_with_staff
+                ? \Sgrjr\Dispatch\Models\Task::VISIBILITY_STAFF
+                : \Sgrjr\Dispatch\Models\Task::VISIBILITY_PARTICIPANTS,
         ], $this->labelNames);
 
         foreach ($this->newAttachments as $file) {

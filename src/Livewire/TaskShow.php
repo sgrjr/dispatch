@@ -32,6 +32,8 @@ class TaskShow extends Component
     public string $priority = '';
     public ?int $assignee_user_id = null;
     public bool $is_public = false;
+    /** W13-5: which staff see the task — 'participants' or 'staff'. */
+    public string $visibility = '';
     /** @var array<int> */
     public array $label_ids = [];
 
@@ -62,6 +64,7 @@ class TaskShow extends Component
         $this->priority = $task->priority;
         $this->assignee_user_id = $task->assignee_user_id;
         $this->is_public = (bool) $task->is_public;
+        $this->visibility = $task->visibility ?? Task::VISIBILITY_STAFF;
         $this->label_ids = $task->labels->pluck('id')->all();
         $this->editDescription = $task->description;
         $this->due_at = $task->due_at?->format('Y-m-d');
@@ -85,6 +88,7 @@ class TaskShow extends Component
             'priority' => 'required|in:'.implode(',', $taskClass::priorities()),
             'assignee_user_id' => 'nullable|integer',
             'is_public' => 'boolean',
+            'visibility' => 'required|in:'.implode(',', Task::VISIBILITIES),
             'label_ids' => 'array',
             'label_ids.*' => 'integer',
             'editDescription' => 'nullable|string|max:20000',
@@ -119,6 +123,10 @@ class TaskShow extends Component
         if ((bool) $this->task->is_public !== $this->is_public) {
             $changes[] = ['is_public', (bool) $this->task->is_public, $this->is_public];
             $this->task->is_public = $this->is_public;
+        }
+        if (($this->task->visibility ?? Task::VISIBILITY_STAFF) !== $this->visibility) {
+            $changes[] = ['visibility', $this->task->visibility, $this->visibility];
+            $this->task->visibility = $this->visibility;
         }
 
         // F7: memorialize the PREVIOUS description body as a hidden
@@ -163,6 +171,9 @@ class TaskShow extends Component
                     'status' => "Status changed from `{$from}` to `{$to}`.",
                     'assignee_user_id' => 'Assignee updated.',
                     'is_public' => $to ? 'Marked public — visible to the submitter/customer.' : 'Marked private.',
+                    'visibility' => $to === Task::VISIBILITY_STAFF
+                        ? 'Shared with all staff.'
+                        : 'Restricted to participants (submitter, assignee, watchers).',
                     'labels' => 'Labels updated.',
                     'due_at' => $to ? "Due date set to {$to}." : 'Due date cleared.',
                     default => "Field `{$field}` updated.",
@@ -174,6 +185,7 @@ class TaskShow extends Component
                     'status' => TaskComment::EVENT_STATUS_CHANGE,
                     'assignee_user_id' => TaskComment::EVENT_ASSIGNEE_CHANGE,
                     'is_public' => TaskComment::EVENT_PUBLIC_TOGGLE,
+                    'visibility' => TaskComment::EVENT_VISIBILITY_CHANGE,
                     'labels' => TaskComment::EVENT_LABEL_ADDED,
                     default => TaskComment::EVENT_COMMENT,
                 }

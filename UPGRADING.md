@@ -53,6 +53,50 @@ Quick diagnosis:
   directly (missing verb, unset secret, still-cached config) instead of leaving
   you to infer it from a `403`/`401`/`503`.
 
+## Unreleased (on `master`) — the visibility gates: participants-by-default, no public tasks (W13-5)
+
+**One migration (`000017`) and a deliberate BEHAVIOR INVERSION** — read this
+before upgrading a host with real users.
+
+Tasks now carry a `visibility` column deciding which STAFF see them:
+
+- `participants` — only the submitter, assignee, and watchers (**GATE A** —
+  these three always see the task; that part is unconditional, not a setting).
+  **This is the DEFAULT for new staff-created tasks**: the circle is opt-in
+  to the rest of staff, per operator ruling (2026-08-06).
+- `staff` — every staff member (**GATE B**, the pre-upgrade behavior). The
+  per-task "Staff visibility" select on the task page (and the "Visible to
+  all staff" checkbox on create) opens it.
+
+What does NOT change silently:
+
+- **Existing rows are backfilled to `staff`** by migration `000017` — nothing
+  already on a board disappears.
+- **System-originated tasks** (exception reporter, facade calls, CLI/agent/
+  batch/import with no authenticated staff actor, customer widget submits)
+  default to `staff` — they have no circle yet, and an invisible auto-filed
+  bug would be the exact wrong failure.
+
+What DOES change:
+
+- **`DefaultGate` guests see NOTHING** — the old `is_public`-tasks-for-guests
+  branch is gone. There is no public task visibility (**GATE D**). `is_public`
+  now means exactly what its UI label always said: visible to the
+  **submitting customer** (**GATE C**, default off).
+- **`DefaultGate::canSeeAll()` is now `false`** (was: every authenticated
+  user). `TaskPolicy::delete` moved from `canSeeAll` to `isStaff` so
+  single-team apps keep delete/merge; but anything you gate on `canSeeAll`
+  yourself (e.g. the Tier-2 `SyncController` endpoints) now requires a host
+  gate that grants it to real superusers.
+- **Host gates must adopt the gates to enforce them.** A custom
+  `DispatchGate::scopeVisible` keeps whatever it did before — compose the new
+  `Sgrjr\Dispatch\Support\VisibilityGates::apply($query, $user, $isStaff)`
+  helper (short-circuit your `canSeeAll` first) so your gate and the shipped
+  one rule identically.
+- A **non-staff submitter's portal can now legitimately be empty**: GATE C
+  shows a customer only the submissions whose "Visible to submitter/customer"
+  toggle is on.
+
 ## Unreleased (on `master`) — `dispatch:edit` / `dispatch:merge` refuse to write the wrong database
 
 **No migration, no config change.** One **behavior change** worth knowing before

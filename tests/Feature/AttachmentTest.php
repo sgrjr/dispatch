@@ -42,12 +42,16 @@ test('AttachmentService::canAccess returns false when the owning task falls outs
     $disk = config('dispatch.attachments.disk');
     Storage::fake($disk);
 
-    $task = app(DispatchTaskService::class)->create(['title' => 'Public task with a screenshot', 'is_public' => true]);
+    $task = app(DispatchTaskService::class)->create(['title' => 'Staff-shared task with a screenshot', 'visibility' => 'staff']);
     $attachment = app(AttachmentService::class)->store(UploadedFile::fake()->image('shot.png'), $task);
 
-    // Positive control: under the shipped DefaultGate a public task is visible
-    // even to a guest, so its attachment is accessible.
-    expect(app(AttachmentService::class)->canAccess($attachment, null))->toBeTrue();
+    // Positive control: under the shipped DefaultGate an authenticated staff
+    // user sees a staff-shared task, so its attachment is accessible. (A
+    // guest is NO LONGER a valid positive control — since W13-5, GATE D
+    // means guests see nothing, ever.)
+    $staffUser = new class extends AuthenticatableUser {};
+    $staffUser->id = 55;
+    expect(app(AttachmentService::class)->canAccess($attachment, $staffUser))->toBeTrue();
 
     // Now bind a gate whose scope hides EVERY task (standing in for "this
     // user's tenant/staff status excludes this task"). canAccess() must fall

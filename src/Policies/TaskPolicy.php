@@ -47,9 +47,17 @@ class TaskPolicy
         return $this->gate->isStaff($user);
     }
 
+    /**
+     * W13-5: was canSeeAll(). Under the rewritten DefaultGate canSeeAll is
+     * false for everyone (no more everyone-is-a-superuser default), which
+     * would have silently removed delete/merge from single-team apps —
+     * isStaff keeps the same effective population they had before, and a
+     * host that wants delete restricted to superusers overrides its gate's
+     * isStaff/canSeeAll split.
+     */
     public function delete(?Authenticatable $user, Task $task): bool
     {
-        return $this->gate->canSeeAll($user);
+        return $this->gate->isStaff($user);
     }
 
     public function comment(?Authenticatable $user, Task $task): bool

@@ -46,6 +46,9 @@
                     @if ($task->is_public)
                         <span class="dispatch-badge is-success">public</span>
                     @endif
+                    @if (($task->visibility ?? '') === \Sgrjr\Dispatch\Models\Task::VISIBILITY_PARTICIPANTS)
+                        <span class="dispatch-badge is-warning" title="Visible only to the submitter, assignee, and watchers">participants only</span>
+                    @endif
                     @include('dispatch::livewire.partials.label-chips', ['labels' => $task->labels, 'context' => 'detail'])
                 </div>
             </div>
@@ -306,6 +309,13 @@
                     <label class="dispatch-label">Due date</label>
                     <input type="date" wire:model="due_at" class="dispatch-input">
                     @error('due_at') <p class="dispatch-error">{{ $message }}</p> @enderror
+                </div>
+                <div>
+                    <label class="dispatch-label">Staff visibility</label>
+                    <select wire:model="visibility" class="dispatch-select">
+                        <option value="participants">Participants only</option>
+                        <option value="staff">All staff</option>
+                    </select>
                 </div>
                 <div style="display:flex; align-items:center; gap:0.5rem;">
                     <input type="checkbox" id="is_public" wire:model="is_public">

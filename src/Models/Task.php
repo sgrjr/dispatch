@@ -20,6 +20,18 @@ class Task extends Model
     public const STATUSES = ['triage', 'open', 'in_progress', 'verifying', 'backburner', 'done', 'declined'];
 
     /**
+     * Which STAFF see the task (W13-5). 'participants' = GATE A only
+     * (submitter + assignee + watchers — the default for staff-created
+     * tasks); 'staff' = GATE B, everyone on staff (per-task opt-in, and the
+     * default for system/customer-originated tasks, which have no staff
+     * circle yet and need triage). NOT config-driven vocab — the gates'
+     * semantics are fixed. See Support\VisibilityGates.
+     */
+    public const VISIBILITY_PARTICIPANTS = 'participants';
+    public const VISIBILITY_STAFF = 'staff';
+    public const VISIBILITIES = [self::VISIBILITY_PARTICIPANTS, self::VISIBILITY_STAFF];
+
+    /**
      * Due-date window buckets (MECE partition + the 'dated' convenience union).
      * Computed windows, NOT a workflow vocab — deliberately not config-driven,
      * so there is no `dispatch.workflow.*` override for these.
@@ -36,6 +48,7 @@ class Task extends Model
         'priority',
         'status',
         'is_public',
+        'visibility',
         'submitter_user_id',
         'assignee_user_id',
         'exception_signature',

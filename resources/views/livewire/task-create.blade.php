@@ -81,6 +81,14 @@
                 <label for="is_public" class="dispatch-label" style="margin:0; cursor:pointer;">Visible to submitter/customer</label>
             </div>
 
+            {{-- W13-5: unchecked = participants-only (submitter + assignee +
+                 watchers — the default circle); checked = every staff member
+                 sees it on the board/list from the start. --}}
+            <div style="display:flex; align-items:center; gap:0.5rem;">
+                <input type="checkbox" id="share_with_staff" wire:model="share_with_staff">
+                <label for="share_with_staff" class="dispatch-label" style="margin:0; cursor:pointer;">Visible to all staff (otherwise only you, the assignee, and watchers)</label>
+            </div>
+
             <div>
                 <label class="dispatch-label">Attachments</label>
                 <div class="dispatch-dropzone" data-dispatch-dropzone="newAttachments" data-dispatch-paste="newAttachments">

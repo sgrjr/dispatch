@@ -7,9 +7,18 @@ use Illuminate\Database\Eloquent\Builder;
 use Sgrjr\Dispatch\Contracts\DispatchGate;
 
 /**
- * Sensible single-team default: any authenticated user is staff and sees
- * everything; guests see only public tasks. Bind your own DispatchGate to
- * distinguish staff from submitters or to apply tenant scoping.
+ * Single-team default: any authenticated user is staff; visibility runs
+ * through the W13-5 gates (see Support\VisibilityGates) — a staff member
+ * sees tasks shared with staff plus every task they participate in
+ * (submitter/assignee/watcher), and guests see NOTHING (there is no public
+ * visibility; GATE D is a hard no-op).
+ *
+ * canSeeAll() is false here — the pre-W13-5 DefaultGate treated every
+ * authenticated user as a superuser, which is exactly the all-staff-see-
+ * everything default the gates overturn. Bind your own DispatchGate to
+ * grant real superusers canSeeAll, to distinguish staff from customers
+ * (GATE C), or to apply tenant scoping — compose VisibilityGates::apply()
+ * so the gate semantics stay identical.
  */
 class DefaultGate implements DispatchGate
 {
@@ -20,7 +29,7 @@ class DefaultGate implements DispatchGate
 
     public function canSeeAll(?Authenticatable $user): bool
     {
-        return $user !== null;
+        return false;
     }
 
     public function scopeVisible(Builder $query, ?Authenticatable $user): Builder
@@ -29,7 +38,6 @@ class DefaultGate implements DispatchGate
             return $query;
         }
 
-        // Guests: public tasks only.
-        return $query->where('is_public', true);
+        return VisibilityGates::apply($query, $user, $this->isStaff($user));
     }
 }

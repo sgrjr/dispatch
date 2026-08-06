@@ -94,6 +94,12 @@ class DispatchManager
                 'status' => $options['status'] ?? 'triage',
                 'description' => $options['description'] ?? null,
                 'is_public' => (bool) ($options['public'] ?? false),
+                // Reporter tasks are SYSTEM artifacts (auto-filed bugs, host
+                // facade calls) — always staff-visible (W13-5). Without this,
+                // an exception captured under a staff member's session would
+                // default to their participants circle and hide the bug from
+                // the rest of the team.
+                'visibility' => $options['visibility'] ?? Task::VISIBILITY_STAFF,
                 // Capture the submitter NOW — a queued job has no auth context.
                 'submitter_user_id' => $options['submitter'] ?? $this->submitters->currentUserId(),
                 'context' => array_merge($this->baseContext($captureRequest), $options['context'] ?? []),

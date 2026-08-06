@@ -12,10 +12,12 @@ use Sgrjr\Dispatch\Contracts\DispatchGate;
  * The submitter portal: "my submissions". Filters to submitter_user_id =
  * Auth::id() AND runs the result through DispatchGate::scopeVisible — the
  * filter never bypasses the one visibility scope, it just narrows further.
- * For the shipped DefaultGate any authenticated user already sees everything
- * (canSeeAll), so this is a no-op intersection there; for an app-supplied
- * gate that limits non-staff to "own + public", intersecting with "own" is
- * always safe since a sane gate always includes the user's own submissions.
+ *
+ * Under the W13-5 gates that intersection is load-bearing both ways: a STAFF
+ * submitter always sees their own submissions (GATE A), while a NON-staff
+ * (customer) submitter sees only the ones whose "Visible to
+ * submitter/customer" toggle is on (GATE C — default off, per the operator
+ * ruling). An empty portal for a customer is therefore correct, not a bug.
  */
 class MySubmissions extends Component
 {
