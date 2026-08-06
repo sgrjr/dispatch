@@ -5,6 +5,7 @@ namespace Sgrjr\Dispatch\Support;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Builder;
 use Sgrjr\Dispatch\Models\Task;
+use Sgrjr\Dispatch\Support\Groups;
 
 /**
  * The W13-5 visibility gates, as ONE reusable query fragment so the shipped
@@ -47,11 +48,15 @@ class VisibilityGates
         $userId = $user->getAuthIdentifier();
 
         if ($isStaff) {
+            // Resolved once, from config only (no DB hit): assignment to a
+            // group the viewer belongs to makes them a GATE A participant.
+            $groups = Groups::namesFor($user);
+
             // GATE B ∪ GATE A: staff-shared tasks, plus every task the
             // viewer participates in regardless of its visibility.
-            return $query->where(function (Builder $q) use ($userId) {
+            return $query->where(function (Builder $q) use ($userId, $groups) {
                 $q->where('visibility', Task::VISIBILITY_STAFF)
-                    ->orWhere(fn (Builder $p) => self::participant($p, $userId));
+                    ->orWhere(fn (Builder $p) => self::participant($p, $userId, $groups));
             });
         }
 
@@ -63,9 +68,12 @@ class VisibilityGates
     }
 
     /**
-     * GATE A membership: submitter, assignee, or watcher.
+     * GATE A membership: submitter, assignee (directly or via a group the
+     * viewer belongs to), or watcher.
+     *
+     * @param  array<int,string>  $groups
      */
-    protected static function participant(Builder $query, mixed $userId): void
+    protected static function participant(Builder $query, mixed $userId, array $groups = []): void
     {
         /** @var class-string<Task> $taskModel */
         $taskModel = config('dispatch.models.task');
@@ -79,5 +87,9 @@ class VisibilityGates
                     ->whereColumn('dispatch_task_watchers.task_id', "{$table}.id")
                     ->where('dispatch_task_watchers.user_id', $userId);
             });
+
+        if ($groups !== []) {
+            $query->orWhereIn('assignee_group', $groups);
+        }
     }
 }

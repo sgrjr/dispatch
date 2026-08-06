@@ -311,8 +311,8 @@
                                         <span class="dispatch-badge is-warning" title="No update in over {{ $staleThresholdDays }} days">stale</span>
                                     @endif
                                     @include('dispatch::livewire.partials.due-badge', ['task' => $task])
-                                    @if ($task->assignee)
-                                        <span style="font-size: 0.7rem; color: var(--dispatch-text-muted);">{{ $task->assignee->name }}</span>
+                                    @if ($task->assigneeLabel())
+                                        <span style="font-size: 0.7rem; color: var(--dispatch-text-muted);">{{ $task->assigneeLabel() }}</span>
                                     @endif
                                 </div>
                             </li>

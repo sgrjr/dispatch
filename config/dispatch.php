@@ -282,6 +282,25 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Groups (teams)
+    |--------------------------------------------------------------------------
+    |
+    | Named teams a task can be assigned to while "assignee" stays a singular
+    | value (`assignee_group`). Members are user ids (int) or emails (string,
+    | case-insensitive). A group assignment notifies every member and counts
+    | each of them as a GATE A participant for visibility. Config-defined, not
+    | a table: groups change rarely and hosts already maintain the published
+    | config.
+    |
+    |     'groups' => [
+    |         'it'       => ['alice@example.com', 'bob@example.com'],
+    |         'accounts' => [12, 15],
+    |     ],
+    */
+    'groups' => [],
+
+    /*
+    |--------------------------------------------------------------------------
     | Board
     |--------------------------------------------------------------------------
     |

@@ -54,7 +54,7 @@ test('GOLDEN SHAPE: the summary adds exactly attachment_count; nothing else move
     expect(array_keys(TaskPresenter::toArray($task, false)))->toBe([
         'code', 'title', 'type', 'priority', 'status', 'is_public', 'labels',
         'comment_count', 'attachment_count', 'due_at', 'dedupe_key',
-        'submitter', 'assignee', 'created_at', 'updated_at',
+        'submitter', 'assignee', 'assignee_group', 'created_at', 'updated_at',
     ]);
 });
 
@@ -67,7 +67,7 @@ test('GOLDEN SHAPE: the full view adds exactly attachments[] + a per-comment att
     expect(array_keys($full))->toBe([
         'code', 'title', 'type', 'priority', 'status', 'is_public', 'labels',
         'comment_count', 'attachment_count', 'due_at', 'dedupe_key',
-        'submitter', 'assignee', 'created_at', 'updated_at',
+        'submitter', 'assignee', 'assignee_group', 'created_at', 'updated_at',
         'description', 'context', 'attachments', 'comments',
     ]);
 

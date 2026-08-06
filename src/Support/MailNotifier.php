@@ -47,7 +47,12 @@ class MailNotifier implements DispatchNotifier
         }
 
         try {
-            $pool = array_merge([$task->submitter], $this->watchersFor($task, 'status', $to), [$task->assignee]);
+            $pool = array_merge(
+                [$task->submitter],
+                $this->watchersFor($task, 'status', $to),
+                [$task->assignee],
+                Groups::members($task->assignee_group)->all(), // W13-4: a team assignee means every member
+            );
             $recipients = $this->dedupe($pool, $actor?->getAuthIdentifier());
 
             $summary = "Status changed from `{$from}` to `{$to}`.";
@@ -106,6 +111,29 @@ class MailNotifier implements DispatchNotifier
 
             foreach ($recipients as $recipient) {
                 $this->send($recipient, $task, 'You were assigned this task.');
+            }
+        } catch (\Throwable) {
+            // never throw
+        }
+    }
+
+    /**
+     * W13-4: a task was assigned to a config-defined GROUP — notify every
+     * member. Like watcherAdded, a duck-typed optional hook rather than a
+     * DispatchNotifier contract method (which would break host notifiers on
+     * upgrade): callers check method_exists before invoking.
+     */
+    public function taskAssignedGroup(Task $task, ?string $from, string $to, ?Authenticatable $actor): void
+    {
+        if (! $this->enabled()) {
+            return;
+        }
+
+        try {
+            $recipients = $this->dedupe(Groups::members($to)->all(), $actor?->getAuthIdentifier());
+
+            foreach ($recipients as $recipient) {
+                $this->send($recipient, $task, "Your team \"{$to}\" was assigned this task.");
             }
         } catch (\Throwable) {
             // never throw

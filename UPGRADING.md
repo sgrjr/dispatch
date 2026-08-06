@@ -53,6 +53,19 @@ Quick diagnosis:
   directly (missing verb, unset secret, still-cached config) instead of leaving
   you to infer it from a `403`/`401`/`503`.
 
+## Unreleased (on `master`) — groups/teams as assignees (W13-4)
+
+**One migration (`000018`), no behavior change for existing data.** Tasks gain a
+nullable `assignee_group` naming a key of the new `dispatch.groups` config map
+(group name → member user ids/emails). The assignee stays a SINGULAR value —
+the UI writes exactly one of `assignee_user_id`/`assignee_group` — but a group
+assignment notifies every member, and each member counts as a GATE A
+participant for the W13-5 visibility gates. The frozen agent JSON gains one
+ADDITIVE key, `assignee_group` (null on ungrouped tasks). Custom notifiers can
+opt into the group hook by defining `taskAssignedGroup(Task, ?string $from,
+string $to, ?Authenticatable $actor)` — duck-typed, like `watcherAdded`, so
+not defining it simply sends nothing.
+
 ## Unreleased (on `master`) — the visibility gates: participants-by-default, no public tasks (W13-5)
 
 **One migration (`000017`) and a deliberate BEHAVIOR INVERSION** — read this

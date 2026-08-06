@@ -31,8 +31,8 @@
                         </div>
                     </div>
                     <div class="dispatch-list-side">
-                        @if ($task->assignee)
-                            <p style="margin:0;">Assigned: {{ $task->assignee->name }}</p>
+                        @if ($task->assigneeLabel())
+                            <p style="margin:0;">Assigned: {{ $task->assigneeLabel() }}</p>
                         @endif
                         <p style="margin:0;">{{ $task->updated_at?->diffForHumans() }}</p>
                     </div>

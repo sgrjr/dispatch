@@ -11,6 +11,7 @@ use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
 use Sgrjr\Dispatch\Support\AssignableUsers;
+use Sgrjr\Dispatch\Support\Groups;
 
 /**
  * Full-page task detail: badges, attachment gallery, staff meta editor, and
@@ -30,7 +31,13 @@ class TaskShow extends Component
     public string $status = '';
     public string $type = '';
     public string $priority = '';
-    public ?int $assignee_user_id = null;
+    /**
+     * The assignee slot as ONE select (W13-4): '' = unassigned, a numeric
+     * user id, or 'group:<name>' for a config-defined team. Parsed in
+     * saveMeta into the mutually-exclusive assignee_user_id/assignee_group
+     * column pair.
+     */
+    public string $assignee_choice = '';
     public bool $is_public = false;
     /** W13-5: which staff see the task — 'participants' or 'staff'. */
     public string $visibility = '';
@@ -62,7 +69,9 @@ class TaskShow extends Component
         $this->status = $task->status;
         $this->type = $task->type;
         $this->priority = $task->priority;
-        $this->assignee_user_id = $task->assignee_user_id;
+        $this->assignee_choice = $task->assignee_group
+            ? 'group:'.$task->assignee_group
+            : (string) ($task->assignee_user_id ?? '');
         $this->is_public = (bool) $task->is_public;
         $this->visibility = $task->visibility ?? Task::VISIBILITY_STAFF;
         $this->label_ids = $task->labels->pluck('id')->all();
@@ -86,7 +95,7 @@ class TaskShow extends Component
             'status' => 'required|in:'.implode(',', $taskClass::statuses()),
             'type' => 'required|in:'.implode(',', $taskClass::types()),
             'priority' => 'required|in:'.implode(',', $taskClass::priorities()),
-            'assignee_user_id' => 'nullable|integer',
+            'assignee_choice' => 'nullable|string',
             'is_public' => 'boolean',
             'visibility' => 'required|in:'.implode(',', Task::VISIBILITIES),
             'label_ids' => 'array',
@@ -99,6 +108,7 @@ class TaskShow extends Component
         // needs the pre-save values regardless of what else changed.
         $oldStatus = $this->task->status;
         $oldAssigneeId = $this->task->assignee_user_id;
+        $oldAssigneeGroup = $this->task->assignee_group;
 
         $changes = [];
         $statusChanged = false;
@@ -115,9 +125,32 @@ class TaskShow extends Component
         if ($this->task->priority !== $this->priority) {
             $this->task->priority = $this->priority;
         }
-        if ($this->task->assignee_user_id !== $this->assignee_user_id) {
-            $changes[] = ['assignee_user_id', $this->task->assignee_user_id, $this->assignee_user_id];
-            $this->task->assignee_user_id = $this->assignee_user_id;
+        // W13-4: parse the single choice into the mutually-exclusive
+        // user/group column pair. A group name is validated against config —
+        // a stale option (group removed from dispatch.groups) errors instead
+        // of silently storing an unroutable assignment.
+        $newAssigneeId = null;
+        $newAssigneeGroup = null;
+        if (str_starts_with($this->assignee_choice, 'group:')) {
+            $newAssigneeGroup = substr($this->assignee_choice, 6);
+            if (! Groups::exists($newAssigneeGroup)) {
+                $this->addError('assignee_choice', 'That team is no longer configured.');
+
+                return;
+            }
+        } elseif ($this->assignee_choice !== '') {
+            $newAssigneeId = (int) $this->assignee_choice;
+        }
+
+        $groupChanged = ($this->task->assignee_group ?? null) !== $newAssigneeGroup;
+        if ($this->task->assignee_user_id !== $newAssigneeId || $groupChanged) {
+            $changes[] = [
+                'assignee_user_id',
+                $this->task->assignee_group ? 'group:'.$this->task->assignee_group : $this->task->assignee_user_id,
+                $newAssigneeGroup ? 'group:'.$newAssigneeGroup : $newAssigneeId,
+            ];
+            $this->task->assignee_user_id = $newAssigneeId;
+            $this->task->assignee_group = $newAssigneeGroup;
             $assigneeChanged = true;
         }
         if ((bool) $this->task->is_public !== $this->is_public) {
@@ -207,7 +240,18 @@ class TaskShow extends Component
             app(DispatchNotifier::class)->taskStatusChanged($this->task, $oldStatus, $this->task->status, Auth::user());
         }
         if ($assigneeChanged) {
-            app(DispatchNotifier::class)->taskAssigned($this->task, $oldAssigneeId, $this->task->assignee_user_id, Auth::user());
+            $notifier = app(DispatchNotifier::class);
+
+            if ($this->task->assignee_group !== null) {
+                // W13-4: group assignment — duck-typed optional hook, same
+                // posture as watcherAdded (a contract change would break
+                // host notifiers).
+                if (method_exists($notifier, 'taskAssignedGroup')) {
+                    $notifier->taskAssignedGroup($this->task, $oldAssigneeGroup, $this->task->assignee_group, Auth::user());
+                }
+            } else {
+                $notifier->taskAssigned($this->task, $oldAssigneeId, $this->task->assignee_user_id, Auth::user());
+            }
         }
 
         $this->task->refresh()->load(['labels', 'submitter', 'assignee', 'attachments']);
@@ -403,6 +447,7 @@ class TaskShow extends Component
         return view('dispatch::livewire.task-show', [
             'watchPrefs' => Auth::id() ? $this->task->watchPreferencesFor((int) Auth::id()) : null,
             'assigneeOptions' => $assigneeOptions,
+            'groupOptions' => $this->canEdit() ? Groups::names() : [],
             'allLabels' => $labelClass::orderBy('name')->get(),
             'statuses' => $taskClass::statuses(),
             'types' => $taskClass::types(),

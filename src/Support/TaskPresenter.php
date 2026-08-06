@@ -52,6 +52,10 @@ class TaskPresenter
             // user model — which need not even exist in a headless/agent context.
             'submitter' => $task->submitter_user_id ? self::userRef($task->submitter) : null,
             'assignee' => $task->assignee_user_id ? self::userRef($task->assignee) : null,
+            // W13-4, additive: the config-defined TEAM holding the assignee
+            // slot (mutually exclusive with assignee). Null on pre-groups
+            // rows, so the frozen contract only ever gains a key.
+            'assignee_group' => $task->assignee_group,
             'created_at' => optional($task->created_at)->toIso8601String(),
             'updated_at' => optional($task->updated_at)->toIso8601String(),
         ];
@@ -123,6 +127,7 @@ class TaskPresenter
                 'dedupe_key' => 'string|null',
                 'submitter' => 'string|int|null',
                 'assignee' => 'string|int|null',
+                'assignee_group' => 'string|null (config-defined team name holding the assignee slot; mutually exclusive with assignee)',
                 'created_at' => 'iso8601',
                 'updated_at' => 'iso8601',
             ],

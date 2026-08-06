@@ -51,6 +51,7 @@ class Task extends Model
         'visibility',
         'submitter_user_id',
         'assignee_user_id',
+        'assignee_group',
         'exception_signature',
         'dedupe_key',
         'position',
@@ -191,6 +192,20 @@ class Task extends Model
     public function isWatchedBy(int $userId): bool
     {
         return $this->watchers()->where('user_id', $userId)->exists();
+    }
+
+    /**
+     * Display name for the assignee slot: the user's name, the group as
+     * "Team <name>" (W13-4), or null when unassigned. The one place blades
+     * resolve the user-vs-group split.
+     */
+    public function assigneeLabel(): ?string
+    {
+        if ($this->assignee_group) {
+            return 'Team '.$this->assignee_group;
+        }
+
+        return $this->assignee_user_id ? $this->assignee?->name : null;
     }
 
     /**

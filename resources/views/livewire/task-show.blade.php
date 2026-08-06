@@ -54,7 +54,7 @@
             </div>
             <div class="dispatch-show-side">
                 <p style="margin:0;">Submitted by: <strong>{{ $task->submitter?->name ?? '—' }}</strong></p>
-                <p style="margin:0;">Assignee: <strong>{{ $task->assignee?->name ?? '—' }}</strong></p>
+                <p style="margin:0;">Assignee: <strong>{{ $task->assigneeLabel() ?? '—' }}</strong></p>
                 @if ($task->due_at)
                     <p style="margin:0;">Due: <strong>{{ $task->due_at->toFormattedDateString() }}</strong> ({{ $task->due_at->diffForHumans() }})</p>
                 @endif
@@ -298,12 +298,20 @@
                 </div>
                 <div>
                     <label class="dispatch-label">Assignee</label>
-                    <select wire:model="assignee_user_id" class="dispatch-select">
+                    <select wire:model="assignee_choice" class="dispatch-select">
                         <option value="">Unassigned</option>
+                        @if (! empty($groupOptions))
+                            <optgroup label="Teams">
+                                @foreach ($groupOptions as $g)
+                                    <option value="group:{{ $g }}">Team {{ $g }}</option>
+                                @endforeach
+                            </optgroup>
+                        @endif
                         @foreach ($assigneeOptions as $u)
                             <option value="{{ $u->id }}">{{ $u->name }} ({{ $u->email }})</option>
                         @endforeach
                     </select>
+                    @error('assignee_choice') <p class="dispatch-error">{{ $message }}</p> @enderror
                 </div>
                 <div>
                     <label class="dispatch-label">Due date</label>

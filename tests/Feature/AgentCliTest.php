@@ -230,7 +230,7 @@ test('dispatch:done --json emits a TaskPresenter summary', function () {
         ->and(array_keys($decoded))->toEqual([
             'code', 'title', 'type', 'priority', 'status', 'is_public',
             'labels', 'comment_count', 'attachment_count', 'due_at', 'dedupe_key', 'submitter', 'assignee',
-            'created_at', 'updated_at',
+            'assignee_group', 'created_at', 'updated_at',
         ]);
 });
 

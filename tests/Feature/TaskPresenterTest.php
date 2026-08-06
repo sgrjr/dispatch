@@ -25,7 +25,7 @@ test('the summary shape carries exactly the documented keys', function () {
     expect(array_keys($data))->toEqual([
         'code', 'title', 'type', 'priority', 'status', 'is_public',
         'labels', 'comment_count', 'attachment_count', 'due_at', 'dedupe_key', 'submitter', 'assignee',
-        'created_at', 'updated_at',
+        'assignee_group', 'created_at', 'updated_at',
     ]);
 
     expect($data['code'])->toBe($task->code)
