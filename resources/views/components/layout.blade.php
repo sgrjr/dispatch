@@ -92,7 +92,10 @@
             margin: 0;
             letter-spacing: -0.01em;
         }
-        .dispatch-nav { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+        .dispatch-nav { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+        /* Nav search (W13-9): compact inline form; the input reuses .dispatch-input. */
+        .dispatch-nav-search { margin: 0; }
+        .dispatch-nav-search input { width: 11rem; font-size: 0.78rem; padding: 0.3rem 0.55rem; }
         .dispatch-nav a {
             color: var(--dispatch-text-muted);
             font-weight: 600;
@@ -301,6 +304,14 @@
                             <span class="dispatch-nav-badge" title="{{ $dispatchAgentPending }} pending agent session request(s)">{{ $dispatchAgentPending }}</span>
                         @endif
                     </a>
+                @endif
+                @if ($dispatchNavIsStaff)
+                    {{-- W13-9: search from anywhere — a plain GET that lands on the
+                         List page's existing ?q= param (TaskList's $search reads it
+                         from the URL), so board → results is one step, not two. --}}
+                    <form method="GET" action="{{ route('dispatch.index') }}" class="dispatch-nav-search" role="search">
+                        <input type="search" name="q" value="{{ request()->routeIs('dispatch.index') ? request('q') : '' }}" placeholder="Search tasks…" aria-label="Search tasks" class="dispatch-input">
+                    </form>
                 @endif
             </nav>
         </header>
