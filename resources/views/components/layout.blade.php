@@ -274,19 +274,26 @@
             <h1>{{ config('dispatch.brand.name', 'Dispatch') }}</h1>
             <nav class="dispatch-nav">
                 @php
+                    $dispatchNavIsStaff = app(\Sgrjr\Dispatch\Contracts\DispatchGate::class)->isStaff(auth()->user());
                     // Show the approval-queue link only to staff, and only when the
                     // agent API is enabled and its route is registered. The badge
                     // surfaces pending requests so staff know one is waiting without
                     // having to hunt for the page.
                     $dispatchShowAgent = (bool) config('dispatch.agent.enabled', false)
                         && \Illuminate\Support\Facades\Route::has('dispatch.agent-sessions')
-                        && app(\Sgrjr\Dispatch\Contracts\DispatchGate::class)->isStaff(auth()->user());
+                        && $dispatchNavIsStaff;
                     $dispatchAgentPending = $dispatchShowAgent ? \Sgrjr\Dispatch\Models\AgentSession::pendingCount() : 0;
+                    // Focuses is a staff management surface (W8-2) — same gate as
+                    // the page itself, route-existence-checked like agent-sessions.
+                    $dispatchShowFocuses = \Illuminate\Support\Facades\Route::has('dispatch.focuses') && $dispatchNavIsStaff;
                 @endphp
                 <a href="{{ route('dispatch.board') }}" @class(['is-active' => request()->routeIs('dispatch.board')])>Board</a>
                 <a href="{{ route('dispatch.index') }}" @class(['is-active' => request()->routeIs('dispatch.index')])>List</a>
                 <a href="{{ route('dispatch.create') }}" @class(['is-active' => request()->routeIs('dispatch.create')])>New</a>
                 <a href="{{ route('dispatch.portal') }}" @class(['is-active' => request()->routeIs('dispatch.portal')])>My Submissions</a>
+                @if ($dispatchShowFocuses)
+                    <a href="{{ route('dispatch.focuses') }}" @class(['is-active' => request()->routeIs('dispatch.focuses')])>Focuses</a>
+                @endif
                 @if ($dispatchShowAgent)
                     <a href="{{ route('dispatch.agent-sessions') }}" @class(['is-active' => request()->routeIs('dispatch.agent-sessions')])>
                         Agent Sessions
