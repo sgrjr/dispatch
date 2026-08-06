@@ -263,6 +263,25 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Assignable users
+    |--------------------------------------------------------------------------
+    |
+    | Who the assignee dropdowns (task detail, list bulk-assign) and the
+    | CC/watcher picker offer. By default: the whole user table — fine for a
+    | single-team app, noise for a host whose user table also holds imported
+    | customer accounts. `email_domains` filters to staff domains (e.g.
+    | ['centerpointlargeprint.com']); `resolver` is the full override — an
+    | invokable class returning the base Eloquent Builder — for hosts whose
+    | staff criterion isn't a domain. `limit` caps the option list (0 = off).
+    */
+    'assignees' => [
+        'email_domains' => array_filter(explode(',', (string) env('DISPATCH_ASSIGNEE_DOMAINS', ''))),
+        'resolver' => null,
+        'limit' => 100,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Board
     |--------------------------------------------------------------------------
     |

@@ -16,6 +16,7 @@ use Sgrjr\Dispatch\Models\Label;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
+use Sgrjr\Dispatch\Support\AssignableUsers;
 use Sgrjr\Dispatch\Support\LabelFacets;
 
 /**
@@ -491,7 +492,6 @@ class TaskList extends Component
     {
         /** @var class-string<Task> $taskClass */
         $taskClass = config('dispatch.models.task');
-        $userClass = config('dispatch.models.user');
 
         $query = $taskClass::query()->with(['labels', 'submitter', 'assignee']);
         app(DispatchGate::class)->scopeVisible($query, Auth::user());
@@ -565,7 +565,7 @@ class TaskList extends Component
             'typeLabels' => $taskClass::typeLabels(),
             'priorityLabels' => $taskClass::priorityLabels(),
             'dueBucketLabels' => $taskClass::dueBucketLabels(),
-            'assigneeOptions' => $userClass::query()->orderBy('name')->limit(50)->get(['id', 'name', 'email']),
+            'assigneeOptions' => AssignableUsers::options(),
             'staleEnabled' => $staleEnabled,
         ])->layout('dispatch::components.layout');
     }

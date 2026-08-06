@@ -10,6 +10,7 @@ use Sgrjr\Dispatch\Contracts\DispatchNotifier;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
+use Sgrjr\Dispatch\Support\AssignableUsers;
 
 /**
  * Full-page task detail: badges, attachment gallery, staff meta editor, and
@@ -265,10 +266,9 @@ class TaskShow extends Component
         /** @var class-string<Task> $taskClass */
         $taskClass = config('dispatch.models.task');
         $labelClass = config('dispatch.models.label');
-        $userClass = config('dispatch.models.user');
 
         $assigneeOptions = $this->canEdit()
-            ? $userClass::query()->orderBy('name')->limit(50)->get(['id', 'name', 'email'])
+            ? AssignableUsers::options()
             : collect();
 
         return view('dispatch::livewire.task-show', [
