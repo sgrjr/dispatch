@@ -120,7 +120,7 @@ test('watch() and unwatch() toggle isWatchedBy for the current user', function (
 
     $component = Livewire::test(TaskShow::class, ['task' => $task]);
 
-    $component->call('watch');
+    $component->call('startWatching');
     expect($task->fresh()->isWatchedBy($staff->id))->toBeTrue();
 
     $component->call('unwatch');
@@ -134,7 +134,7 @@ test('the watch popover edits mode and status subset with all-checked-first-clic
     $task = app(DispatchTaskService::class)->create(['title' => 'Watch prefs UI']);
 
     $component = Livewire::test(TaskShow::class, ['task' => $task]);
-    $component->call('watch');
+    $component->call('startWatching');
 
     // Switch to status-changes-only: subset starts null (= all statuses).
     $component->call('setWatchMode', 'status_change');

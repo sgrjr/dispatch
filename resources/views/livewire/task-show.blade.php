@@ -103,7 +103,7 @@
                                 </div>
                             </details>
                         @else
-                            <button type="button" wire:click="watch" wire:loading.attr="disabled" wire:target="watch" class="dispatch-btn is-secondary">Watch</button>
+                            <button type="button" wire:click="startWatching" wire:loading.attr="disabled" wire:target="startWatching" class="dispatch-btn is-secondary">Watch</button>
                         @endif
                     </div>
                 @endcan

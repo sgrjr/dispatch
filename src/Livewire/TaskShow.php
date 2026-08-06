@@ -260,11 +260,23 @@ class TaskShow extends Component
     }
 
     /**
-     * Toggle watching this task for the current user (F4). A fresh watch
+     * Start watching this task for the current user (F4). A fresh watch
      * subscribes with the every-update default; preferences are edited via
      * the popover once watching (W13-1).
+     *
+     * NOT named `watch()`: Livewire 3's `$wire` proxy resolves an `aliases`
+     * map BEFORE it looks for a component method, and that map contains
+     * `watch => $watch` (livewire/livewire 3.7.3, dist/livewire.esm.js:8219).
+     * So `wire:click="watch"` never reached this method — it resolved to
+     * Livewire's own `$watch(path, callback)`, which Alpine then invoked with
+     * no arguments, and `dataGet(reactive, undefined)` threw
+     * "Cannot read properties of undefined (reading 'split')". The other
+     * reserved names are on/el/id/js/get/set/call/hook/commit/entangle/
+     * dispatch/dispatchTo/dispatchSelf/upload/uploadMultiple/removeUpload/
+     * cancelUpload — avoid all of them for Livewire action methods.
+     * `unwatch` is not reserved, so it stays as-is.
      */
-    public function watch(): void
+    public function startWatching(): void
     {
         Gate::authorize('watch', $this->task);
 
