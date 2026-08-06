@@ -201,7 +201,9 @@ class TaskShow extends Component
     }
 
     /**
-     * Toggle watching this task for the current user (F4).
+     * Toggle watching this task for the current user (F4). A fresh watch
+     * subscribes with the every-update default; preferences are edited via
+     * the popover once watching (W13-1).
      */
     public function watch(): void
     {
@@ -215,6 +217,64 @@ class TaskShow extends Component
         Gate::authorize('watch', $this->task);
 
         $this->task->unwatch(Auth::id());
+    }
+
+    /**
+     * Switch the current user's watch mode: 'any' (every update) or
+     * 'status_change' (status changes only, optionally narrowed by
+     * toggleWatchStatus below). No-op unless actually watching.
+     */
+    public function setWatchMode(string $mode): void
+    {
+        Gate::authorize('watch', $this->task);
+
+        if (! in_array($mode, [Task::WATCH_ANY, Task::WATCH_STATUS_CHANGE], true)) {
+            return;
+        }
+
+        // Switching modes deliberately clears any status subset — 'any'
+        // ignores it, and a fresh 'status_change' starts at "all statuses".
+        $this->task->setWatchPreferences(Auth::id(), $mode);
+    }
+
+    /**
+     * Check/uncheck one status in the current user's 'status_change' subset.
+     * Unchecking the last one falls back to "all status changes" (an empty
+     * subset stores as null) rather than a never-notify dead state.
+     */
+    public function toggleWatchStatus(string $status): void
+    {
+        Gate::authorize('watch', $this->task);
+
+        /** @var class-string<Task> $taskClass */
+        $taskClass = config('dispatch.models.task');
+
+        if (! in_array($status, $taskClass::statuses(), true)) {
+            return;
+        }
+
+        $prefs = $this->task->watchPreferencesFor(Auth::id());
+        if ($prefs === null || $prefs['notify_on'] !== Task::WATCH_STATUS_CHANGE) {
+            return;
+        }
+
+        // A null subset means "all statuses" and renders all boxes checked —
+        // so the first click UNCHECKS (all-minus-clicked), mirroring the
+        // filter popovers. Kept in vocab order; a full or emptied set stores
+        // back as null (= all — empty would otherwise be a never-notify dead
+        // state, and the panel documents that fallback).
+        $vocab = $taskClass::statuses();
+        $current = $prefs['statuses'] ?? $vocab;
+        $next = in_array($status, $current, true)
+            ? array_diff($current, [$status])
+            : array_merge($current, [$status]);
+        $next = array_values(array_intersect($vocab, $next));
+
+        $this->task->setWatchPreferences(
+            Auth::id(),
+            Task::WATCH_STATUS_CHANGE,
+            count($next) === count($vocab) ? null : $next,
+        );
     }
 
     /**
@@ -272,6 +332,7 @@ class TaskShow extends Component
             : collect();
 
         return view('dispatch::livewire.task-show', [
+            'watchPrefs' => Auth::id() ? $this->task->watchPreferencesFor((int) Auth::id()) : null,
             'assigneeOptions' => $assigneeOptions,
             'allLabels' => $labelClass::orderBy('name')->get(),
             'statuses' => $taskClass::statuses(),

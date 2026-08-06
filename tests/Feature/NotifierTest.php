@@ -98,6 +98,58 @@ test('MailNotifier fans a status change out to submitter + watchers, excluding t
     Notification::assertNotSentTo([$actor], TaskUpdate::class);
 });
 
+test('a status_change watcher is notified only on transitions into their chosen statuses, never on comments (W13-1)', function () {
+    Notification::fake();
+
+    $any = dispatchMakeUser(1);
+    $narrowed = dispatchMakeUser(2);
+    $actor = dispatchMakeUser(3);
+
+    $task = app(DispatchTaskService::class)->create(['title' => 'Pref fan-out']);
+    $task->submitter_user_id = null;
+    $task->save();
+
+    $task->watch($any->id);
+    $task->watch($narrowed->id);
+    $task->setWatchPreferences($narrowed->id, Task::WATCH_STATUS_CHANGE, ['done']);
+
+    $notifier = new MailNotifier();
+
+    // → in_progress: not in the narrowed set — only the 'any' watcher hears.
+    $notifier->taskStatusChanged($task->fresh(), 'open', 'in_progress', $actor);
+    Notification::assertSentTo([$any], TaskUpdate::class);
+    Notification::assertNotSentTo([$narrowed], TaskUpdate::class);
+
+    // → done: in the set — both hear.
+    Notification::fake();
+    $notifier->taskStatusChanged($task->fresh(), 'in_progress', 'done', $actor);
+    Notification::assertSentTo([$any, $narrowed], TaskUpdate::class);
+
+    // A comment reaches the 'any' watcher but never a status_change watcher.
+    Notification::fake();
+    $comment = $task->comments()->create(['body' => 'ping', 'user_id' => $actor->id, 'event_type' => TaskComment::EVENT_COMMENT]);
+    $notifier->taskCommented($task->fresh(), $comment);
+    Notification::assertSentTo([$any], TaskUpdate::class);
+    Notification::assertNotSentTo([$narrowed], TaskUpdate::class);
+});
+
+test('a status_change watcher with NO status subset hears every status change (W13-1)', function () {
+    Notification::fake();
+
+    $watcher = dispatchMakeUser(1);
+    $actor = dispatchMakeUser(2);
+
+    $task = app(DispatchTaskService::class)->create(['title' => 'All transitions']);
+    $task->submitter_user_id = null;
+    $task->save();
+
+    $task->watch($watcher->id, Task::WATCH_STATUS_CHANGE);
+
+    (new MailNotifier())->taskStatusChanged($task->fresh(), 'open', 'in_progress', $actor);
+
+    Notification::assertSentTo([$watcher], TaskUpdate::class);
+});
+
 test('the notifier binding falls back to the shipped default when the host config omits contracts.notifier', function () {
     // Simulate a host that published config/dispatch.php BEFORE the notifier
     // seam existed: its `contracts` array has gate/tenant/submitter but no

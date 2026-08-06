@@ -47,7 +47,7 @@ class MailNotifier implements DispatchNotifier
         }
 
         try {
-            $pool = array_merge([$task->submitter], $task->watchers->all(), [$task->assignee]);
+            $pool = array_merge([$task->submitter], $this->watchersFor($task, 'status', $to), [$task->assignee]);
             $recipients = $this->dedupe($pool, $actor?->getAuthIdentifier());
 
             $summary = "Status changed from `{$from}` to `{$to}`.";
@@ -67,9 +67,11 @@ class MailNotifier implements DispatchNotifier
         }
 
         try {
+            $watchers = $this->watchersFor($task, 'comment');
+
             $pool = $comment->is_internal
-                ? $task->watchers->all()
-                : array_merge([$task->submitter], $task->watchers->all());
+                ? $watchers
+                : array_merge([$task->submitter], $watchers);
 
             $recipients = $this->dedupe($pool, $comment->user_id);
 
@@ -113,6 +115,40 @@ class MailNotifier implements DispatchNotifier
     protected function enabled(): bool
     {
         return (bool) config('dispatch.notifications.enabled', true);
+    }
+
+    /**
+     * The watcher pool filtered by each watcher's W13-1 preference pivot:
+     *  - null/'any' (and any unknown mode — fail OPEN, a notification beats
+     *    silence on a bad value) → every event;
+     *  - 'status_change' → only $event 'status', and when notify_statuses is
+     *    a non-empty array, only transitions INTO one of those statuses.
+     *
+     * @return array<int,mixed>
+     */
+    protected function watchersFor(Task $task, string $event, ?string $toStatus = null): array
+    {
+        return $task->watchers
+            ->filter(function ($watcher) use ($event, $toStatus) {
+                $mode = $watcher->pivot->notify_on ?? null;
+
+                if ($mode !== Task::WATCH_STATUS_CHANGE) {
+                    return true;
+                }
+
+                if ($event !== 'status') {
+                    return false;
+                }
+
+                $statuses = $watcher->pivot->notify_statuses;
+                if (is_string($statuses)) {
+                    $statuses = json_decode($statuses, true);
+                }
+
+                return ! is_array($statuses) || $statuses === [] || in_array($toStatus, $statuses, true);
+            })
+            ->values()
+            ->all();
     }
 
     /**

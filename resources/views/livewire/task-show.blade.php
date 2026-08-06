@@ -58,8 +58,47 @@
                 <p style="margin:0;">{{ $task->updated_at?->diffForHumans() }}</p>
                 @can('watch', $task)
                     <div style="margin-top:0.5rem;">
-                        @if ($task->isWatchedBy(auth()->id()))
-                            <button type="button" wire:click="unwatch" wire:loading.attr="disabled" wire:target="unwatch" class="dispatch-btn is-secondary">Unwatch</button>
+                        @if ($watchPrefs !== null)
+                            {{--
+                                Watching → a preferences popover (W13-1). Reuses the
+                                filter-group popover chrome from the shared layout.
+                                Radios pick the mode; under "status changes only" the
+                                status checkboxes narrow WHICH transitions notify
+                                (all checked = any status change; unchecking every box
+                                falls back to all rather than a never-notify state).
+                            --}}
+                            <details class="dispatch-filter-group" wire:ignore.self style="display:inline-block; text-align:left;">
+                                <summary class="dispatch-select dispatch-filter-summary" style="width:auto;">
+                                    <span>Watching{{ $watchPrefs['notify_on'] === \Sgrjr\Dispatch\Models\Task::WATCH_STATUS_CHANGE ? ' · status only' : '' }}</span>
+                                    <span class="dispatch-filter-caret">&#9662;</span>
+                                </summary>
+                                <div class="dispatch-filter-panel" style="right:0; left:auto;">
+                                    <label class="dispatch-filter-option" wire:key="watch-mode-any">
+                                        <input type="radio" name="dispatch-watch-mode" @checked($watchPrefs['notify_on'] !== \Sgrjr\Dispatch\Models\Task::WATCH_STATUS_CHANGE) wire:click="setWatchMode('any')">
+                                        <span>Any update</span>
+                                    </label>
+                                    <label class="dispatch-filter-option" wire:key="watch-mode-status">
+                                        <input type="radio" name="dispatch-watch-mode" @checked($watchPrefs['notify_on'] === \Sgrjr\Dispatch\Models\Task::WATCH_STATUS_CHANGE) wire:click="setWatchMode('status_change')">
+                                        <span>Status changes only</span>
+                                    </label>
+                                    @if ($watchPrefs['notify_on'] === \Sgrjr\Dispatch\Models\Task::WATCH_STATUS_CHANGE)
+                                        <div class="dispatch-filter-actions"><span>which statuses</span></div>
+                                        @foreach ($statusLabels as $code => $label)
+                                            <label class="dispatch-filter-option" style="padding-left:1.1rem;" wire:key="watch-status-{{ $code }}">
+                                                <input
+                                                    type="checkbox"
+                                                    @checked($watchPrefs['statuses'] === null || in_array($code, $watchPrefs['statuses'], true))
+                                                    wire:click="toggleWatchStatus(@js((string) $code))"
+                                                >
+                                                <span>{{ $label }}</span>
+                                            </label>
+                                        @endforeach
+                                    @endif
+                                    <div style="margin-top:0.45rem;">
+                                        <button type="button" wire:click="unwatch" wire:loading.attr="disabled" wire:target="unwatch" class="dispatch-btn is-secondary">Stop watching</button>
+                                    </div>
+                                </div>
+                            </details>
                         @else
                             <button type="button" wire:click="watch" wire:loading.attr="disabled" wire:target="watch" class="dispatch-btn is-secondary">Watch</button>
                         @endif

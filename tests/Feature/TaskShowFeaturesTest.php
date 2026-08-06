@@ -127,6 +127,42 @@ test('watch() and unwatch() toggle isWatchedBy for the current user', function (
     expect($task->fresh()->isWatchedBy($staff->id))->toBeFalse();
 });
 
+test('the watch popover edits mode and status subset with all-checked-first-click-unchecks semantics (W13-1)', function () {
+    $staff = dispatchMakeUser(2);
+    $this->actingAs($staff);
+
+    $task = app(DispatchTaskService::class)->create(['title' => 'Watch prefs UI']);
+
+    $component = Livewire::test(TaskShow::class, ['task' => $task]);
+    $component->call('watch');
+
+    // Switch to status-changes-only: subset starts null (= all statuses).
+    $component->call('setWatchMode', 'status_change');
+    expect($task->fresh()->watchPreferencesFor($staff->id))
+        ->toBe(['notify_on' => 'status_change', 'statuses' => null]);
+
+    // From "all checked", the first toggle UNCHECKS that status.
+    $component->call('toggleWatchStatus', 'done');
+    $prefs = $task->fresh()->watchPreferencesFor($staff->id);
+    expect($prefs['statuses'])->not->toBeNull();
+    expect($prefs['statuses'])->not->toContain('done');
+    expect($prefs['statuses'])->toContain('verifying');
+
+    // Re-checking it completes the set → stored back as null (= all).
+    $component->call('toggleWatchStatus', 'done');
+    expect($task->fresh()->watchPreferencesFor($staff->id)['statuses'])->toBeNull();
+
+    // Switching back to 'any' clears the narrowing.
+    $component->call('setWatchMode', 'any');
+    expect($task->fresh()->watchPreferencesFor($staff->id))
+        ->toBe(['notify_on' => 'any', 'statuses' => null]);
+
+    // Garbage inputs are ignored, not stored.
+    $component->call('setWatchMode', 'weekly-digest');
+    $component->call('toggleWatchStatus', 'not-a-status');
+    expect($task->fresh()->watchPreferencesFor($staff->id)['notify_on'])->toBe('any');
+});
+
 test('a status change fires the notifier taskStatusChanged hook with the correct from/to', function () {
     $staff = dispatchMakeUser(3);
     $this->actingAs($staff);

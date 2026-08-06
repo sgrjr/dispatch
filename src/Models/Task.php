@@ -87,18 +87,87 @@ class Task extends Model
         return $this->morphMany(config('dispatch.models.task_attachment'), 'attachable');
     }
 
+    /** Watch preference modes (dispatch_task_watchers.notify_on). Null pivot = ANY. */
+    public const WATCH_ANY = 'any';
+
+    public const WATCH_STATUS_CHANGE = 'status_change';
+
     /**
      * Users watching this task for updates (in addition to the submitter and
-     * assignee, who are always notified — see DispatchNotifier).
+     * assignee, who are always notified — see DispatchNotifier). The pivot
+     * carries the W13-1 preference columns: notify_on (null/'any' = every
+     * update; 'status_change' = status changes only) and notify_statuses
+     * (JSON array of TO-statuses narrowing 'status_change'; null = all).
      */
     public function watchers(): BelongsToMany
     {
-        return $this->belongsToMany(config('dispatch.models.user'), 'dispatch_task_watchers', 'task_id', 'user_id')->withTimestamps();
+        return $this->belongsToMany(config('dispatch.models.user'), 'dispatch_task_watchers', 'task_id', 'user_id')
+            ->withPivot(['notify_on', 'notify_statuses'])
+            ->withTimestamps();
     }
 
-    public function watch(int $userId): void
+    /**
+     * Start watching (idempotent). Preferences are OPTIONAL and only written
+     * when given — re-watching without them never clobbers a stored choice.
+     *
+     * @param  array<int,string>|null  $statuses
+     */
+    public function watch(int $userId, ?string $notifyOn = null, ?array $statuses = null): void
     {
-        $this->watchers()->syncWithoutDetaching([$userId]);
+        $pivot = [];
+        if ($notifyOn !== null) {
+            $pivot['notify_on'] = $notifyOn;
+            $pivot['notify_statuses'] = ($statuses === null || $statuses === []) ? null : json_encode(array_values($statuses));
+        }
+
+        $this->watchers()->syncWithoutDetaching([$userId => $pivot]);
+    }
+
+    /**
+     * Overwrite an existing watcher's notification preferences. A no-op for a
+     * non-watcher (use watch() to subscribe). Passing WATCH_ANY (or null)
+     * resets to the every-update default; $statuses only means anything under
+     * WATCH_STATUS_CHANGE.
+     *
+     * @param  array<int,string>|null  $statuses
+     */
+    public function setWatchPreferences(int $userId, ?string $notifyOn, ?array $statuses = null): void
+    {
+        if (! $this->isWatchedBy($userId)) {
+            return;
+        }
+
+        $this->watchers()->updateExistingPivot($userId, [
+            'notify_on' => ($notifyOn === null || $notifyOn === self::WATCH_ANY) ? null : $notifyOn,
+            'notify_statuses' => ($notifyOn === self::WATCH_STATUS_CHANGE && $statuses !== null && $statuses !== [])
+                ? json_encode(array_values($statuses))
+                : null,
+        ]);
+    }
+
+    /**
+     * The current user's decoded watch preferences, or null when not watching:
+     * ['notify_on' => 'any'|'status_change', 'statuses' => array|null].
+     *
+     * @return array{notify_on:string,statuses:?array<int,string>}|null
+     */
+    public function watchPreferencesFor(int $userId): ?array
+    {
+        $row = $this->watchers()->where('user_id', $userId)->first();
+
+        if ($row === null) {
+            return null;
+        }
+
+        $statuses = $row->pivot->notify_statuses;
+        if (is_string($statuses)) {
+            $statuses = json_decode($statuses, true);
+        }
+
+        return [
+            'notify_on' => $row->pivot->notify_on ?? self::WATCH_ANY,
+            'statuses' => is_array($statuses) && $statuses !== [] ? array_values($statuses) : null,
+        ];
     }
 
     public function unwatch(int $userId): void
