@@ -45,6 +45,8 @@
         .dispatch-list-lane-name { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--dispatch-text-muted); }
         .dispatch-list-lane-count { font-size: 0.68rem; color: var(--dispatch-text-faint); }
         .dispatch-group-hint { font-size: 0.72rem; color: var(--dispatch-text-muted); font-style: italic; }
+        /* Result census above the rows (W13-7): total across all pages. */
+        .dispatch-list-count { font-size: 0.75rem; font-weight: 600; color: var(--dispatch-text-muted); margin: 0.6rem 0 0.2rem; }
         /* Facet chip tiers (label-chips partial): elevated leads with a faint
            inset ring; meta (detail views only) is already subdued inline. */
         .dispatch-badge.dispatch-label-elevated { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35); }
@@ -57,14 +59,8 @@
                 <input type="text" wire:model.live.debounce.250ms="search" placeholder="Title or code…" class="dispatch-input">
             </div>
             <div>
-                <label class="dispatch-label">Status</label>
-                <select wire:model.live="statusFilter" class="dispatch-select">
-                    <option value="">All statuses</option>
-                    @foreach ($statusLabels as $code => $label) <option value="{{ $code }}">{{ $label }}</option> @endforeach
-                    @if ($staleEnabled)
-                        <option value="stale">Stale</option>
-                    @endif
-                </select>
+                <span class="dispatch-label">Status</span>
+                @include('dispatch::livewire.partials.filter-group', ['property' => 'statusFilter', 'options' => $statusFilterOptions])
             </div>
             <div>
                 <span class="dispatch-label">Type</span>
@@ -138,6 +134,9 @@
             </div>
             <button type="button" wire:click="clearFilters" class="dispatch-btn is-secondary">Clear filters</button>
         </div>
+
+        {{-- Total across ALL pages (the paginator's count), not just this page's rows. --}}
+        <div class="dispatch-list-count">{{ number_format($tasks->total()) }} matching {{ \Illuminate\Support\Str::plural('task', $tasks->total()) }}</div>
 
         @if (! $tasks->isEmpty())
             <div class="dispatch-list-toolbar" style="margin-top: 0.5rem;">

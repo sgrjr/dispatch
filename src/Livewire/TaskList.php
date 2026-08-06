@@ -32,15 +32,19 @@ class TaskList extends Component
     #[Url(as: 'q', except: '')]
     public string $search = '';
 
-    #[Url(as: 'status', except: '')]
-    public string $statusFilter = '';
-
     /**
      * Checkbox multi-filters (see HasVocabMultiFilters for the []/['']/subset
      * state contract). Plural aliases keep pre-multi-select scalar bookmarks
-     * (?type=bug) inert and match TaskBoard's, so a filtered URL transfers
-     * between the list and the board.
+     * (?type=bug, ?status=open) inert and match TaskBoard's, so a filtered URL
+     * transfers between the list and the board.
+     *
+     * Status joined the multi-filter axes in W13-7 (it was the last singular
+     * select); its vocabulary is the configured statuses plus the 'stale'
+     * pseudo-status when staleness is enabled — see statusVocab().
      */
+    #[Url(as: 'statuses', except: [])]
+    public array $statusFilter = [];
+
     #[Url(as: 'types', except: [])]
     public array $typeFilter = [];
 
@@ -108,7 +112,7 @@ class TaskList extends Component
     {
         // Only the wire:model-bound filters pass through here — the checkbox
         // multi-filters assign in-method and reset via afterFilterChanged().
-        if (in_array($name, ['search', 'statusFilter', 'updatedFilter', 'focusFilter'], true)) {
+        if (in_array($name, ['search', 'updatedFilter', 'focusFilter'], true)) {
             $this->resetPage();
             $this->selected = [];
         }
@@ -129,11 +133,34 @@ class TaskList extends Component
         $taskClass = config('dispatch.models.task');
 
         return [
+            'statusFilter' => $this->statusVocab(),
             'typeFilter' => $taskClass::types(),
             'priorityFilter' => $taskClass::priorities(),
             'labelFilter' => $this->labelNames(),
             'dueFilter' => $taskClass::dueBuckets(),
         ];
+    }
+
+    /**
+     * The status filter's vocabulary: the configured statuses, plus the
+     * 'stale' PSEUDO-status when staleness is enabled (it filters by age, not
+     * by the status column). Guarded so a host that defines a real 'stale'
+     * workflow status doesn't get a duplicate entry.
+     *
+     * @return array<int,string>
+     */
+    protected function statusVocab(): array
+    {
+        /** @var class-string<Task> $taskClass */
+        $taskClass = config('dispatch.models.task');
+
+        $vocab = $taskClass::statuses();
+
+        if ((bool) config('dispatch.staleness.enabled', true) && ! in_array('stale', $vocab, true)) {
+            $vocab[] = 'stale';
+        }
+
+        return $vocab;
     }
 
     /** @return array<int,string> */
@@ -505,12 +532,26 @@ class TaskList extends Component
 
         $staleEnabled = (bool) config('dispatch.staleness.enabled', true);
 
-        if ($this->statusFilter === 'stale' && $staleEnabled) {
+        // Status multi-filter (W13-7). A checked 'stale' (the pseudo-status)
+        // ORs the age condition alongside any real-status whereIn, so
+        // {open, stale} reads "open, or anything gone stale" — matching how
+        // the old single-select's two branches compose as a union.
+        if (null !== ($sel = $this->activeSelection($this->statusFilter, $this->statusVocab()))) {
+            $realStatuses = array_values(array_intersect($sel, $taskClass::statuses()));
+            $wantStale = in_array('stale', array_diff($sel, $realStatuses), true);
             $thresholdDays = (int) config('dispatch.staleness.threshold_days', 42);
-            $query->whereNotIn('status', ['backburner', 'done', 'declined'])
-                ->where('updated_at', '<', now()->subDays($thresholdDays));
-        } elseif (in_array($this->statusFilter, $taskClass::statuses(), true)) {
-            $query->where('status', $this->statusFilter);
+
+            $query->where(function (Builder $q) use ($realStatuses, $wantStale, $thresholdDays) {
+                if ($realStatuses !== []) {
+                    $q->whereIn('status', $realStatuses);
+                }
+                if ($wantStale) {
+                    $q->orWhere(function (Builder $sq) use ($thresholdDays) {
+                        $sq->whereNotIn('status', ['backburner', 'done', 'declined'])
+                            ->where('updated_at', '<', now()->subDays($thresholdDays));
+                    });
+                }
+            });
         }
 
         if (null !== ($sel = $this->activeSelection($this->typeFilter, $taskClass::types()))) {
@@ -556,12 +597,20 @@ class TaskList extends Component
             ? $this->groupPageIntoLanes($tasks->getCollection())
             : null;
 
+        // The status popover's option map: real statuses + the 'stale'
+        // pseudo-status (mirrors statusVocab()'s guard).
+        $statusFilterOptions = $taskClass::statusLabels();
+        if ($staleEnabled && ! array_key_exists('stale', $statusFilterOptions)) {
+            $statusFilterOptions['stale'] = 'Stale';
+        }
+
         return view('dispatch::livewire.task-list', [
             'tasks' => $tasks,
             'labels' => $this->allLabels(),
             'focuses' => $focuses,
             'groupedLanes' => $groupedLanes,
             'statusLabels' => $taskClass::statusLabels(),
+            'statusFilterOptions' => $statusFilterOptions,
             'typeLabels' => $taskClass::typeLabels(),
             'priorityLabels' => $taskClass::priorityLabels(),
             'dueBucketLabels' => $taskClass::dueBucketLabels(),

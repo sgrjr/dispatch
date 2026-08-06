@@ -160,10 +160,80 @@ test('the stale filter returns only non-terminal tasks past the staleness thresh
     $taskClass::whereKey($staleButDone->id)->update(['updated_at' => now()->subDays(50)]);
 
     Livewire::test(TaskList::class)
-        ->set('statusFilter', 'stale')
+        ->set('statusFilter', ['stale'])
         ->assertSee($stale->code)
         ->assertDontSee($fresh->code)
         ->assertDontSee($staleButDone->code);
+});
+
+test('the status filter is a multi-select: a subset shows its union, all/none show everything (W13-7)', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $service = app(DispatchTaskService::class);
+    $open = $service->create(['title' => 'Open one', 'status' => 'open']);
+    $verifying = $service->create(['title' => 'Verifying one', 'status' => 'verifying']);
+    $done = $service->create(['title' => 'Done one', 'status' => 'done']);
+
+    // Subset = union of the checked statuses.
+    Livewire::test(TaskList::class)
+        ->set('statusFilter', ['open', 'verifying'])
+        ->assertSee($open->code)
+        ->assertSee($verifying->code)
+        ->assertDontSee($done->code);
+
+    // [] (all) and the explicit-none sentinel both show everything.
+    Livewire::test(TaskList::class)
+        ->set('statusFilter', [])
+        ->assertSee($open->code)
+        ->assertSee($done->code);
+
+    Livewire::test(TaskList::class)
+        ->set('statusFilter', [''])
+        ->assertSee($open->code)
+        ->assertSee($done->code);
+});
+
+test('a checked stale pseudo-status ORs the age condition alongside real statuses (W13-7)', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    config(['dispatch.staleness.enabled' => true, 'dispatch.staleness.threshold_days' => 42]);
+
+    /** @var class-string<Task> $taskClass */
+    $taskClass = config('dispatch.models.task');
+    $service = app(DispatchTaskService::class);
+
+    $verifying = $service->create(['title' => 'Fresh verifying', 'status' => 'verifying']);
+    $staleOpen = $service->create(['title' => 'Stale open', 'status' => 'open']);
+    $freshOpen = $service->create(['title' => 'Fresh open', 'status' => 'open']);
+
+    $taskClass::whereKey($staleOpen->id)->update(['updated_at' => now()->subDays(50)]);
+
+    // {verifying, stale} = verifying tasks OR anything gone stale — the
+    // stale-but-open task rides in even though 'open' is unchecked.
+    Livewire::test(TaskList::class)
+        ->set('statusFilter', ['verifying', 'stale'])
+        ->assertSee($verifying->code)
+        ->assertSee($staleOpen->code)
+        ->assertDontSee($freshOpen->code);
+});
+
+test('the list shows a total matching-tasks count across all pages (W13-7)', function () {
+    $staff = dispatchMakeUser(1);
+    $this->actingAs($staff);
+
+    $service = app(DispatchTaskService::class);
+    foreach (range(1, 27) as $i) {
+        $service->create(['title' => "Task {$i}", 'status' => 'open']);
+    }
+
+    // 27 rows paginate at 25/page — the census must read the paginator total,
+    // not the page's row count.
+    Livewire::test(TaskList::class)->assertSee('27 matching tasks');
+
+    $one = Livewire::test(TaskList::class)->set('search', 'Task 17');
+    $one->assertSee('1 matching task');
 });
 
 test('the updated filter buckets tasks into today / past week / past month / older windows', function () {

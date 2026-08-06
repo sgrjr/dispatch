@@ -107,7 +107,7 @@ test('a long-untouched backburnered task is never flagged stale, on the board or
 
     expect(substr_count(Livewire::test(TaskBoard::class)->html(), '>stale<'))->toBe(0);
 
-    $list = Livewire::test(TaskList::class)->set('statusFilter', 'stale');
+    $list = Livewire::test(TaskList::class)->set('statusFilter', ['stale']);
     expect($list->viewData('tasks')->total())->toBe(0);
 });
 
