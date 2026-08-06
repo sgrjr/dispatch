@@ -112,6 +112,33 @@ class MailNotifier implements DispatchNotifier
         }
     }
 
+    /**
+     * W13-2 "watch on behalf of": tell someone they were CC'd onto a task.
+     * Deliberately NOT on the DispatchNotifier contract — adding a method
+     * there would break every host-implemented notifier on upgrade. Callers
+     * duck-type (`method_exists($notifier, 'watcherAdded')`), so a custom
+     * notifier without it simply sends nothing, and one that wants it just
+     * defines it.
+     */
+    public function watcherAdded(Task $task, mixed $watcher, ?Authenticatable $actor): void
+    {
+        if (! $this->enabled()) {
+            return;
+        }
+
+        try {
+            $recipients = $this->dedupe([$watcher], $actor?->getAuthIdentifier());
+
+            $by = trim((string) ($actor->name ?? '')) !== '' ? $actor->name : 'A teammate';
+
+            foreach ($recipients as $recipient) {
+                $this->send($recipient, $task, "{$by} added you as a watcher — you'll be notified of updates here. Open the task to adjust what you're notified about, or to stop watching.");
+            }
+        } catch (\Throwable) {
+            // never throw
+        }
+    }
+
     protected function enabled(): bool
     {
         return (bool) config('dispatch.notifications.enabled', true);

@@ -46,6 +46,9 @@ class TaskShow extends Component
     // Merge-into-duplicate target (F5, staff/`delete`-ability only).
     public string $mergeTargetCode = '';
 
+    // W13-2 "watch on behalf of": the picked user id from the CC select.
+    public ?int $ccUserId = null;
+
     protected $listeners = ['commentAdded' => '$refresh'];
 
     public function mount(Task $task): void
@@ -275,6 +278,60 @@ class TaskShow extends Component
             Task::WATCH_STATUS_CHANGE,
             count($next) === count($vocab) ? null : $next,
         );
+    }
+
+    /**
+     * W13-2 "watch on behalf of" (CC): staff picks a teammate; that teammate
+     * is IMMEDIATELY a watcher (every-update default prefs) — no invitation
+     * or opt-in state, by design. They decline by "Stop watching". The pool
+     * is the same assignable-users seam as the assignee dropdown: CC'ing a
+     * placeholder/customer account makes no more sense than assigning one.
+     * Memorialized on the timeline (internal) and the teammate gets a
+     * heads-up via the notifier's optional duck-typed watcherAdded hook.
+     */
+    public function addWatcher(): void
+    {
+        Gate::authorize('watch', $this->task);
+
+        if (! $this->ccUserId) {
+            return;
+        }
+
+        $user = AssignableUsers::query()->whereKey($this->ccUserId)->first();
+
+        if ($user === null) {
+            $this->addError('ccUserId', 'Pick a user from the list.');
+
+            return;
+        }
+
+        $this->ccUserId = null;
+
+        if ($this->task->isWatchedBy((int) $user->id)) {
+            return; // already watching — nothing to record or send
+        }
+
+        $this->task->watch((int) $user->id);
+
+        $this->task->recordEvent(
+            TaskComment::EVENT_WATCHER_ADDED,
+            Auth::id(),
+            ['watcher_user_id' => (int) $user->id, 'watcher_name' => (string) $user->name],
+            "Added {$user->name} as a watcher.",
+            true,
+        );
+
+        // Optional hook — see MailNotifier::watcherAdded. A host notifier
+        // without the method simply sends nothing.
+        $notifier = app(DispatchNotifier::class);
+        if (method_exists($notifier, 'watcherAdded')) {
+            $notifier->watcherAdded($this->task, $user, Auth::user());
+        }
+
+        // The action's own re-render picks up the fresh watcher list; the
+        // thread is a separate component and shows the event on next load
+        // (it's internal bookkeeping, not conversation).
+        $this->task->unsetRelation('watchers');
     }
 
     /**

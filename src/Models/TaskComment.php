@@ -19,6 +19,7 @@ class TaskComment extends Model
     public const EVENT_DESCRIPTION_EDITED = 'description_edited';
     public const EVENT_MERGED = 'merged';
     public const EVENT_CLAIMED = 'claimed';
+    public const EVENT_WATCHER_ADDED = 'watcher_added';
 
     protected $table = 'dispatch_task_comments';
 

@@ -339,6 +339,38 @@
         </section>
     @endif
 
+    {{-- Watchers (W13-2): who's subscribed, plus "watch on behalf of" — the
+         picked teammate is immediately watching (no opt-in step; they decline
+         via Stop watching on their own visit). Pool = the assignable-users
+         seam, same as the assignee select. --}}
+    @if ($this->canEdit())
+        <section class="dispatch-card" style="margin-top: 1rem;">
+            <h2 class="dispatch-section-title">Watchers</h2>
+            @if ($task->watchers->isNotEmpty())
+                <div class="dispatch-show-badges" style="margin-bottom: 0.6rem;">
+                    @foreach ($task->watchers as $w)
+                        <span class="dispatch-badge" wire:key="watcher-{{ $w->id }}">{{ $w->name }}</span>
+                    @endforeach
+                </div>
+            @else
+                <p style="font-size:0.78rem; color: var(--dispatch-text-muted); margin: 0 0 0.6rem;">No watchers yet.</p>
+            @endif
+            <div style="display:flex; flex-wrap:wrap; align-items:center; gap:0.5rem;">
+                <select wire:model="ccUserId" class="dispatch-select" style="width:auto; min-width:14rem;">
+                    <option value="">Add a watcher…</option>
+                    @foreach ($assigneeOptions as $u)
+                        <option value="{{ $u->id }}">{{ $u->name }} ({{ $u->email }})</option>
+                    @endforeach
+                </select>
+                <button type="button" wire:click="addWatcher" wire:loading.attr="disabled" wire:target="addWatcher" class="dispatch-btn is-secondary">Watch on their behalf</button>
+            </div>
+            @error('ccUserId') <p class="dispatch-error">{{ $message }}</p> @enderror
+            <p style="font-size:0.72rem; color: var(--dispatch-text-muted); margin: 0.45rem 0 0;">
+                They start watching immediately and get a heads-up; they can adjust their notifications or stop watching themselves.
+            </p>
+        </section>
+    @endif
+
     {{-- Mark-as-duplicate / merge control (staff `delete` ability — distinct
          from canEdit()'s `update` ability, so it's gated independently). --}}
     @can('delete', $task)
