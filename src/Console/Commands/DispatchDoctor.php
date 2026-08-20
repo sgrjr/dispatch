@@ -48,6 +48,7 @@ class DispatchDoctor extends Command
         $this->checkBatchCap();
         $this->checkRemote($env);
         $this->checkDroppedSession();
+        $this->checkAgentToken();
         $this->checkTouchTime();
         $this->checkConfigCache($cached);
         $this->checkKeyDrift();
@@ -302,6 +303,53 @@ class DispatchDoctor extends Command
         }
 
         $this->add('warn', 'dropped_session', 'A previous agent session was dropped — '.($marker['reason'] ?? 'unknown reason').' at '.($marker['at'] ?? '?').'. Bare verbs refuse the silent local fallback until `dispatch:session:refresh --wait` renews it (human approves) or `dispatch:session:end` acknowledges it.');
+    }
+
+    /**
+     * Client-state check: the token DOTFILE itself (W14-2).
+     *
+     * doctor knew about the drop marker and about the `remote.token_path`
+     * config KEY, but never about the file that key points at — so the two
+     * states that actually broke production runs were invisible here: a token
+     * that vanished with no 401 (no marker, so the old guard stayed quiet) and
+     * a token file sitting right there but unparseable. Both present as "no
+     * session", and neither is diagnosable without naming the resolved path,
+     * which is derived from ambient env on every invocation and can differ
+     * between two shells with nothing said.
+     */
+    protected function checkAgentToken(): void
+    {
+        // Only meaningful against a configured remote — on a box with no agent
+        // remote there is no session to have a state.
+        if ($this->agentBaseUrl() === null) {
+            return;
+        }
+
+        $path = $this->agentTokenPath();
+        $state = $this->agentTokenState();
+
+        if ($state === 'unreadable') {
+            $this->add('error', 'agent_token', "Token file at {$path} does NOT parse as a session token (truncated / half-written / missing its `token` key). Every reader treats that as no session at all, so bare verbs would serve the LOCAL dev DB. Renew with `dispatch:session:refresh --wait`, or delete the file to start clean.");
+
+            return;
+        }
+
+        if ($state === 'absent') {
+            $crumb = $this->sessionBreadcrumb();
+            if ($crumb !== null && $this->sessionDropMarker() === null) {
+                $this->add('warn', 'agent_token', 'A session against '.($crumb['base'] ?? 'the remote').' was active since '.($crumb['at'] ?? '?')." but no token is at {$path} now — and no 401 was recorded (no drop marker). Bare verbs refuse rather than fall back. Renew with `dispatch:session:refresh --wait`, or acknowledge with `dispatch:session:end`.");
+
+                return;
+            }
+
+            $this->add('info', 'agent_token', "No agent session token at {$path} (the path this client resolves — config `agent.remote.token_path`, else DISPATCH_AGENT_TOKEN_PATH, else \$HOME/\$USERPROFILE). Normal outside a commissioned run.");
+
+            return;
+        }
+
+        $expiry = $this->agentTokenFile()['expires_at'] ?? null;
+        $this->add('ok', 'agent_token', "Agent session token present at {$path}".
+            (is_string($expiry) && $expiry !== '' ? " (expires {$expiry})" : '').'.');
     }
 
     /**

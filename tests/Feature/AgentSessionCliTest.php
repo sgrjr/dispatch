@@ -26,7 +26,7 @@ beforeEach(function () {
 
 afterEach(function () {
     if (isset($this->tokenPath)) {
-        foreach ([$this->tokenPath, $this->tokenPath.'.dropped'] as $file) {
+        foreach ([$this->tokenPath, $this->tokenPath.'.dropped', $this->tokenPath.'.session'] as $file) {
             if (is_file($file)) {
                 @unlink($file);
             }

@@ -70,7 +70,40 @@ class DispatchSessionStatus extends Command
                 return $this->reportDropped($drop);
             }
 
-            $this->info('No active token and no pending agent session. Request one with `dispatch:session:request` (add --wait to request + collect the token in one command).');
+            // W14-2: name the path that was searched. "No active token" is a
+            // claim about a specific file, and the file is resolved from
+            // ambient env on every invocation (config -> DISPATCH_AGENT_TOKEN_PATH
+            // -> HOME -> USERPROFILE -> temp dir), so two shells can disagree
+            // about where the session lives and neither says so. An operator
+            // reading this line after a session "vanished" needs the path more
+            // than the suggestion.
+            $path = $this->agentTokenPath();
+
+            // W14-1/W14-2: a file that exists but does not parse is NOT a clean
+            // zero-state — it is a corrupt credential wearing one, and it is
+            // reachable by any interrupted write. Say so, loudly, instead of
+            // reporting the same "request one" as a fresh box.
+            if ($this->agentTokenState() === 'unreadable') {
+                $this->error("A token file exists at {$path} but does NOT parse as a session token — a truncated or half-written dotfile reads as no session at all, and bare verbs would silently serve the LOCAL dev DB.");
+                $this->line('Renew cleanly (a human approves again): `php artisan dispatch:session:refresh --wait`, or delete the file to start over.');
+
+                return self::FAILURE;
+            }
+
+            // A breadcrumb without a token or a marker is the unexplained loss
+            // the 14th wave exists for: the workspace HELD a session and now
+            // holds no explanation. Report it as the distinct state it is.
+            if (($crumb = $this->sessionBreadcrumb()) !== null) {
+                $this->error('Agent session token is GONE with no 401 and no drop marker — a session against '
+                    .($crumb['base'] ?? 'the remote').' was active since '.($crumb['at'] ?? 'an unknown time')
+                    ." and no token is at {$path} now. Bare verbs REFUSE rather than fall back to the local DB.");
+                $this->line('  renew (same identity, a human approves):  php artisan dispatch:session:refresh --wait');
+                $this->line('  work locally on purpose:                  php artisan dispatch:session:end');
+
+                return self::FAILURE;
+            }
+
+            $this->info("No active token and no pending agent session (looked in {$path}). Request one with `dispatch:session:request` (add --wait to request + collect the token in one command).");
 
             return self::SUCCESS;
         }

@@ -32,10 +32,19 @@ class DispatchSessionRefresh extends Command
     {
         $drop = $this->sessionDropMarker();
         $file = $this->agentTokenFile() ?? [];
-        $ctx = $drop ?? $file;
+        // Third source, and the one that survives a token death nobody
+        // announced (W14-1): the breadcrumb mirrors the renewal identity out of
+        // the dotfile at approval time. Without it, refreshing after an
+        // unexplained loss reached the approver as a nameless `agent` with no
+        // purpose — the renewal still worked, but the human approving it had
+        // nothing to approve ON.
+        $crumb = $this->sessionBreadcrumb() ?? [];
+        $ctx = $drop ?? ($file !== [] ? $file : $crumb);
 
-        if ($drop === null && $file === []) {
-            $this->warn('No dropped session and no session dotfile — nothing to renew from. Requesting a fresh default-identity session; prefer `dispatch:session:request --name=… --purpose=…` for a first commissioning.');
+        if ($drop === null && $file === [] && $crumb === []) {
+            $this->warn('No dropped session, no session dotfile, and no session breadcrumb — nothing to renew from. Requesting a fresh default-identity session; prefer `dispatch:session:request --name=… --purpose=…` for a first commissioning.');
+        } elseif ($drop === null && $file === [] && $crumb !== []) {
+            $this->warn('No dropped session and no dotfile — renewing from the session breadcrumb ('.($crumb['agent_name'] ?? 'agent').', active since '.($crumb['at'] ?? 'an unknown time').'). The previous token went away without a 401.');
         }
 
         $name = $ctx['agent_name'] ?? 'agent';

@@ -73,24 +73,36 @@ trait GuardsLocalOnlyWrites
 
         $hasToken = $this->agentToken() !== null;
         $drop = $hasToken ? null : $this->sessionDropMarker();
+        // An unexplained loss counts for exactly the same reason a drop does
+        // (W14-1): the marker only describes a server-announced death, so a
+        // token that vanished or went unreadable would otherwise read here as
+        // "there was never a session" — the state this guard exists to deny.
+        $crumb = ($hasToken || $drop !== null) ? null : $this->sessionBreadcrumb();
 
-        // No token and no marker: an ordinary local run, which is the whole
-        // point of these verbs. Say nothing.
-        if (! $hasToken && $drop === null) {
+        // No token, no marker, no breadcrumb: an ordinary local run, which is
+        // the whole point of these verbs. Say nothing.
+        if (! $hasToken && $drop === null && $crumb === null) {
             return false;
         }
 
         // A dropped session counts. The marker exists precisely because "the
         // token is gone" and "there was never a session" are different states,
         // and the first one must not silently resolve to the local DB.
-        $state = $hasToken
-            ? "an agent session is ACTIVE against {$base}"
-            : sprintf(
+        $state = match (true) {
+            $hasToken => "an agent session is ACTIVE against {$base}",
+            $drop !== null => sprintf(
                 'an agent session against %s was dropped (%s, %s) and has not been renewed or acknowledged',
                 $base,
                 $drop['reason'] ?? 'dropped',
                 $drop['at'] ?? 'unknown time',
-            );
+            ),
+            default => sprintf(
+                'an agent session against %s was active since %s and its token %s with no 401 and no drop marker',
+                $base,
+                $crumb['at'] ?? 'unknown time',
+                $this->agentTokenState() === 'unreadable' ? 'is now UNREADABLE' : 'has vanished',
+            ),
+        };
 
         $this->error("{$verb} is LOCAL-ONLY and {$state} — it would write to the local dev DB while every neighbouring verb targets the remote. Task codes are minted per-database, so the same code names a DIFFERENT task on each side: this could {$consequence}, and report success. Refusing.");
 

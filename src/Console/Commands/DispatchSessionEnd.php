@@ -44,13 +44,15 @@ class DispatchSessionEnd extends Command
         if ($this->agentToken() === null) {
             // Nothing live locally — clear any stale dotfile and report cleanly.
             // session:end is also the ACKNOWLEDGE verb for a dropped session:
-            // clearing the marker restores local-by-default for bare verbs.
+            // clearing the marker (and the breadcrumb behind it) restores
+            // local-by-default for bare verbs.
             $this->forgetToken();
-            $hadDrop = $this->sessionDropMarker() !== null;
+            $hadDrop = $this->sessionDropMarker() !== null || $this->sessionBreadcrumb() !== null;
             $this->clearSessionDropMarker();
+            $this->clearSessionBreadcrumb();
             $this->info('No active agent session token — nothing to end.');
             if ($hadDrop) {
-                $this->line('Dropped-session guard cleared — bare verbs act on the local DB again (`dispatch:session:refresh` would have renewed it instead).');
+                $this->line('Session guard cleared — bare verbs act on the local DB again (`dispatch:session:refresh` would have renewed the session instead).');
             }
 
             return self::SUCCESS;
@@ -72,6 +74,7 @@ class DispatchSessionEnd extends Command
         if ($result !== null) {
             $this->forgetToken();
             $this->clearSessionDropMarker();
+            $this->clearSessionBreadcrumb();
             $this->info('Session ended — server session revoked, local token cleared.');
             if ($metrics !== null) {
                 $this->line('Session metrics recorded: '.AgentMetrics::summaryLine($metrics));
@@ -85,6 +88,7 @@ class DispatchSessionEnd extends Command
         // wrote a drop marker, but a deliberate end IS the acknowledgment.
         if ($this->agentToken() === null) {
             $this->clearSessionDropMarker();
+            $this->clearSessionBreadcrumb();
             $this->line('Session was already inactive; local token cleared.');
 
             return self::SUCCESS;

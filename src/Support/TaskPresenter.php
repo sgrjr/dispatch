@@ -133,7 +133,11 @@ class TaskPresenter
             ],
             'full_adds' => [
                 'description' => 'string|null',
-                'context' => 'object|null',
+                // W15-2: the one-word description sent agents past a complete
+                // machine-filed diagnosis — a sweep DECLINED a live bug whose
+                // context already named its fix commit. For an exception-filed
+                // task this, not the description, is where the evidence lives.
+                'context' => 'object|null — arbitrary per-task data. For an EXCEPTION-filed task it carries the whole incident: exception{class,message,file,line}, trace[], route/method/url, times_seen/first_seen/last_seen, plus result{commit,resolution,metrics} from any agent that worked it. An exception task with an empty description is NOT evidence-free — read context before declining it. Also carries source{file,line,imported_at} import provenance',
                 'attachments' => '[{filename, mime, size_bytes, is_image:bool}] — metadata SIGNALS only: no fetch URL, binaries do not travel the agent API',
                 'comments' => '[{id:int, event_type:string, is_internal:bool, author:string|int|null, body:string, meta:object|null, attachment_count:int, created_at:iso8601}]',
             ],

@@ -69,6 +69,18 @@ Notes on the loop:
 - `attachment_count > 0` on a task (or a comment) means a human hung evidence the
   API **can't hand you** (no URL, no binary) — a screenshot or file. Ask the
   operator to transcribe it before you act on that brief; don't guess past it.
+- **The full shape also carries `context`, and for machine-filed tasks that — not
+  the description — is where the evidence lives.** A task minted by exception
+  capture files its occurrence events with an intentionally **empty body**, so
+  walking `description` + `comments[]` alone makes it look like there is nothing
+  to act on. There usually is, under `context`:
+  `context.exception.{class,message,file,line}`, the full `trace[]`,
+  `route`/`method`/`url`, `context.times_seen` (how often it has fired — real
+  triage signal, and on no list view), and `context.result.commit` from any
+  earlier agent that worked it. **Rule: an exception-filed task with an empty
+  description is not evidence-free — read `context` before you decline it.**
+  (Field cost of skipping this: a sweep `declined` a live bug whose `context`
+  already named its fix commit.)
 - `next`/`claim` are **focus-steered** — production runs a Focus that steers you
   to the sanctioned work first (it never starves; empty/busy focuses fall
   through). That's the mandate and normally what you WANT. Use `--no-focus` only
@@ -82,6 +94,11 @@ Notes on the loop:
 - On close, record **`result.resolution`** — `built | already-implemented |
   obsolete` (free-form allowed) — so the board can tell what you built from what
   was already there (the vet's "already-implemented" close should stamp it).
+- **`--commit` belongs on a `verifying` hand-off, not just a `done`.** The flag is
+  status-agnostic, and `verifying` is *exactly* the case where someone else has to
+  find your code later — pass the sha you already know. Without it the next reader
+  reconstructs the mapping by grepping commit messages; that archaeology has been
+  paid for in full at least once, over 112 tasks.
 - **Due dates are yours to set — don't hand them back to the human.** `--due=`
   on `dispatch:add` files a task with its deadline already on it; `--due=` on
   `dispatch:done` sets the review-by as you close (the natural pairing with
@@ -111,7 +128,16 @@ feels finished.**
 | Close as | When |
 |---|---|
 | `done` | You verified the change end-to-end yourself and it's self-contained. Still the common case — don't hedge. |
-| `--status=verifying` | Something only a human can do remains: a visual/UX check, a deploy or migration, a prod-data/credential check, high blast radius (auth, billing, data integrity), or the task asked for sign-off. **Name the exact check** in the result or a note — a bare `verifying` with no stated ask is noise. If the check has a deadline, attach it in the same call with `--due=` instead of writing it in prose. Can't articulate a check? It's `done` (or you're not finished — keep `in_progress`). |
+| `--status=verifying` | Something only a human can do remains: a visual/UX check, a prod-data/credential check, a migration or backfill whose *result* someone must eyeball, high blast radius (auth, billing, data integrity), or the task asked for sign-off. **Name the exact check** in the result or a note — a bare `verifying` with no stated ask is noise. If the check has a deadline, attach it in the same call with `--due=` instead of writing it in prose. Can't articulate a check? It's `done` (or you're not finished — keep `in_progress`). |
+
+**"Waiting on a deploy" is NOT a `verifying` check.** If the code is committed and
+the only thing left is *"has this shipped to prod yet"*, close it **`done`** — the
+deploy is one shared operator action, tracked once, globally. Re-asking it per task
+is what turns the hand-off pile into a landfill: a real sweep found 4 of 17 legitimate
+rows reduced to that single question, plus more that had bundled a deploy clause into
+an otherwise-answerable check. A deploy only justifies `verifying` when it carries a
+task-specific verification a human must actually perform (a backfill to eyeball, a
+flag to flip) — and then that, not the deploy, is the check you name.
 | `--status=declined` | Won't-do: obsolete, wrong, or solved elsewhere — say why in a note. |
 | `--status=backburner` | Real but consciously parked: not actionable now or anytime soon (someday-item out of triage), OR code-done but blocked on an external event — a launch date, an ops cutover window. Not rejection (`declined`) and not a pending human check (`verifying`) — say what unblocks it in a note. **Never self-park a commissioned task unless the commission says so.** |
 
@@ -173,6 +199,15 @@ manifest.
   ONCE and tell the operator; **never loop it** — approval is still a human
   call. `dispatch:session:end` instead acknowledges the drop (back to local
   work); `--local` overrides per call.
+- **No banner, and a task you KNOW exists reads as missing?** `→ remote:` rides
+  every sticky call; its **absence is the tell**. If `show` answers "Task not
+  found" for a live production code, `queue` comes back empty for a bucket that
+  isn't, or a `batch` update target "doesn't exist", you are almost certainly
+  talking to the LOCAL dev DB. Check `dispatch:session:status` immediately — and
+  note that a token which died WITHOUT a 401 leaves no drop marker, so status
+  reports NONE rather than DROPPED. Re-commission (or `session:refresh --wait`)
+  before writing anything: a batch aimed at production that lands locally can
+  write the wrong board and report success.
 - **`denied`** — a human said no. **Stop and report** — a refresh would just
   re-ask them; don't.
 - **`429`** — rate-limited, NOT a dead session: the token (or pending request)
@@ -200,6 +235,17 @@ manifest.
   recorded automatically by `session:end`; per-task cost lands only if that
   task's `done` carried `--with-metrics` — so paste the closing command claim
   printed on EVERY done, not just the last one.
+- **`session:end` is a RUN boundary, not a filing boundary.** If you expect to
+  file findings intermittently — work, discover something, file it, keep working
+  — hold ONE session open for the whole run. Every re-arm costs a human a trip to
+  the approval UI, and ending after each filing is how one errand turns into
+  three approvals.
+- **Never `2>&1` a `--json` verb.** The `→ remote:` banner and every tip ride
+  STDERR precisely so a piped stdout stays contract-pure; merging the streams
+  corrupts the JSON and the parse failure looks like a broken verb. Same
+  discipline when a verb *seems* to have failed: print the raw payload before
+  asserting it did — more than one "the API dropped my labels" report has turned
+  out to be a client-side parse of a documented shape (`labels` is `string[]`).
 
 ## Client prerequisites
 

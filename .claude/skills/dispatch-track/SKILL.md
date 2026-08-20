@@ -189,6 +189,16 @@ parse against that instead of guessing field names from examples.
    `php artisan dispatch:show <code> --json` gives full detail plus the
    discussion thread if you need more context before starting.
 
+   **The full shape also carries `context` — read it.** A task filed by
+   exception capture records its occurrences with an empty comment body, so
+   walking `description` + `comments[]` alone can make a fully-diagnosed bug
+   look like an empty row. The evidence is under `context`:
+   `context.exception.{class,message,file,line}`, the `trace[]`, the route/URL,
+   `context.times_seen` (how often it has fired), and `context.result.commit`
+   from any earlier agent that worked it. **An exception-filed task with an
+   empty description is not evidence-free — read `context` before declining
+   it.**
+
 3. **`php artisan dispatch:claim --json`** — claim it before you start:
    marks the task `in_progress` and assigns it in one atomic transaction.
    Scope with `--type=` / `--label=*` the same way you'd scope `next`. This
@@ -217,6 +227,16 @@ parse against that instead of guessing field names from examples.
    queue without rejecting, distinct from declined) are valid alternatives to
    `done` when that's the actual outcome. (To leave a comment, use
    `dispatch:note` — `done` has no note flag.)
+
+   **If you close `verifying`, name the exact check** — in `--result` or a
+   preceding note. A bare `verifying` with no stated ask is noise: it reads
+   identically to abandoned work, and the pile it builds can only be cleared by
+   code archaeology. Two rules that follow: **"waiting on a deploy" is not a
+   check** (close `done`; the deploy is one shared action, tracked once, not
+   re-asked per task) — it only counts when the deploy carries a task-specific
+   verification a human must perform; and **pass `--commit` on a `verifying`
+   hand-off too**, not just a `done`, since that is precisely the case where
+   someone else has to find your code later.
 
    **Stamp run metrics (optional).** To memorialize what the run cost —
    tokens, cost, tool usage, duration — fold `dispatch:metrics` into the same

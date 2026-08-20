@@ -111,6 +111,26 @@ trait TalksToAgentApi
             $this->fail('Refusing the silent local fallback after a dropped agent session.');
         }
 
+        // UNEXPLAINED-LOSS GUARD (W14-1): the marker above only ever describes a
+        // death the SERVER announced (a 401). A token that vanishes any other
+        // way — removed out-of-band, or written corrupt and now unreadable —
+        // leaves no marker, and this is precisely where the silent local
+        // fallback used to resume. The breadcrumb makes the TRANSITION itself
+        // the trigger: this workspace held a session, and now holds neither a
+        // token nor an explanation. Fail loud, and say which of the two it is,
+        // because the recovery differs (a corrupt file is not a dead session).
+        if ($base !== null && $this->agentToken() === null && ($crumb = $this->sessionBreadcrumb()) !== null) {
+            $at = $crumb['at'] ?? 'unknown time';
+            $unreadable = $this->agentTokenState() === 'unreadable';
+
+            $this->error($unreadable
+                ? "Agent session token file is UNREADABLE — it exists at {$this->agentTokenPath()} but does not parse as a token (a truncated or half-written file reads as no session at all). A session was active against {$crumb['base']} since {$at}. Bare verbs would silently fall back to the LOCAL dev DB. Refusing."
+                : "Agent session token VANISHED with no 401 and no drop marker — a session was active against {$crumb['base']} since {$at}, and no token is at {$this->agentTokenPath()} now. Bare verbs would silently fall back to the LOCAL dev DB, where production tasks look deleted and local test tasks look like the board. Refusing.");
+            $this->line('  renew (a human approves again):  php artisan dispatch:session:refresh --wait');
+            $this->line('  local on purpose:                add --local per call, or clear this guard with dispatch:session:end');
+            $this->fail('Refusing the silent local fallback after an unexplained agent-session loss.');
+        }
+
         if ($base === null || $this->agentToken() === null) {
             return $this->resolvedRemoteTarget = false;
         }
@@ -315,6 +335,34 @@ trait TalksToAgentApi
         return is_array($data) ? $data : null;
     }
 
+    /**
+     * The dotfile's state as a first-class value, because "no token" has three
+     * causes that want three different sentences (W14-2). Every reader used to
+     * collapse them: agentTokenFile() returns null both when the file is absent
+     * and when its JSON won't decode, so a truncated or half-written file read
+     * as "there was never a session" — permanently, and with no way for an
+     * operator to see the file sitting right there. That is the shape of two
+     * separate production masquerades.
+     *
+     * ABSENT     — no file. An ordinary local box, or a clean session:end.
+     * UNREADABLE — a file exists but does not decode, or carries no token key.
+     * ACTIVE     — a token is present.
+     */
+    protected function agentTokenState(): string
+    {
+        $path = $this->agentTokenPath();
+        if (! is_file($path)) {
+            return 'absent';
+        }
+
+        $data = json_decode((string) file_get_contents($path), true);
+        if (! is_array($data) || ! isset($data['token']) || ! is_string($data['token']) || $data['token'] === '') {
+            return 'unreadable';
+        }
+
+        return 'active';
+    }
+
     protected function agentToken(): ?string
     {
         $data = $this->agentTokenFile();
@@ -333,13 +381,33 @@ trait TalksToAgentApi
             @mkdir($dir, 0700, true);
         }
 
-        file_put_contents($path, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+
+        // ATOMIC: write a sibling temp file, then rename over the target, so no
+        // reader can ever observe a partial dotfile. A plain file_put_contents()
+        // here is not safe — it truncates first and writes second, so an
+        // interrupted process (or two verbs racing) leaves a corrupt file that
+        // every reader treats as "no session at all", permanently and silently
+        // (W14-2). rename() is atomic within a filesystem and replaces on both
+        // POSIX and Windows; if it fails for any reason we still fall back to a
+        // direct write rather than leaving the caller with no credential.
+        $tmp = $path.'.tmp'.getmypid();
+        if (@file_put_contents($tmp, $json) !== false) {
+            @chmod($tmp, 0600);
+            if (! @rename($tmp, $path)) {
+                @unlink($tmp);
+                file_put_contents($path, $json);
+            }
+        } else {
+            file_put_contents($path, $json);
+        }
         @chmod($path, 0600);
 
         // A delivered credential resolves the dropped-session state — the
         // renewal (or fresh commissioning) supersedes whatever was dropped.
         if (isset($data['token'])) {
             $this->clearSessionDropMarker();
+            $this->writeSessionBreadcrumb($data);
         }
     }
 
@@ -362,6 +430,78 @@ trait TalksToAgentApi
     protected function sessionDropPath(): string
     {
         return $this->agentTokenPath().'.dropped';
+    }
+
+    /**
+     * The BREADCRUMB: "this workspace held a live session against <base> at
+     * <time>, and here is who it was" (W14-1).
+     *
+     * The drop marker turns token death into a state, but it is written in
+     * exactly one place — the 401 handler — so it only ever describes a death
+     * the SERVER announced. Two production runs died another way: an actively
+     * used session lost its dotfile mid-run with no 401 and expiry hours away,
+     * which left no marker, so `session:status` reported the clean NONE
+     * zero-state and bare verbs silently served the local dev DB. A batch aimed
+     * at production ran against it.
+     *
+     * The breadcrumb closes that door by recording the TRANSITION rather than
+     * the cause: it is written whenever a token is delivered and outlives the
+     * token by design, so "had a session, now has neither token nor marker" is
+     * detectable no matter what removed the credential. Cleared only by a
+     * deliberate `dispatch:session:end` (the acknowledgment) or superseded by
+     * the drop marker, which carries strictly more information.
+     */
+    protected function sessionBreadcrumbPath(): string
+    {
+        return $this->agentTokenPath().'.session';
+    }
+
+    /**
+     * @param  array<string,mixed>  $data  the token dotfile contents just stored
+     */
+    protected function writeSessionBreadcrumb(array $data): void
+    {
+        $path = $this->sessionBreadcrumbPath();
+        $dir = dirname($path);
+        if (! is_dir($dir)) {
+            @mkdir($dir, 0700, true);
+        }
+
+        @file_put_contents($path, json_encode([
+            'at' => now()->toIso8601String(),
+            'base' => $this->agentBaseUrl(),
+            // Renewal identity, mirrored out of the dotfile so session:refresh
+            // can reproduce the request even when the dotfile is gone AND no
+            // marker was written — the exact hole W14-1 exists to cover.
+            'public_id' => $data['public_id'] ?? null,
+            'agent_name' => $data['agent_name'] ?? null,
+            'purpose' => $data['purpose'] ?? null,
+            'scopes' => $data['scopes'] ?? [],
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        @chmod($path, 0600);
+    }
+
+    /**
+     * @return array<string,mixed>|null
+     */
+    protected function sessionBreadcrumb(): ?array
+    {
+        $path = $this->sessionBreadcrumbPath();
+        if (! is_file($path)) {
+            return null;
+        }
+
+        $data = json_decode((string) file_get_contents($path), true);
+
+        return is_array($data) ? $data : null;
+    }
+
+    protected function clearSessionBreadcrumb(): void
+    {
+        $path = $this->sessionBreadcrumbPath();
+        if (is_file($path)) {
+            @unlink($path);
+        }
     }
 
     protected function markSessionDropped(string $reason): void

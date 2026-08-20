@@ -36,7 +36,7 @@ beforeEach(function () {
 afterEach(function () {
     $path = config('dispatch.agent.remote.token_path');
     if (is_string($path)) {
-        foreach ([$path, $path.'.dropped'] as $file) {
+        foreach ([$path, $path.'.dropped', $path.'.session'] as $file) {
             if (is_file($file)) {
                 @unlink($file);
             }
