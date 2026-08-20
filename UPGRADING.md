@@ -53,7 +53,80 @@ Quick diagnosis:
   directly (missing verb, unset secret, still-cached config) instead of leaving
   you to infer it from a `403`/`401`/`503`.
 
-## Unreleased (on `master`) — groups/teams as assignees (W13-4)
+## v0.9.0 — a session that dies without a 401 stops masquerading as local data
+
+**No migration, no config key, no asset republish.** One **behavior change** and
+one **exit-code change**, both in the same direction: a state that used to pass
+silently now stops you. Read this if anything of yours scripts the dispatch CLI.
+
+```bash
+composer update sgrjr/dispatch
+php artisan optimize:clear
+php artisan dispatch:doctor        # now reports the token dotfile too
+```
+
+**Why.** The v0.6.0 dropped-session guard keyed itself on the drop marker, and
+that marker is written in exactly one place: the 401 handler. A token that died
+any *other* way left no marker, so `dispatch:session:status` reported the clean
+NONE zero-state and bare verbs quietly fell back to the LOCAL dev DB — where
+production tasks look deleted and local throwaways look like the board. That
+happened twice in production, and once it aimed a `dispatch:batch` at the wrong
+database (it rolled back on a missing code; had those codes existed locally it
+would have written the wrong board and reported success).
+
+- **Bare verbs now REFUSE after an unexplained session loss.** A new breadcrumb
+  file records that this workspace held a live session; if the token is gone and
+  no drop marker explains it, sticky verbs fail loud (exit 1) instead of serving
+  local data. The message distinguishes **VANISHED** (no token, no 401) from
+  **UNREADABLE** (a token file that exists but does not parse), because the
+  recovery differs. `dispatch:edit` / `dispatch:merge` refuse on the same
+  transition.
+  - **Clear it deliberately:** `php artisan dispatch:session:end` acknowledges
+    the loss and restores local-by-default, exactly as it does for a drop.
+    `--local` remains the per-call override, and `dispatch.agent.remote.sticky=false`
+    stands the whole mechanism down.
+  - **Pre-existing sessions fail OPEN, once.** A token delivered by an older
+    version has no breadcrumb beside it, so the guard stays quiet for that
+    session and arms itself on the next token delivered. Nothing to do.
+
+- **`dispatch:session:status` exit codes changed.** Since v0.7.0 all three local
+  states exited 0. It now exits **1** in the two new failure states — a token
+  file that will not parse, and a session that vanished without a marker — while
+  ACTIVE / DROPPED / NONE keep their v0.7.0 codes. If you branch on this exit
+  code, treat non-zero as "do not proceed against the remote", which is what it
+  now means. The NONE line additionally **names the token path it searched**
+  (that path is resolved from ambient env on every invocation, so two shells can
+  disagree about where the session lives).
+
+- **`dispatch:doctor` gained an `agent_token` check** — resolved path, present /
+  absent / unreadable, and `expires_at`. It reports `error` for an unreadable
+  dotfile, so **a `--strict` CI invocation can now fail where it previously
+  passed**. That is the point: an unparseable credential was invisible to every
+  diagnostic the package had.
+
+- **A new sibling file appears beside the token dotfile:** `<token_path>.session`
+  (0600, same directory as the existing `.dropped` marker). Written whenever a
+  token is delivered, cleared by `dispatch:session:end`. If you back up, sync, or
+  clean that directory, treat it the way you treat the token itself. Related:
+  the token is now written **atomically** (temp file + rename), so an interrupted
+  write can no longer leave a corrupt dotfile behind — which was the reachable
+  mechanism for the failure above.
+
+- **`dispatch:schema`'s `context` description is longer.** The frozen JSON shape
+  is UNCHANGED — only the self-documenting description widened, to say that an
+  exception-filed task carries its whole incident under `context` (an agent that
+  read only `description` + `comments[]` declined a live bug whose `context`
+  already named its fix commit). No consumer action; parsers of the shape itself
+  are unaffected.
+
+**Skills:** both shipped `SKILL.md` copies changed (read `context` before
+declining a machine-filed task; "waiting on a deploy" is not a `verifying`
+check; `--commit` rides a `verifying` hand-off; `session:end` is a run boundary,
+not a filing boundary; never `2>&1` a `--json` verb). Hosts that published the
+skills should re-publish them — see *Re-publishing skills after an upgrade*
+below.
+
+## v0.8.1 — groups/teams as assignees (W13-4)
 
 **One migration (`000018`), no behavior change for existing data.** Tasks gain a
 nullable `assignee_group` naming a key of the new `dispatch.groups` config map
@@ -66,7 +139,7 @@ opt into the group hook by defining `taskAssignedGroup(Task, ?string $from,
 string $to, ?Authenticatable $actor)` — duck-typed, like `watcherAdded`, so
 not defining it simply sends nothing.
 
-## Unreleased (on `master`) — the visibility gates: participants-by-default, no public tasks (W13-5)
+## v0.8.1 — the visibility gates: participants-by-default, no public tasks (W13-5)
 
 **One migration (`000017`) and a deliberate BEHAVIOR INVERSION** — read this
 before upgrading a host with real users.
@@ -110,7 +183,7 @@ What DOES change:
   shows a customer only the submissions whose "Visible to submitter/customer"
   toggle is on.
 
-## Unreleased (on `master`) — `dispatch:edit` / `dispatch:merge` refuse to write the wrong database
+## v0.8.1 — `dispatch:edit` / `dispatch:merge` refuse to write the wrong database
 
 **No migration, no config change.** One **behavior change** worth knowing before
 you upgrade, because it turns a silent success into a loud failure.
