@@ -67,45 +67,83 @@ class AgentSessionService
 
     /**
      * Approve a pending session. Grants a server-bounded scope set: the caller's
-     * explicit scopes, else the ones requested at request-time, else the full
-     * allowlist — always intersected with `agent.verbs` (an explicit [] grants
-     * nothing).
+     * explicit scopes (what the approver kept in the UI), else the ones requested
+     * at request-time, else the full allowlist — see resolveGrant().
      *
      * @param  array<int,string>|null  $scopes
      */
     public function approve(AgentSession $session, int $userId, ?int $ttl = null, ?array $scopes = null): AgentSession
     {
-        // Default to the package's KNOWN_VERBS (not []) when the host's published
-        // config omits `agent.verbs` — otherwise a stale published config would
-        // make the null-request grant path (below) grant nothing at all. A host
-        // that HAS configured verbs still gets exactly that array (GAP-3 trap).
-        $allowed = (array) config('dispatch.agent.verbs', self::KNOWN_VERBS);
-
-        $requested = $scopes ?? ($session->requested_meta['scopes'] ?? null);
-
-        if ($requested === null) {
-            // No explicit request → grant exactly the host's configured allowlist.
-            $granted = $allowed;
-        } else {
-            // Explicit request → intersect with the grant CEILING: the host
-            // allowlist UNIONED with the package's KNOWN_VERBS, minus any explicit
-            // `agent.disabled_verbs`. This lets a verb the package actually ships
-            // survive even when a stale *published* config omits it (GAP-3), while
-            // a host can still withhold one via the denylist. An explicit []
-            // requested still grants nothing (intersect of an empty set).
-            $ceiling = array_diff(
-                array_unique(array_merge($allowed, self::KNOWN_VERBS)),
-                (array) config('dispatch.agent.disabled_verbs', [])
-            );
-            $granted = array_values(array_intersect(array_map('strval', (array) $requested), $ceiling));
-        }
-
-        $session->scopes = $granted;
+        $session->scopes = $this->resolveGrant($scopes ?? ($session->requested_meta['scopes'] ?? null));
         $session->save();
 
         $session->approve($userId, $ttl ?? (int) config('dispatch.agent.session_ttl', 10800));
 
         return $session;
+    }
+
+    /**
+     * Turn a requested scope set into the grant it actually yields. Null (nothing
+     * named) grants the host's whole allowlist; anything explicit is intersected
+     * with the ceiling, so an explicit [] grants nothing.
+     *
+     * Public because the approval UI pre-checks exactly this set: the human sees
+     * the grant they are about to make, not a re-derivation of it.
+     *
+     * @param  array<int,string>|null  $requested
+     * @return array<int,string>
+     */
+    public function resolveGrant(?array $requested): array
+    {
+        if ($requested === null) {
+            return $this->defaultGrant();
+        }
+
+        return array_values(array_intersect(array_map('strval', $requested), $this->grantCeiling()));
+    }
+
+    /**
+     * What a request that named NO scopes is granted: the host's configured
+     * allowlist, falling back to the package's KNOWN_VERBS (not []) when a
+     * published `config/dispatch.php` omits `agent.verbs` — otherwise a stale
+     * published config would make that path grant nothing at all (GAP-3 trap).
+     *
+     * @return array<int,string>
+     */
+    public function defaultGrant(): array
+    {
+        return array_values(array_map('strval', (array) config('dispatch.agent.verbs', self::KNOWN_VERBS)));
+    }
+
+    /**
+     * The ceiling every EXPLICITLY requested scope is bounded by: the host
+     * allowlist UNIONED with the package's KNOWN_VERBS, minus any explicit
+     * `agent.disabled_verbs`. The union lets a verb the package actually ships
+     * survive a stale published config (GAP-3); the denylist is how a host still
+     * withholds one. Public because the approval UI has to show the human which
+     * of the requested scopes are actually grantable — it must not re-derive
+     * this rule (two copies of a ceiling is how one of them drifts).
+     *
+     * @return array<int,string>
+     */
+    public function grantCeiling(): array
+    {
+        return array_values(array_diff(
+            array_unique(array_merge($this->defaultGrant(), self::KNOWN_VERBS)),
+            array_map('strval', (array) config('dispatch.agent.disabled_verbs', []))
+        ));
+    }
+
+    /**
+     * Is this scope one of the board verbs the package ships a route for, as
+     * opposed to a host-defined capability sharing the same column? The two are
+     * different vocabularies (Centerpoint's `app.*` tool-surface scopes are the
+     * live example), and the approver has to be able to tell them apart before
+     * consenting. KNOWN_VERBS is the package-owned answer for its own half.
+     */
+    public static function isBoardVerb(string $scope): bool
+    {
+        return in_array($scope, self::KNOWN_VERBS, true);
     }
 
     public function deny(AgentSession $session): AgentSession

@@ -31,6 +31,20 @@ function pendingAgentSession(string $name = 'claude-remote'): AgentSession
     return AgentSession::where('public_id', $req['public_id'])->firstOrFail();
 }
 
+/**
+ * A pending session that NAMED its scopes — the `requested_meta.scopes` shape
+ * AgentSessionController writes when the CLI was run with `--scope=…`.
+ *
+ * @param  array<int,string>  $scopes
+ */
+function pendingScopedSession(array $scopes, string $name = 'claude-scoped'): AgentSession
+{
+    $svc = app(AgentSessionService::class);
+    $req = $svc->request($name, 'work the backlog', ['scopes' => $scopes]);
+
+    return AgentSession::where('public_id', $req['public_id'])->firstOrFail();
+}
+
 test('approve with the session-length select untouched applies the config default TTL', function () {
     $this->actingAs(dispatchMakeUser(1));
 
@@ -145,4 +159,158 @@ test('a non-staff user is blocked from approving — the action aborts 403 (cust
     expect($fresh->status)->toBe('pending')
         ->and($fresh->approved_at)->toBeNull()
         ->and($fresh->expires_at->timestamp)->toBe($session->expires_at->timestamp); // request-ttl window untouched
+});
+
+/*
+ * TASK-749: the approval was blind — the pending card showed an agent name, a
+ * purpose and a TTL, never the scopes being handed over. These drive the
+ * consent card and the per-scope checkboxes that now feed the `$scopes`
+ * argument AgentSessionService::approve() already accepted.
+ */
+
+test('the pending card shows the scopes the agent requested', function () {
+    $this->actingAs(dispatchMakeUser(1));
+
+    pendingScopedSession(['next', 'claim', 'done']);
+
+    Livewire::test(AgentSessions::class)
+        ->assertSee('Board verbs')
+        ->assertSee('as requested by the agent')
+        ->assertSee('claim')
+        ->assertSee('done');
+});
+
+test('a scope-less request still shows the approver the default allowlist it is about to grant', function () {
+    $this->actingAs(dispatchMakeUser(1));
+
+    config(['dispatch.agent.verbs' => ['next', 'queue', 'claim']]);
+    pendingAgentSession();
+
+    // The blind case that made this a task: the agent named nothing, so the
+    // grant comes from config — the human must still see what that is.
+    Livewire::test(AgentSessions::class)
+        ->assertSee('the default allowlist (the agent named none)')
+        ->assertSee('queue');
+});
+
+test('host capability scopes are rendered in their own group, not mixed in with board verbs', function () {
+    $this->actingAs(dispatchMakeUser(1));
+
+    // Centerpoint's live shape: `app.*` tool-surface scopes sharing the column
+    // with board verbs. They are a different vocabulary and must read as one.
+    config(['dispatch.agent.verbs' => ['next', 'claim', 'done', 'app.read', 'app.write', 'app.destructive']]);
+    pendingScopedSession(['claim', 'done', 'app.write', 'app.destructive']);
+
+    Livewire::test(AgentSessions::class)
+        ->assertSee('Board verbs')
+        ->assertSee('Application capabilities')
+        ->assertSee('app.destructive')
+        ->assertSeeInOrder(['Board verbs', 'Application capabilities']);
+});
+
+test('a requested scope outside the allowlist is shown as not grantable', function () {
+    $this->actingAs(dispatchMakeUser(1));
+
+    config(['dispatch.agent.verbs' => ['next', 'claim']]);
+    pendingScopedSession(['claim', 'app.destructive']);
+
+    Livewire::test(AgentSessions::class)
+        ->assertSee('Requested but not grantable here')
+        ->assertSee('app.destructive');
+});
+
+test('approving untouched grants exactly what it did before the checkboxes existed', function () {
+    $this->actingAs(dispatchMakeUser(1));
+
+    config(['dispatch.agent.verbs' => ['next', 'queue', 'claim', 'app.read', 'app.write']]);
+    $session = pendingAgentSession();
+
+    // The seeded selection must not turn a scope-less request into an explicit
+    // one: `requested_meta.scopes` stays absent, and the grant stays the whole
+    // allowlist. A host keying its own rules on that distinction (Centerpoint's
+    // AgentAuthority::grantFor) depends on it.
+    Livewire::test(AgentSessions::class)
+        ->call('approve', $session->id);
+
+    $fresh = $session->fresh();
+    expect($fresh->status)->toBe('approved')
+        ->and($fresh->scopes)->toEqualCanonicalizing(['next', 'queue', 'claim', 'app.read', 'app.write'])
+        ->and($fresh->requested_meta['scopes'] ?? null)->toBeNull();
+});
+
+test('unchecking a capability narrows the grant that is actually recorded', function () {
+    $this->actingAs(dispatchMakeUser(1));
+
+    config(['dispatch.agent.verbs' => ['next', 'claim', 'done', 'app.read', 'app.write']]);
+    $session = pendingScopedSession(['next', 'claim', 'done', 'app.read', 'app.write']);
+
+    // The approver keeps the board verbs and the read capability, drops the write.
+    Livewire::test(AgentSessions::class)
+        ->set('approveScopes.'.$session->id, ['next', 'claim', 'done', 'app.read'])
+        ->call('approve', $session->id);
+
+    $fresh = $session->fresh();
+    expect($fresh->status)->toBe('approved')
+        ->and($fresh->scopes)->toEqualCanonicalizing(['next', 'claim', 'done', 'app.read'])
+        ->and($fresh->scopes)->not->toContain('app.write');
+});
+
+test('the approver cannot check a scope past the server ceiling', function () {
+    $this->actingAs(dispatchMakeUser(1));
+
+    config(['dispatch.agent.verbs' => ['next', 'claim']]);
+    $session = pendingScopedSession(['next', 'claim']);
+
+    // A tampered form posting a scope the instance never allows is still bounded
+    // by AgentSessionService::grantCeiling() — the UI narrows, it never widens.
+    Livewire::test(AgentSessions::class)
+        ->set('approveScopes.'.$session->id, ['next', 'claim', 'app.destructive'])
+        ->call('approve', $session->id);
+
+    expect($session->fresh()->scopes)->toEqualCanonicalizing(['next', 'claim']);
+});
+
+test('each pending row keeps its own scope selection — narrowing one does not narrow another', function () {
+    $this->actingAs(dispatchMakeUser(1));
+
+    config(['dispatch.agent.verbs' => ['next', 'claim', 'done']]);
+    $a = pendingScopedSession(['next', 'claim', 'done'], 'agent-a');
+    $b = pendingScopedSession(['next', 'claim', 'done'], 'agent-b');
+
+    Livewire::test(AgentSessions::class)
+        ->set('approveScopes.'.$a->id, ['next'])
+        ->call('approve', $b->id);
+
+    expect($b->fresh()->scopes)->toEqualCanonicalizing(['next', 'claim', 'done'])
+        ->and($a->fresh()->status)->toBe('pending');
+});
+
+test('clearing every box approves a session that grants nothing, and the card says so', function () {
+    $this->actingAs(dispatchMakeUser(1));
+
+    config(['dispatch.agent.verbs' => ['next', 'claim']]);
+    $session = pendingScopedSession(['next', 'claim']);
+
+    Livewire::test(AgentSessions::class)
+        ->set('approveScopes.'.$session->id, [])
+        ->assertSee('grants nothing')
+        ->call('approve', $session->id);
+
+    expect($session->fresh()->scopes)->toBe([]);
+});
+
+test('the seeded boxes render pre-checked — Livewire does not set checkbox state client-side', function () {
+    $this->actingAs(dispatchMakeUser(1));
+
+    config(['dispatch.agent.verbs' => ['next', 'claim', 'app.read']]);
+    $session = pendingScopedSession(['next', 'claim', 'app.read']);
+
+    // A `wire:model` checkbox is rendered by the SERVER; without @checked the
+    // card would show every scope unticked while the component state says the
+    // opposite, and the first re-render would then narrow the grant to nothing.
+    $html = Livewire::test(AgentSessions::class)->html();
+
+    foreach (['next', 'claim', 'app.read'] as $scope) {
+        expect($html)->toContain('value="'.$scope.'" wire:model="approveScopes.'.$session->id.'" checked');
+    }
 });

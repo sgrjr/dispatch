@@ -30,6 +30,19 @@ class AgentSessions extends Component
      */
     public array $approveTtl = [];
 
+    /**
+     * Per-approval scope selection (TASK-749), keyed by session id → the scope
+     * strings still checked on that row. render() seeds each key with exactly
+     * what approve() WOULD grant if left alone, so the checkboxes are a picture
+     * of the pending grant rather than a second opinion about it; approve()
+     * passes null when the selection is untouched, keeping the service's
+     * request-time semantics (and any host rule keyed on `requested_meta`)
+     * byte-identical to the pre-checkbox behaviour.
+     *
+     * @var array<int,array<int,string>>
+     */
+    public array $approveScopes = [];
+
     public function mount(): void
     {
         if (! app(DispatchGate::class)->isStaff(Auth::user())) {
@@ -49,7 +62,7 @@ class AgentSessions extends Component
         // apply its config default; any preset passes straight through as the TTL.
         $ttl = (int) ($this->approveTtl[$id] ?? 0) ?: null;
 
-        app(AgentSessionService::class)->approve($session, (int) Auth::id(), $ttl);
+        app(AgentSessionService::class)->approve($session, (int) Auth::id(), $ttl, $this->selectedScopes($session));
     }
 
     public function deny(int $id): void
@@ -68,6 +81,88 @@ class AgentSessions extends Component
         $session = AgentSession::query()->findOrFail($id);
 
         app(AgentSessionService::class)->revoke($session);
+    }
+
+    /**
+     * The scopes this row's approver kept, or null when they never touched the
+     * boxes.
+     *
+     * Null is load-bearing, not laziness: the service treats a scope-less
+     * REQUEST (`requested_meta.scopes` absent) differently from an explicit
+     * list, and a host can key its own rules on that same distinction —
+     * Centerpoint's `AgentAuthority::grantFor()` reads `requested_meta` to keep
+     * tool capabilities read-only unless the agent asked for them. Handing the
+     * service a synthesised array for an untouched form would silently convert
+     * every "no scopes named" request into an explicit one. So: only speak when
+     * the human actually changed something.
+     *
+     * @return array<int,string>|null
+     */
+    protected function selectedScopes(AgentSession $session): ?array
+    {
+        if (! array_key_exists($session->id, $this->approveScopes)) {
+            return null;
+        }
+
+        $selected = array_values(array_unique(array_map('strval', (array) $this->approveScopes[$session->id])));
+        $seeded = $this->pendingGrant($session);
+
+        sort($selected);
+        $sortedSeed = $seeded;
+        sort($sortedSeed);
+
+        // Untouched (still exactly the seeded grant) → stay silent, as above.
+        return $selected === $sortedSeed ? null : $selected;
+    }
+
+    /**
+     * What approve() would grant this pending session right now, with nobody
+     * intervening. Asked of the service so the UI can never drift from the rule
+     * it is depicting.
+     *
+     * @return array<int,string>
+     */
+    protected function pendingGrant(AgentSession $session): array
+    {
+        $requested = $session->requested_meta['scopes'] ?? null;
+
+        return app(AgentSessionService::class)->resolveGrant(
+            $requested === null ? null : array_map('strval', (array) $requested)
+        );
+    }
+
+    /**
+     * The consent card for one pending row (TASK-749): what the agent asked for,
+     * split by vocabulary, plus anything it asked for that is not grantable here.
+     *
+     * The split matters because `scopes` is one column carrying two languages —
+     * the package's board verbs (`claim`, `done`, `batch`) and whatever
+     * capability names the host has added alongside them (Centerpoint's `app.*`
+     * tool-surface scopes). Rendered as one undifferentiated list, "done" and
+     * "app.destructive" look like the same kind of thing to the person clicking
+     * Approve. They are not.
+     *
+     * @return array{explicit:bool, board:array<int,string>, extension:array<int,string>, ungrantable:array<int,string>}
+     */
+    protected function scopeCard(AgentSession $session): array
+    {
+        $requested = $session->requested_meta['scopes'] ?? null;
+        $explicit = $requested !== null;
+
+        $grantable = $this->pendingGrant($session);
+
+        // Only an explicit request can name something ungrantable; the implicit
+        // default is drawn from the allowlist and is grantable by construction.
+        $ungrantable = $explicit
+            ? array_values(array_diff(array_unique(array_map('strval', (array) $requested)), $grantable))
+            : [];
+
+        return [
+            'explicit' => $explicit,
+            'board' => array_values(array_filter($grantable, fn ($s) => AgentSessionService::isBoardVerb($s))),
+            'extension' => array_values(array_filter($grantable, fn ($s) => ! AgentSessionService::isBoardVerb($s))),
+            'ungrantable' => $ungrantable,
+        ];
     }
 
     public function render()
@@ -99,8 +194,20 @@ class AgentSessions extends Component
             ->limit(10)
             ->get();
 
+        // Seed each pending row's checkboxes with the grant it would receive
+        // untouched, so the form shows the actual decision. Seeding here (not in
+        // mount) also covers rows that appear while the page is open.
+        $cards = [];
+        foreach ($pending as $session) {
+            $cards[$session->id] = $this->scopeCard($session);
+            if (! array_key_exists($session->id, $this->approveScopes)) {
+                $this->approveScopes[$session->id] = $this->pendingGrant($session);
+            }
+        }
+
         return view('dispatch::livewire.agent-sessions', [
             'pending' => $pending,
+            'scopeCards' => $cards,
             'active' => $active,
             'ended' => $ended,
             'metrics' => $this->metricsSummary($active->concat($ended)),

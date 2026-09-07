@@ -29,6 +29,45 @@
         .dispatch-agent-ttl { display: flex; flex-direction: column; gap: 0.2rem; }
         .dispatch-agent-ttl label { font-size: 0.72rem; color: var(--dispatch-text-muted); }
         .dispatch-agent-ttl .dispatch-select { width: auto; font-size: 0.78rem; padding: 0.35rem 0.5rem; }
+
+        /* Requested-scope consent card (TASK-749). The approver has to be able
+           to answer "what am I handing over?" before clicking Approve, and the
+           two vocabularies sharing the `scopes` column are separated visually
+           because they are not the same kind of thing. */
+        .dispatch-agent-scopes { margin-top: 0.6rem; }
+        .dispatch-agent-scopes > summary {
+            cursor: pointer;
+            font-size: 0.74rem;
+            color: var(--dispatch-text-muted);
+            list-style: none;
+        }
+        .dispatch-agent-scopes > summary::-webkit-details-marker { display: none; }
+        .dispatch-scope-group { margin-top: 0.5rem; }
+        .dispatch-scope-group-label {
+            font-size: 0.68rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--dispatch-text-muted);
+        }
+        .dispatch-scope-group-note { font-size: 0.7rem; color: var(--dispatch-text-muted); margin-top: 0.1rem; }
+        .dispatch-scope-list { display: flex; flex-wrap: wrap; gap: 0.35rem 0.9rem; margin-top: 0.3rem; }
+        .dispatch-scope {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.76rem;
+            color: var(--dispatch-text);
+        }
+        .dispatch-scope input { margin: 0; }
+        .dispatch-scope.is-ungrantable { color: var(--dispatch-text-muted); text-decoration: line-through; }
+        /* The elevated vocabulary gets a rule down its side, not just a heading —
+           a capability group is the thing an approver most needs to notice. */
+        .dispatch-scope-group.is-elevated {
+            border-left: 3px solid var(--dispatch-warning);
+            padding-left: 0.6rem;
+        }
     </style>
 
     <section class="dispatch-card">
@@ -56,6 +95,73 @@
                         <div class="dispatch-agent-meta">
                             ip: {{ $session->ip ?? 'unknown' }} &middot; requested {{ $session->created_at?->diffForHumans() }}
                         </div>
+
+                        {{-- What this approval actually grants (TASK-749). Open by
+                             default: an approver who has to click to find out what
+                             they are consenting to is still consenting blind. --}}
+                        @php($card = $scopeCards[$session->id] ?? ['explicit' => false, 'board' => [], 'extension' => [], 'ungrantable' => []])
+                        @php($selected = $approveScopes[$session->id] ?? [])
+                        <details class="dispatch-agent-scopes" open>
+                            <summary>
+                                Grants {{ count($card['board']) + count($card['extension']) }} scope(s) &mdash;
+                                {{ $card['explicit'] ? 'as requested by the agent' : 'the default allowlist (the agent named none)' }}
+                            </summary>
+
+                            @if ($card['board'])
+                                <div class="dispatch-scope-group">
+                                    <div class="dispatch-scope-group-label">Board verbs</div>
+                                    <div class="dispatch-scope-group-note">Read and write this backlog: tasks, notes, claims, closures.</div>
+                                    <div class="dispatch-scope-list">
+                                        @foreach ($card['board'] as $scope)
+                                            <label class="dispatch-scope">
+                                                <input type="checkbox" value="{{ $scope }}" wire:model="approveScopes.{{ $session->id }}" @checked(in_array($scope, $selected, true))>
+                                                {{ $scope }}
+                                            </label>
+                                        @endforeach
+                                    </div>
+                                </div>
+                            @endif
+
+                            @if ($card['extension'])
+                                <div class="dispatch-scope-group is-elevated">
+                                    <div class="dispatch-scope-group-label">
+                                        Application capabilities
+                                        <span class="dispatch-badge is-warning">review</span>
+                                    </div>
+                                    <div class="dispatch-scope-group-note">
+                                        Not board verbs &mdash; these are capabilities this application added to the same grant.
+                                        They act on your authority as the approver.
+                                    </div>
+                                    <div class="dispatch-scope-list">
+                                        @foreach ($card['extension'] as $scope)
+                                            <label class="dispatch-scope">
+                                                <input type="checkbox" value="{{ $scope }}" wire:model="approveScopes.{{ $session->id }}" @checked(in_array($scope, $selected, true))>
+                                                {{ $scope }}
+                                            </label>
+                                        @endforeach
+                                    </div>
+                                </div>
+                            @endif
+
+                            @if ($card['ungrantable'])
+                                <div class="dispatch-scope-group">
+                                    <div class="dispatch-scope-group-label">Requested but not grantable here</div>
+                                    <div class="dispatch-scope-group-note">Outside this instance's allowlist &mdash; approving does not grant them.</div>
+                                    <div class="dispatch-scope-list">
+                                        @foreach ($card['ungrantable'] as $scope)
+                                            <span class="dispatch-scope is-ungrantable">{{ $scope }}</span>
+                                        @endforeach
+                                    </div>
+                                </div>
+                            @endif
+
+                            @if (empty($selected))
+                                <div class="dispatch-scope-group">
+                                    <span class="dispatch-badge is-warning">grants nothing</span>
+                                    <div class="dispatch-scope-group-note">Approving with no scope checked creates a session that can do nothing. Deny instead if that is what you mean.</div>
+                                </div>
+                            @endif
+                        </details>
                     </div>
                     <div class="dispatch-agent-actions">
                         <div class="dispatch-agent-ttl">
