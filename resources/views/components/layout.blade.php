@@ -74,9 +74,9 @@
         a { color: var(--dispatch-accent); text-decoration: none; }
         a:hover { color: var(--dispatch-accent-hover); text-decoration: underline; }
 
+        /* Fluid: the shell spans the full viewport (no max-width cap) so
+           the board's columns and the list's table use wide screens. */
         .dispatch-shell {
-            max-width: 1200px;
-            margin: 0 auto;
             padding: 1.5rem 1rem 4rem;
         }
         .dispatch-topbar {
