@@ -322,6 +322,15 @@ dispatch:merge  <loser> <winner> [--local] [--json]
                   union, both sides get a memorial, and the loser is soft-deleted
                   with duplicate_of / status stamped
 
+dispatch:labels [--unused] [--max-uses=N] [--json]
+                → the label vocabulary with how many tasks carry each, fewest
+                  first — --unused / --max-uses=1 narrow it to the noise
+
+dispatch:labels:replace <label>... --with=<canonical> [--dry-run] [--local] [--json]
+dispatch:labels:retire  <label>... [--dry-run] [--local] [--json]
+                → label cleanup across EVERY task (see "Cleaning up labels");
+                  local-only like merge — against production, use /labels
+
 dispatch:pull   [--path=] [--dry-run]
                 → fetch canonical task state from a remote Dispatch install
                   (dispatch.sync.remote_url / dispatch.sync.token) and import it locally
@@ -440,6 +449,35 @@ Steer the UI too: the board and list carry a focus switcher (`?focus=<id>`), a
 "save current filters as focus" action (it stores only the axes you actually
 constrained), and a staff-only `/focuses` page to rank, activate, rename, and
 delete them.
+
+**Cleaning up labels.** Every `--label`, batch op and create form mints a label
+on first use, so a long-lived backlog collects near-duplicates (`area:acct`,
+`accounts`, `area:accounts`) and one-off labels nobody will use again. The
+staff-only **`/labels`** page lists every label with how many tasks carry it
+(sortable fewest-first, filterable to *unused* / *used once* / *used ≤ N*, with a
+link to those tasks). Select any number of them, then:
+
+- **Replace** them with one canonical label — an existing label, or a new name.
+  Every task carrying any selected label carries the canonical one instead (a
+  task that already had it just loses the duplicate). A new name is created by
+  **renaming the most-used selection in place**, so it keeps that label's
+  color, description and kind. Each replaced name becomes an **alias** of the
+  canonical label (`dispatch_label_aliases`): the next `--label=area:acct`, batch
+  op or create form **attaches `area:accounts` instead of re-minting the old
+  label**, and `--label` filters on `next`/`queue`/`claim`/`find` resolve it the
+  same way. The page lists each label's aliases; drop one to free that name.
+- **Retire** them — detached from every task and deleted, no alias left behind
+  (a retired name that comes back later is simply a new label).
+
+Both work across **all** tasks, closed and soft-deleted included (so a restore
+can't bring a folded label back), rewrite any **focus** that names the label, and
+leave one **internal** timeline event on each live task whose chips changed —
+without touching its `updated_at`. A focus whose only labels are retired is
+**deactivated** rather than left with an empty label axis, which would mean
+"all labels" and silently widen it to the whole backlog. The same operations
+run from the CLI as `dispatch:labels:replace` / `dispatch:labels:retire` (with
+`--dry-run`); `dispatch:labels` is the read-only usage report. There is
+deliberately no agent verb — vocabulary cleanup is a staff decision.
 
 > **An epic is just a single-label focus now.** `Label::isEpic()` is gone — there
 > is no special epic type. Model an epic as an `epic:<slug>` elevated label plus a

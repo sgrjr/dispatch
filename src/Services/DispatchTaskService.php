@@ -11,6 +11,7 @@ use Illuminate\Support\Str;
 use Sgrjr\Dispatch\Contracts\SubmitterResolver;
 use Sgrjr\Dispatch\Contracts\TenantResolver;
 use Sgrjr\Dispatch\Models\AgentSession;
+use Sgrjr\Dispatch\Models\LabelAlias;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Support\AgentMetrics;
@@ -175,6 +176,9 @@ class DispatchTaskService
 
     /**
      * Attach the named labels to a task, creating any that don't exist yet.
+     * A name that label cleanup folded into a canonical label resolves to
+     * that label first (LabelAlias::canonicalize), so an old name never
+     * re-mints the label it replaced.
      *
      * @param  array<int,string>  $labelNames
      */
@@ -184,11 +188,7 @@ class DispatchTaskService
         $labelModel = config('dispatch.models.label');
 
         $labelIds = [];
-        foreach ($labelNames as $name) {
-            $name = trim((string) $name);
-            if ($name === '') {
-                continue;
-            }
+        foreach (LabelAlias::canonicalize($labelNames) as $name) {
             $labelIds[] = $labelModel::firstOrCreate(['name' => $name])->id;
         }
 
@@ -355,7 +355,7 @@ class DispatchTaskService
                 ->when($type, fn ($q, $type) => $q->where('type', $type))
                 ->when($label, fn ($q, $label) => $q->whereHas(
                     'labels',
-                    fn ($lq) => $lq->whereIn('name', (array) $label)
+                    fn ($lq) => $lq->whereIn('name', LabelAlias::canonicalize((array) $label))
                 ))
         ));
 
@@ -388,7 +388,7 @@ class DispatchTaskService
                 ->when($type, fn ($q, $type) => $q->where('type', $type))
                 ->when($label, fn ($q, $label) => $q->whereHas(
                     'labels',
-                    fn ($lq) => $lq->whereIn('name', (array) $label)
+                    fn ($lq) => $lq->whereIn('name', LabelAlias::canonicalize((array) $label))
                 ))
         ));
     }
@@ -446,7 +446,7 @@ class DispatchTaskService
                 ->when($type, fn ($q, $type) => $q->where('type', $type))
                 ->when($label, fn ($q, $label) => $q->whereHas(
                     'labels',
-                    fn ($lq) => $lq->whereIn('name', (array) $label)
+                    fn ($lq) => $lq->whereIn('name', LabelAlias::canonicalize((array) $label))
                 ))
         )->orderByDesc('updated_at')->orderByDesc('id');
     }
@@ -495,7 +495,7 @@ class DispatchTaskService
                         ->when($type, fn ($q, $type) => $q->where('type', $type))
                         ->when($label, fn ($q, $label) => $q->whereHas(
                             'labels',
-                            fn ($lq) => $lq->whereIn('name', (array) $label)
+                            fn ($lq) => $lq->whereIn('name', LabelAlias::canonicalize((array) $label))
                         ))
                 );
 

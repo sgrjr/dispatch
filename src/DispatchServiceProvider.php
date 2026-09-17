@@ -208,6 +208,8 @@ class DispatchServiceProvider extends ServiceProvider
             // Focus steering panel (roadmap W8-2) — ships in a later wave; the
             // foreach's class_exists guard keeps the provider booting until then.
             'dispatch-focus-panel' => \Sgrjr\Dispatch\Livewire\FocusPanel::class,
+            // Label cleanup (replace / retire across every task).
+            'dispatch-label-panel' => \Sgrjr\Dispatch\Livewire\LabelPanel::class,
         ];
 
         foreach ($components as $alias => $class) {
@@ -241,6 +243,9 @@ class DispatchServiceProvider extends ServiceProvider
             \Sgrjr\Dispatch\Console\Commands\DispatchImport::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchEdit::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchMerge::class,
+            \Sgrjr\Dispatch\Console\Commands\DispatchLabels::class,
+            \Sgrjr\Dispatch\Console\Commands\DispatchLabelsReplace::class,
+            \Sgrjr\Dispatch\Console\Commands\DispatchLabelsRetire::class,
             // Agent layer (Wave 1) — auto-register once the classes land.
             \Sgrjr\Dispatch\Console\Commands\DispatchClaim::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchBatch::class,

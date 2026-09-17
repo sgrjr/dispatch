@@ -13,6 +13,7 @@ class TaskComment extends Model
     public const EVENT_ASSIGNEE_CHANGE = 'assignee_change';
     public const EVENT_LABEL_ADDED = 'label_added';
     public const EVENT_LABEL_REMOVED = 'label_removed';
+    public const EVENT_LABEL_REPLACED = 'label_replaced';
     public const EVENT_PUBLIC_TOGGLE = 'is_public_toggle';
     public const EVENT_PROMOTED = 'promoted';
     public const EVENT_EXCEPTION = 'exception_occurrence';

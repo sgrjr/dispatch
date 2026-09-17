@@ -108,14 +108,16 @@ dispatch/                        # GitHub sgrjr/dispatch (local dir name varies)
       MetricsPresenter.php  AgentMetrics.php  TranscriptLocator.php  TranscriptMetrics.php  TouchTime.php
       DueDate.php  Groups.php  VisibilityGates.php  AssignableUsers.php  # due tri-state · config teams · the 3 gates · assignee list
       Markdown.php  LabelFacets.php  # elevated/meta label bucketing + lane-key derivation (v0.7.0)
-    Models/                      # Task · TaskComment · Label · TaskAttachment · AgentSession · Focus (via config('dispatch.models.*'))
+    Models/                      # Task · TaskComment · Label · TaskAttachment · AgentSession · Focus (via config('dispatch.models.*')) · LabelAlias
     Livewire/
       TaskBoard.php  TaskList.php  TaskShow.php  TaskCreate.php  TaskThread.php
       DispatchWidget.php          # Livewire capture (floating button + modal form)
       MySubmissions.php           # submitter portal: status of "my" dispatched tasks
       AgentSessions.php           # staff approval queue for agent sessions (§20) + "Recently ended" metrics
       FocusPanel.php              # /focuses — manage saved steering lenses (rank/activate/rename/delete)
-    Console/Commands/             # 24 verbs: Add/Pull/Next/Queue/Find/Show/Note/Done/Push/Export/Import/Edit/Merge
+      LabelPanel.php              # /labels — label cleanup: usage census, replace (→ alias) / retire across every task
+    Console/Commands/             # 27 verbs: Add/Pull/Next/Queue/Find/Show/Note/Done/Push/Export/Import/Edit/Merge
+                                  # + Labels/LabelsReplace/LabelsRetire (label cleanup, local-only)
                                   # + agent loop: Claim/Batch/Schema/Session{Request,Status,Refresh,End}/SessionsPrune
                                   # + Metrics/MetricsCapture/Doctor
                                   # + Concerns/{TalksToAgentApi,ResolvesTextInput,GuardsLocalOnlyWrites}
@@ -160,7 +162,7 @@ dispatch/                        # GitHub sgrjr/dispatch (local dir name varies)
 
 `dispatch_task_comments` — event-typed timeline (comment / status_change / assignee_change / label_added|removed / is_public_toggle / promoted / exception_occurrence); `body` (**longText since v0.8.0** — migration `000015`; was `text`, whose 65,535-BYTE ceiling killed a whole batch transaction with SQLSTATE[22001]), `is_internal`, `notified_submitter` *(rupkeep's `sent_to_customer`, de-branded)*, `event_type`, `meta` (json)
 
-`dispatch_labels` — `name`, `color`, `description` (epics = `epic:*` naming convention) · `dispatch_task_label` pivot
+`dispatch_labels` — `name`, `color`, `description` (epics = `epic:*` naming convention) · `dispatch_task_label` pivot · `dispatch_label_aliases` (migration `000019` — `name` unique, `label_id` FK cascade: a name folded away by label cleanup that still resolves to its canonical label)
 
 `dispatch_task_attachments` **(core v0.1 — the headline improvement over rupkeep)**
 - `id`, `attachable_type` + `attachable_id` (morph: Task or TaskComment), `uploaded_by_user_id` (nullable)
@@ -873,6 +875,24 @@ Three migrations (**000016** watcher prefs · **000017** visibility + staff back
 - **W16-2** — the grant rule was extracted into `AgentSessionService::resolveGrant()` / `grantCeiling()` / `defaultGrant()` and made public, so the UI **asks** for the grant it depicts instead of re-deriving it. Two copies of a ceiling is how one of them drifts; the previous inline copy in `approve()` was already the only one, and it stays that way.
 
 *(AgentSessionsUiTest ×15 — the five pre-existing TTL/gate tests unchanged and green, plus: requested scopes rendered; the scope-less request still shown its default allowlist; the capability group separated and ordered after the board verbs; an ungrantable request surfaced; **approving untouched grants exactly what it did before the checkboxes existed**, with `requested_meta.scopes` still absent; unchecking narrows what is recorded; a tampered form cannot check past the ceiling; per-row selections don't leak; clearing every box grants nothing and says so; the seeded boxes render pre-checked. Package Testbench-green at **539 / 1847**.)*
+
+### 🏷️ Label hygiene — the vocabulary can be pruned, and a pruned name stays pruned (operator feature directive, 17th wave, 2026-09-17 — SHIPPED same-day)
+
+> Source: **operator directive**, not the inbox — *"labels are getting noisy after prolonged use and there are a lot of dangling 1-time-use labels that really should be converted into a canonical value or just dropped."* Verified before building: labels are minted on first use by every write path (`DispatchTaskService::attachLabels()` → `firstOrCreate`; reached from `add`/`done --label`, batch, capture, the create form and list bulk-label), and **nothing ever removed one** — no rename, no delete, no merge on any surface. `TaskShow` can detach a label from ONE task, but the `dispatch_labels` row lived on in every filter popover. Same pass: the operator asked for the layout's `max-width: 1200px` cap to go.
+
+- [x] **W17-1 [pkg · ⭐ HIGH] — replace: fold a selection of labels into one canonical label across every task.** `LabelCleanupService::replace()` re-points pivot rows (UPDATE, not re-insert, so the original attach time survives; a task already carrying the target just loses the duplicate row), soft-deleted tasks included so a restore can't resurrect a folded label. A target that doesn't exist yet is created by **renaming the most-used source in place**, keeping its color/description/kind.
+- [x] **W17-2 [pkg · ⭐ HIGH — the part that makes W17-1 stick] — a replaced name becomes an ALIAS, and every write and filter path resolves it.** Without this, cleanup is whack-a-mole: the next agent run's `--label=area:acct` re-mints the label the operator just folded away. New `dispatch_label_aliases` (migration `000019`); `LabelAlias::canonicalize()` runs inside `attachLabels()` and the four `--label` filter sites (`nextCandidate`/`queueQuery`/`searchQuery`/`claim`). Re-replacing a label re-points its aliases (a→b then b→c leaves a→c); a target named by an alias lands on its canonical label. Degrades to a pass-through when the table is missing, because `attachLabels()` sits on the exception-capture path and must keep filing tasks on a host that upgraded before migrating.
+- [x] **W17-3 [pkg] — retire: detach everywhere and delete, no alias.** A retired name that comes back is a new label, visible in the usage census.
+- [x] **W17-4 [pkg · the trap] — focuses name labels by string, so both operations rewrite them — and a retire that would EMPTY a focus's label axis deactivates the focus instead.** Focus storage rule: an absent/empty axis means *unconstrained*. Stripping a focus's last label would silently widen it from "area:accounts work" to "the whole backlog" while it stayed active and top-ranked — steering `next`/`claim` at everything. Deactivated and named in the result/preview instead.
+- [x] **W17-5 [pkg] — surfaces: staff `/labels` page + `dispatch:labels` / `dispatch:labels:replace` / `dispatch:labels:retire`.** The page: usage census (unused / used once, clickable), search (names and aliases), usage filter (0 / ≤1 / ≤3 / ≤5), fewest-first sort, per-row task-count link into the list, multi-select with "select all shown", a live preview (tasks changing, how many already carry the target, whether the target exists, focuses a retire would deactivate) and confirm dialogs, plus alias removal. The CLI mirrors it with `--dry-run`; the write commands are **local-only** behind `GuardsLocalOnlyWrites` (dry runs exempt). **No agent verb, deliberately** — vocabulary cleanup is a staff decision, outside the curated-verb posture.
+- [x] **W17-6 [pkg · audit] — one INTERNAL timeline event per live task whose chips changed** (`label_replaced` — new, added to `schema().event_types` — or `label_removed` with `meta.retired`), written without touching `updated_at` so a cleanup doesn't make the backlog look freshly worked. A selected label that is also the target generates nothing on its own tasks.
+- [x] **W17-7 [ui] — the page shell is fluid.** `.dispatch-shell` lost its `max-width: 1200px` / `margin: 0 auto`; board columns and list rows now use the full viewport.
+
+**Status: SHIPPED (2026-09-17).** **One migration (`000019`), no config key, no published-asset change.** Gate: `DispatchGate::isStaff()`, the same as `/focuses` — labels are shared vocabulary like focuses, but a replace/retire touches tasks the acting staff member may not be able to SEE under the W13 visibility gates. **Open decision for the operator:** tighten the page's write actions to `canSeeAll()` (centerpoint: administrators only)? Not done by default because the package `DefaultGate` returns `false` for everyone, which would make the feature unusable out of the box.
+
+*Known edges, not built:* `dispatch:import` / sync `apply` create labels by name directly (a replication path, not an attach), so importing a snapshot taken before a cleanup re-mints the old names — re-run the replace. A board/list bookmark with `?labels=<old name>` drops the stale name like any unknown label (pre-existing behavior) rather than resolving the alias. Aliases are not part of the export/sync snapshot.
+
+*(LabelCleanupTest ×17 — replace into an existing label, events + untouched `updated_at`, rename-in-place keeps attributes, aliases resolve on attach AND `--label` filter, alias chains re-point, target-in-selection is silent, soft-deleted tasks move, focus rewrite, retire + aliases gone, retire deactivates an emptied focus, preview writes nothing, blank target refused, `dispatch:labels` census/`--max-uses`, replace `--dry-run` + alias-name refusal, all-or-nothing name resolution, retire `--json`, local-only guard + `--local` + dry-run exemption. LabelPanelTest ×7 — census + fewest-first, filters, replace, retire, select-all-shown, alias removal, route/nav/non-staff redirect. Package Testbench-green at **563 / 1983**.)*
 
 ### 🧩 Product-completeness gaps (confirmed — fill over time)
 From a completeness review, verified against code. **The core batch below shipped this session** (Wave 0 foundation + Wave 1 surfaces).

@@ -93,8 +93,10 @@ properly-quoted string.
 setup required. Sensible starting conventions:
 - `source:agent` — you noticed it during work
 - `source:customer` — relayed from a user/customer
-- `area:<area>` — check this project's existing labels (`dispatch:queue` or
-  the board) before inventing a new one; reuse what's already there
+- `area:<area>` — check this project's existing labels (`dispatch:labels` lists
+  them with usage, or the board) before inventing a new one; reuse what's
+  already there. A near-duplicate you mint becomes a one-off label someone has
+  to clean up at `/labels` later
 - `epic:<slug>` — an epic is now just a single-label **Focus**: tag it with an
   `epic:<slug>` label and manage the steering lens at `/focuses`. There is no
   special epic type anymore.

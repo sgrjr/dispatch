@@ -289,6 +289,8 @@
                     // Focuses is a staff management surface (W8-2) — same gate as
                     // the page itself, route-existence-checked like agent-sessions.
                     $dispatchShowFocuses = \Illuminate\Support\Facades\Route::has('dispatch.focuses') && $dispatchNavIsStaff;
+                    // Labels cleanup — staff vocabulary maintenance, same gate.
+                    $dispatchShowLabels = \Illuminate\Support\Facades\Route::has('dispatch.labels') && $dispatchNavIsStaff;
                 @endphp
                 <a href="{{ route('dispatch.board') }}" @class(['is-active' => request()->routeIs('dispatch.board')])>Board</a>
                 <a href="{{ route('dispatch.index') }}" @class(['is-active' => request()->routeIs('dispatch.index')])>List</a>
@@ -296,6 +298,9 @@
                 <a href="{{ route('dispatch.portal') }}" @class(['is-active' => request()->routeIs('dispatch.portal')])>My Submissions</a>
                 @if ($dispatchShowFocuses)
                     <a href="{{ route('dispatch.focuses') }}" @class(['is-active' => request()->routeIs('dispatch.focuses')])>Focuses</a>
+                @endif
+                @if ($dispatchShowLabels)
+                    <a href="{{ route('dispatch.labels') }}" @class(['is-active' => request()->routeIs('dispatch.labels')])>Labels</a>
                 @endif
                 @if ($dispatchShowAgent)
                     <a href="{{ route('dispatch.agent-sessions') }}" @class(['is-active' => request()->routeIs('dispatch.agent-sessions')])>

@@ -242,6 +242,7 @@ class TaskPresenter
                 TaskComment::EVENT_ASSIGNEE_CHANGE,
                 TaskComment::EVENT_LABEL_ADDED,
                 TaskComment::EVENT_LABEL_REMOVED,
+                TaskComment::EVENT_LABEL_REPLACED,
                 TaskComment::EVENT_PUBLIC_TOGGLE,
                 TaskComment::EVENT_PROMOTED,
                 TaskComment::EVENT_EXCEPTION,

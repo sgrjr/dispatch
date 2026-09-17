@@ -49,4 +49,10 @@ if (class_exists(\Sgrjr\Dispatch\Livewire\FocusPanel::class)) {
     Route::get('/focuses', \Sgrjr\Dispatch\Livewire\FocusPanel::class)->name('focuses');
 }
 
+// Staff "Labels" cleanup surface — replace/retire labels across every task.
+// Same class_exists registration guard as the two staff pages above.
+if (class_exists(\Sgrjr\Dispatch\Livewire\LabelPanel::class)) {
+    Route::get('/labels', \Sgrjr\Dispatch\Livewire\LabelPanel::class)->name('labels');
+}
+
 Route::get('/{task:code}', TaskShow::class)->name('show');

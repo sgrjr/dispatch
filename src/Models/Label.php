@@ -4,6 +4,7 @@ namespace Sgrjr\Dispatch\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Sgrjr\Dispatch\Support\LabelFacets;
 
 class Label extends Model
@@ -29,6 +30,15 @@ class Label extends Model
     public function tasks(): BelongsToMany
     {
         return $this->belongsToMany(config('dispatch.models.task'), 'dispatch_task_label')->withTimestamps();
+    }
+
+    /**
+     * Old names that were folded into this label by label cleanup and still
+     * resolve to it. See {@see LabelAlias}.
+     */
+    public function aliases(): HasMany
+    {
+        return $this->hasMany(LabelAlias::class, 'label_id');
     }
 
     /**

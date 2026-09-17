@@ -53,6 +53,36 @@ Quick diagnosis:
   directly (missing verb, unset secret, still-cached config) instead of leaving
   you to infer it from a `403`/`401`/`503`.
 
+## Unreleased — label cleanup (`/labels`) + a full-width layout
+
+**One migration, no config key, no asset republish.**
+
+```bash
+composer update sgrjr/dispatch
+php artisan migrate              # 000019: dispatch_label_aliases
+php artisan optimize:clear
+```
+
+- **New staff page `/labels`** (route `dispatch.labels`, linked in the nav for
+  staff) and commands `dispatch:labels`, `dispatch:labels:replace`,
+  `dispatch:labels:retire`. Replace folds labels into a canonical one across
+  every task and leaves the old names as **aliases**; retire removes labels
+  everywhere. See README → "Cleaning up labels".
+- **Label names now resolve through aliases** wherever a label is attached
+  (`dispatch:add`/`done --label`, batch, capture, the create form, list bulk
+  label) or filtered (`--label` on `next`/`queue`/`claim`/`find`). Nothing
+  changes until someone replaces a label — the alias table starts empty. If the
+  migration hasn't run yet, resolution is skipped rather than failing, so task
+  capture keeps working in the window between `composer update` and `migrate`.
+- **New timeline event type `label_replaced`** (internal) — it appears in
+  `dispatch:schema`'s `event_types`. Anything that switches exhaustively on
+  `event_type` should expect it.
+- **The page shell no longer caps its width** (`.dispatch-shell` lost
+  `max-width: 1200px; margin: 0 auto`). To restore the old cap, add that rule to
+  your own stylesheet after the package's.
+- Host with a **custom `DispatchGate`**: both the page and its write actions are
+  gated on `isStaff()`, like `/focuses`.
+
 ## v0.9.0 — a session that dies without a 401 stops masquerading as local data
 
 **No migration, no config key, no asset republish.** One **behavior change** and
