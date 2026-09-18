@@ -9,6 +9,7 @@ use Sgrjr\Dispatch\Contracts\SubmitterResolver;
 use Sgrjr\Dispatch\Jobs\CreateDispatchTask;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
+use Sgrjr\Dispatch\Support\Anchor;
 use Throwable;
 
 /**
@@ -28,7 +29,9 @@ class DispatchManager
      * The simple, straightforward entry point.
      *
      * @param  array<string,mixed>  $options  type, priority, description,
-     *         labels[], public, context[], key (dedupe), signature, submitter
+     *         labels[], public, context[], key (dedupe), signature, submitter,
+     *         topic / origin ("<type>[:<id>]" anchor strings) and
+     *         conversation (int) — see the anchor fields (TASK-995)
      */
     public function report(string $title, array $options = []): ?Task
     {
@@ -52,6 +55,9 @@ class DispatchManager
     public function fromException(Throwable $e, array $options = []): ?Task
     {
         $options['type'] ??= 'bug';
+        // Where the task came FROM (TASK-995): an exception, unless the caller
+        // says otherwise. No id — the signature already identifies the error.
+        $options['origin'] ??= 'exception';
         $options['signature'] ??= $this->signatureFor($e);
         $options['labels'] = array_values(array_unique(array_merge(
             $options['labels'] ?? [],
@@ -105,6 +111,8 @@ class DispatchManager
                 'context' => array_merge($this->baseContext($captureRequest), $options['context'] ?? []),
             ];
 
+            $attributes += $this->anchorAttributes($options);
+
             $labels = (array) ($options['labels'] ?? []);
 
             if ($this->shouldQueue()) {
@@ -134,6 +142,43 @@ class DispatchManager
 
             return null;
         }
+    }
+
+    /**
+     * The anchor options (TASK-995) as task attributes: `topic` / `origin` are
+     * "<type>[:<id>]" strings through Anchor::parse (the one parser), and
+     * `conversation` is the home conversation id. A malformed anchor is logged
+     * and DROPPED — never the report itself: losing an exception report over a
+     * bad topic string would be the worse failure.
+     *
+     * @param  array<string,mixed>  $options
+     * @return array<string,mixed>
+     */
+    protected function anchorAttributes(array $options): array
+    {
+        $attributes = [];
+
+        foreach (['topic', 'origin'] as $anchor) {
+            if (empty($options[$anchor])) {
+                continue;
+            }
+
+            try {
+                [$attributes[$anchor.'_type'], $attributes[$anchor.'_id']] = Anchor::parse((string) $options[$anchor]);
+            } catch (Throwable $e) {
+                try {
+                    logger()->warning("DispatchTask reporter dropped a malformed {$anchor}: ".$e->getMessage());
+                } catch (Throwable $ignored) {
+                    // ignore
+                }
+            }
+        }
+
+        if (! empty($options['conversation'])) {
+            $attributes['conversation_id'] = (int) $options['conversation'];
+        }
+
+        return $attributes;
     }
 
     protected function enabled(): bool

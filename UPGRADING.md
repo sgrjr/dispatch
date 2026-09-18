@@ -94,6 +94,11 @@ php artisan optimize:clear
   `topic_label`/`topic_url`/`origin_label`/`origin_url` on the full shape
   only. A client that reads the shape positionally (rather than by key) will
   break — everyone else is unaffected.
+- **The reporter carries anchors too**: `DispatchTask::report()` /
+  `bug()` / `feature()` / `fromException()` accept `topic` and `origin`
+  (`"<type>[:<id>]"` strings) and `conversation` (int) options. A malformed
+  anchor is logged and dropped — never the report. `fromException()` now
+  records `origin_type = exception` unless the caller names another origin.
 - **Backfill**: the same migration sets `origin_type` from a few pre-existing
   `source:*` labels (`source:exception`, `source:contact-form`,
   `source:email`) wherever `origin_type` is still null. Idempotent, and never

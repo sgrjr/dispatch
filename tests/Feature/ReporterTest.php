@@ -267,3 +267,42 @@ test('the stack header says plainly whether frames were dropped', function () {
     expect($clipped->description)->toContain('first 3 of ')
         ->and($whole->description)->not->toContain('first ');
 });
+
+test('report() stamps the topic, origin and conversation anchors it is given', function () {
+    config(['dispatch.reporter.throttle_seconds' => 0]);
+
+    $task = DispatchTask::report('Customer reported a problem', [
+        'topic' => 'account:0402100000001',
+        'origin' => 'contact_form:77',
+        'conversation' => 12,
+    ]);
+
+    expect($task->topic_type)->toBe('account');
+    expect($task->topic_id)->toBe('0402100000001');
+    expect($task->origin_type)->toBe('contact_form');
+    expect($task->origin_id)->toBe('77');
+    expect($task->conversation_id)->toBe(12);
+});
+
+test('a malformed anchor is dropped, never the report', function () {
+    config(['dispatch.reporter.throttle_seconds' => 0]);
+
+    $task = DispatchTask::report('Still filed', ['topic' => 'Not A Type:1', 'origin' => 'phone']);
+
+    expect($task)->toBeInstanceOf(Task::class);
+    expect($task->topic_type)->toBeNull();
+    expect($task->origin_type)->toBe('phone');
+    expect($task->origin_id)->toBeNull();
+});
+
+test('fromException() records the exception as the origin unless the caller names another', function () {
+    config(['dispatch.reporter.throttle_seconds' => 0]);
+
+    $task = DispatchTask::fromException(new RuntimeException('origin default '.uniqid()));
+    expect($task->origin_type)->toBe('exception');
+    expect($task->origin_id)->toBeNull();
+
+    $named = DispatchTask::fromException(new RuntimeException('origin named '.uniqid()), ['origin' => 'contact_form:9']);
+    expect($named->origin_type)->toBe('contact_form');
+    expect($named->origin_id)->toBe('9');
+});
