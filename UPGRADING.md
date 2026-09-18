@@ -53,6 +53,55 @@ Quick diagnosis:
   directly (missing verb, unset secret, still-cached config) instead of leaving
   you to infer it from a `403`/`401`/`503`.
 
+## Unreleased — anchor fields (topic / origin / conversation)
+
+**One migration, two new contract seams, no breaking change.**
+
+```bash
+composer update sgrjr/dispatch
+php artisan migrate              # 000020: topic_type/topic_id/topic_account_key,
+                                  #         origin_type/origin_id, conversation_id
+php artisan optimize:clear
+```
+
+- **Six new nullable columns on `dispatch_tasks`**: `topic_type`/`topic_id`
+  (what a task is ABOUT) + the stamped `topic_account_key` rollup,
+  `origin_type`/`origin_id` (where it came FROM, write-once once set),
+  `conversation_id` (its home conversation/arc). Nothing changes until a
+  caller starts writing them — see README → "Anchor fields".
+- **Two new contract seams**: `TopicResolver` / `OriginResolver`
+  (`dispatch.contracts.topic` / `.origin`), both defaulting to a no-op Null
+  implementation. If your published `config/dispatch.php` predates this
+  release, the shallow `mergeConfigFrom` means these keys are simply absent
+  from your `contracts` array — the package falls back to the Null resolvers
+  in code either way, so this is safe to skip; republish (`--force`) only if
+  you want the keys visible for editing.
+- **New model API on `Task`**: `$task->topic` / `$task->origin` (a lazily-
+  resolved `Anchor` value object), `setTopic()` / `setOrigin()`, the
+  `conversation()` relation (throws until `dispatch.models.conversation` is
+  set — nothing calls it unconfigured), and scopes `aboutTopic()`,
+  `fromOrigin()`, `inConversation()`, `aboutAccount()`. If you subclass `Task`
+  and override `booted()`, add `parent::booted()` — that's where the
+  `topic_account_key` restamp and origin write-once guard live.
+- **New CLI flags**: `dispatch:add --topic= --origin= --conversation=`;
+  `dispatch:next`/`queue`/`find`/`claim` gain the same three plus
+  `--topic-account=` as filters, local AND `--remote`. New batch-op fields
+  `topic`/`origin`/`topic_type`/`topic_id`/`origin_type`/`origin_id`/
+  `conversation_id` (tri-state like `due_at`).
+- **The agent JSON contract (`dispatch:schema`) gained fields, never lost
+  any**: `topic_type`, `topic_id`, `topic_account_key`, `origin_type`,
+  `origin_id`, `conversation_id` on both the summary and full shapes;
+  `topic_label`/`topic_url`/`origin_label`/`origin_url` on the full shape
+  only. A client that reads the shape positionally (rather than by key) will
+  break — everyone else is unaffected.
+- **Backfill**: the same migration sets `origin_type` from a few pre-existing
+  `source:*` labels (`source:exception`, `source:contact-form`,
+  `source:email`) wherever `origin_type` is still null. Idempotent, and never
+  overwrites an origin already set.
+- **Visibility is unchanged**: `topic_account_key` is never consulted by
+  `DispatchGate::scopeVisible()` — the anchor fields cannot widen who sees a
+  task, pinned by a test.
+
 ## Unreleased — label cleanup (`/labels`) + a full-width layout
 
 **One migration, no config key, no asset republish.**

@@ -105,16 +105,18 @@ DISPATCH_USER_MODEL=App\Models\User
 
 ---
 
-## 3. The three contract bindings
+## 3. The contract bindings
 
-Dispatch has exactly three seams a consuming app can (and usually should)
-override. All three are bound in `config/dispatch.php` under `contracts`:
+Dispatch's portability seams are bound in `config/dispatch.php` under
+`contracts`:
 
 ```php
 'contracts' => [
     'gate' => Sgrjr\Dispatch\Support\DefaultGate::class,
     'tenant' => Sgrjr\Dispatch\Support\NullTenantResolver::class,
     'submitter' => Sgrjr\Dispatch\Support\AuthSubmitterResolver::class,
+    'topic' => Sgrjr\Dispatch\Support\NullTopicResolver::class,
+    'origin' => Sgrjr\Dispatch\Support\NullOriginResolver::class,
 ],
 ```
 
@@ -123,6 +125,11 @@ override. All three are bound in `config/dispatch.php` under `contracts`:
 | **DispatchGate** | `Sgrjr\Dispatch\Contracts\DispatchGate` | `DefaultGate` — any authenticated user is staff and sees everything; guests see only `is_public` tasks | Who may use the staff board/list/CLI (`isStaff`), who's a superuser (`canSeeAll`), and — critically — the **one** query scope (`scopeVisible`) every task query in the package is passed through |
 | **TenantResolver** | `Sgrjr\Dispatch\Contracts\TenantResolver` | `NullTenantResolver` — no-op | Stamps your app's tenant column(s) onto a task at creation time (it never filters queries — your `DispatchGate` does that, using this resolver internally if it needs to) |
 | **SubmitterResolver** | `Sgrjr\Dispatch\Contracts\SubmitterResolver` | `AuthSubmitterResolver` — current auth id, or the lowest-id user for system/CLI captures | Who a task is attributed to when there's no clear actor |
+| **TopicResolver** | `Sgrjr\Dispatch\Contracts\TopicResolver` | `NullTopicResolver` — no-op | Resolves a task's `topic_type`/`topic_id` anchor (what it's ABOUT) into a model/label/URL, and stamps the `topic_account_key` rollup. See "Anchor fields" below |
+| **OriginResolver** | `Sgrjr\Dispatch\Contracts\OriginResolver` | `NullOriginResolver` — no-op | Resolves a task's `origin_type`/`origin_id` anchor (where it came FROM) into a model/label/URL. See "Anchor fields" below |
+
+Neither TopicResolver nor OriginResolver ever filters a query or widens
+visibility — that stays exclusively `DispatchGate::scopeVisible()`'s job.
 
 The shipped `DefaultGate` is fine for a small single-team app where "logged
 in" == "staff". Most real installs split staff from submitters — bind your
@@ -535,7 +542,8 @@ the drop. Hosts opt out of sticky remote with
 ### Agent-CLI verbs
 
 ```
-dispatch:claim  {code?} {--type=} {--label=*} {--assignee=} {--no-focus} {--json} {--remote} {--local}
+dispatch:claim  {code?} {--type=} {--label=*} {--topic=} {--origin=} {--conversation=}
+                {--topic-account=} {--assignee=} {--no-focus} {--json} {--remote} {--local}
                 → atomically claim an actionable task: marks it in_progress +
                   assigns it in one transaction, so two agents (or an agent and
                   a human) never grab the same task. With no argument it claims
@@ -546,25 +554,30 @@ dispatch:claim  {code?} {--type=} {--label=*} {--assignee=} {--no-focus} {--json
                   code exits non-zero.
 
 dispatch:add    {title} ... {--description=} {--description-file=} {--key=} {--due=}
-                {--remote} {--local}
+                {--topic=} {--origin=} {--conversation=} {--remote} {--local}
                 → idempotent create: pass --key=<dedupe key> and a re-run
                   with the same key returns the existing task instead of
                   creating a duplicate. --description-file=PATH (or `-` for
                   stdin) reads a long body from a file instead of inline.
                   --due=<date> files the task with a due date already on it —
                   parseable date/time, e.g. 2026-08-15 or "+3 days", resolved
-                  on the agent's clock and sent as ISO 8601
+                  on the agent's clock and sent as ISO 8601.
+                  --topic/--origin/--conversation set the ANCHOR fields at
+                  creation — see "Anchor fields" below
 
-dispatch:next   {--status=} {--type=} {--label=*} {--no-focus} {--json} {--remote} {--local}
-dispatch:queue  {--status=} {--type=} {--label=*} {--limit=} {--count} {--json} {--remote} {--local}
-                → filter to only agent-appropriate work, e.g. --label agent:ok;
-                  --limit=N caps the rows to the top N of the priority order so
-                  a triage preview needn't pull the whole backlog; --count returns
-                  {total, by_status} instead of the list — with no --status it
-                  censuses the actionable board (open/in_progress/triage/
-                  verifying, zero-filled, so an empty verifying bucket still
-                  prints; parked backburner and terminal done/declined excluded)
-                  — the true backlog size without probing --limit
+dispatch:next   {--status=} {--type=} {--label=*} {--topic=} {--origin=}
+                {--conversation=} {--topic-account=} {--no-focus} {--json} {--remote} {--local}
+dispatch:queue  {--status=} {--type=} {--label=*} {--topic=} {--origin=}
+                {--conversation=} {--topic-account=} {--limit=} {--count} {--json} {--remote} {--local}
+                → filter to only agent-appropriate work, e.g. --label agent:ok
+                  or --topic=account:0402100000001; --limit=N caps the rows to
+                  the top N of the priority order so a triage preview needn't
+                  pull the whole backlog; --count returns {total, by_status}
+                  instead of the list — with no --status it censuses the
+                  actionable board (open/in_progress/triage/verifying,
+                  zero-filled, so an empty verifying bucket still prints;
+                  parked backburner and terminal done/declined excluded) —
+                  the true backlog size without probing --limit
 
 dispatch:done   {code} {--status=} {--commit=} {--result=} {--result-file=}
                 {--label=*} {--due=} {--with-metrics} {--since=} {--json}
@@ -589,7 +602,8 @@ dispatch:done   {code} {--status=} {--commit=} {--result=} {--result-file=}
                   existing date, and omitting the flag leaves it untouched.
                   Either way the change lands on the task's timeline
 
-dispatch:find   {term} {--status=} {--type=} {--label=*} {--limit=}
+dispatch:find   {term} {--status=} {--type=} {--label=*} {--topic=} {--origin=}
+                {--conversation=} {--topic-account=} {--limit=}
                 {--json} {--remote} {--local}
                 → text search across title, code, and description — the "does
                   this already exist?" verb. Spans ALL statuses by default,
@@ -1091,6 +1105,124 @@ Event::listen(function (TaskCreated $event) {
 
 This is what turns "a bug got filed" into "an agent picked it up
 automatically" — no polling loop required on the listening side.
+
+---
+
+## 9. Anchor fields (topic / origin / conversation)
+
+Three optional, all-nullable columns beyond the workflow fields — what a task
+is **ABOUT**, where it came **FROM**, and its home **conversation/arc**:
+
+| Column | Meaning | Editable? |
+|---|---|---|
+| `topic_type` / `topic_id` | What the task is ABOUT — an account, a plan, a title, an order, … | Yes, any time |
+| `topic_account_key` | A STORED rollup of the topic's account, stamped by your `TopicResolver` whenever the topic changes | **Never set directly** — read-only |
+| `origin_type` / `origin_id` | Where the task came FROM — a chat message, a customer note, an exception, a contact-form submission, or an out-of-band channel (`email`, `phone`, `in_person`) | **Write-once** — settable only while `origin_type` is null |
+| `conversation_id` | The home conversation/arc (a plain int; no FK — you own that table) | Yes, any time |
+
+**Wire syntax.** Every CLI flag, agent API param, and batch shorthand string
+uses the same `"<type>:<id>"` format, parsed by the one parser in the package
+(`Sgrjr\Dispatch\Support\Anchor::parse()`): split on the **first** colon only
+(an id may itself contain colons), and `"<type>"` alone (no colon) is that
+type with a null id — for out-of-band channels like `phone` or `in_person`.
+The type must match `^[a-z][a-z0-9_]{0,31}$`.
+
+**Reading an anchor** — never parse the columns yourself:
+
+```php
+$task->topic;    // ?Anchor — type, id, label(), url(), model() — or null
+$task->origin;   // same shape, through your OriginResolver
+$task->topic?->label();  // resolver calls are LAZY — nothing runs until you ask
+```
+
+**Writing an anchor:**
+
+```php
+$task->setTopic('account', '0402100000001');  // stamps topic_account_key immediately
+$task->setTopic(null, null);                  // clears the topic (and the account key)
+
+$task->setOrigin('phone', null);              // fine — origin_type was null
+$task->setOrigin('email', 'msg-42');          // throws LogicException — origin already set
+```
+
+A `saving` hook on `Task` restamps `topic_account_key` and re-checks origin's
+write-once invariant on **every** write path (batch, agent API, CLI,
+Livewire, a raw attribute assignment) — `setTopic()`/`setOrigin()` are a
+convenience, not the only place these rules are enforced. If you subclass
+`Task` and override `booted()`, call `parent::booted()` or you'll lose both.
+
+**Query scopes:**
+
+```php
+Task::aboutTopic('account', '0402100000001');  // id omitted matches ANY id of that type
+Task::fromOrigin('phone');
+Task::inConversation(42);
+Task::aboutAccount('0402100000001');           // by the topic_account_key rollup
+```
+
+**CLI + agent API.** `dispatch:add` takes `--topic=`, `--origin=`,
+`--conversation=` at creation; `dispatch:next`/`queue`/`find`/`claim` take the
+same three plus `--topic-account=` as filters (agent API query params:
+`topic`, `origin`, `conversation`, `topic_account` — identical syntax). The
+agent JSON shape carries all six columns flat on both the summary and full
+views; the full view additionally resolves `topic_label`/`topic_url`/
+`origin_label`/`origin_url` (resolver calls happen only there, never per-row
+in a list).
+
+**Batch ops** (`dispatch:batch` / `POST agent/batch`) accept the shorthand
+`topic`/`origin` strings, or the explicit `topic_type`+`topic_id` /
+`origin_type`+`origin_id` pair, plus `conversation_id` — all tri-state like
+`due_at` (key absent = untouched, `null` = clear). An `update` op that tries
+to change an already-set `origin` fails the WHOLE batch with a clear
+validation error naming the operation, exactly like any other bad op.
+
+**Binding your own resolvers:**
+
+```php
+// config/dispatch.php
+'contracts' => [
+    'topic' => App\Support\Dispatch\AccountTopicResolver::class,
+    'origin' => App\Support\Dispatch\AppOriginResolver::class,
+],
+```
+
+```php
+class AccountTopicResolver implements \Sgrjr\Dispatch\Contracts\TopicResolver
+{
+    public function resolve(string $type, string $id): mixed
+    {
+        return $type === 'account' ? Account::find($id) : null;
+    }
+
+    public function label(string $type, string $id): string
+    {
+        return $this->resolve($type, $id)?->name ?? "{$type} {$id}";
+    }
+
+    public function url(string $type, string $id): ?string
+    {
+        return $type === 'account' ? route('accounts.show', $id) : null;
+    }
+
+    public function accountKey(string $type, string $id): ?string
+    {
+        return $type === 'account' ? $id : null;
+    }
+}
+```
+
+**Visibility.** Neither anchor ever widens who can see a task — a task whose
+`topic_account_key` happens to equal a customer's own account is **not**
+thereby visible to that customer. `DispatchGate::scopeVisible()` remains the
+one and only visibility scope in the system, and it never consults
+`topic_account_key`.
+
+**Migration.** One new package migration
+(`2026_01_01_000020_add_anchor_fields_to_dispatch_tasks_table.php`) adds all
+six columns (all nullable — nothing changes until you start writing them) and
+backfills `origin_type` from a few pre-existing `source:*` labels
+(`source:exception` → `exception`, `source:contact-form` → `contact_form`,
+`source:email` → `email`), only where `origin_type` is still null.
 
 ---
 

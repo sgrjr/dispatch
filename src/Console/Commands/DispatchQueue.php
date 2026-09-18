@@ -21,6 +21,10 @@ class DispatchQueue extends Command
         {--status= : Restrict to a single status (default: open, in_progress, triage)}
         {--type= : Filter to a single type}
         {--label=* : Filter to tasks carrying any of these labels}
+        {--topic= : Filter to tasks whose topic matches "<type>[:<id>]" (id omitted matches any id of that type)}
+        {--origin= : Filter to tasks whose origin matches "<type>[:<id>]"}
+        {--conversation= : Filter to tasks in this conversation id}
+        {--topic-account= : Filter to tasks whose topic_account_key equals this value}
         {--limit= : Cap the number of tasks returned, top of the priority order (default: all). For the single-task case use dispatch:next.}
         {--count : Emit counts by status (total + by_status) instead of the task list. With no --status it censuses the actionable board (open/in_progress/triage/verifying; parked backburner and terminal done/declined excluded), zero-filled — an empty bucket (e.g. verifying) still prints as 0.}
         {--remote : Act on the configured remote agent API (the default while an agent session token is active)}
@@ -48,6 +52,12 @@ class DispatchQueue extends Command
                 'label' => $this->option('label'),
                 'limit' => $limit,
                 'count' => $this->option('count') ? 1 : null,
+                // Anchor wire strings travel RAW — the server re-parses them
+                // with the same Anchor::parse().
+                'topic' => $this->option('topic'),
+                'origin' => $this->option('origin'),
+                'conversation' => $this->option('conversation'),
+                'topic_account' => $this->option('topic-account'),
             ]));
 
             if ($r === null) {
@@ -101,9 +111,21 @@ class DispatchQueue extends Command
         $filters = array_filter([
             'type' => $this->option('type'),
             'label' => $this->option('label'),
+            'topic' => $this->option('topic'),
+            'origin' => $this->option('origin'),
+            'conversation' => $this->option('conversation'),
+            'topic_account' => $this->option('topic-account'),
         ]);
 
-        $tasks = $tasks->queueQuery($filters, $this->option('status'))
+        try {
+            $query = $tasks->queueQuery($filters, $this->option('status'));
+        } catch (\InvalidArgumentException $e) {
+            $this->error($e->getMessage());
+
+            return self::FAILURE;
+        }
+
+        $tasks = $query
             ->when($limit, fn ($q) => $q->limit($limit))
             ->get();
 

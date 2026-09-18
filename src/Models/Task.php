@@ -10,6 +10,9 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\QueryException;
+use Sgrjr\Dispatch\Contracts\OriginResolver;
+use Sgrjr\Dispatch\Contracts\TopicResolver;
+use Sgrjr\Dispatch\Support\Anchor;
 
 class Task extends Model
 {
@@ -58,6 +61,14 @@ class Task extends Model
         'context',
         'due_at',
         'duplicate_of',
+        // TASK-995 anchor fields. `topic_account_key` is deliberately NOT
+        // fillable — it is a STORED rollup only the `saving` hook (via the
+        // bound TopicResolver) may set; see restampTopicAccountKey().
+        'topic_type',
+        'topic_id',
+        'origin_type',
+        'origin_id',
+        'conversation_id',
     ];
 
     protected $casts = [
@@ -65,7 +76,24 @@ class Task extends Model
         'position' => 'integer',
         'context' => 'array',
         'due_at' => 'datetime',
+        'conversation_id' => 'integer',
     ];
+
+    /**
+     * TASK-995 — restamp `topic_account_key` on every save that touches the
+     * topic, and guard origin's write-once invariant on every save
+     * regardless of which write path (batch, agent API, CLI, Livewire, raw
+     * attribute assignment) got there. This is the package's own `booted()` —
+     * a host subclass that overrides `booted()` MUST call `parent::booted()`
+     * or lose both.
+     */
+    protected static function booted(): void
+    {
+        static::saving(function (self $task) {
+            $task->restampTopicAccountKeyIfDirty();
+            $task->guardOriginImmutability();
+        });
+    }
 
     /**
      * Stable morph alias so polymorphic attachments keep working even when a
@@ -74,6 +102,183 @@ class Task extends Model
     public function getMorphClass(): string
     {
         return 'dispatch_task';
+    }
+
+    /**
+     * The home conversation/arc, when the host has configured one
+     * (`dispatch.models.conversation`). No FK is declared in the package
+     * migration — the host owns that table, if it has one at all.
+     *
+     * @throws \LogicException when no conversation model is configured. Callers
+     *                         that don't know whether one is configured should
+     *                         check `config('dispatch.models.conversation')`
+     *                         first rather than catch this.
+     */
+    public function conversation(): BelongsTo
+    {
+        $model = config('dispatch.models.conversation');
+
+        if ($model === null) {
+            throw new \LogicException(
+                'No conversation model configured (dispatch.models.conversation) — Task::conversation() is unavailable until a host sets it.'
+            );
+        }
+
+        return $this->belongsTo($model, 'conversation_id');
+    }
+
+    /**
+     * The topic anchor (TASK-995, R10) — what this task is ABOUT — lazily
+     * resolved through the bound TopicResolver, or null when no topic is set.
+     * Callers never touch `topic_type`/`topic_id` or the resolver directly.
+     */
+    public function getTopicAttribute(): ?Anchor
+    {
+        if ($this->topic_type === null) {
+            return null;
+        }
+
+        return new Anchor($this->topic_type, $this->topic_id, app(TopicResolver::class));
+    }
+
+    /**
+     * The origin anchor (TASK-995, R10) — where this task came FROM — lazily
+     * resolved through the bound OriginResolver, or null when no origin is
+     * set.
+     */
+    public function getOriginAttribute(): ?Anchor
+    {
+        if ($this->origin_type === null) {
+            return null;
+        }
+
+        return new Anchor($this->origin_type, $this->origin_id, app(OriginResolver::class));
+    }
+
+    /**
+     * Set (or change) the task's topic. `topic_account_key` is restamped
+     * immediately (not only at save time) so code reading it back before
+     * save() sees the current rollup; the `saving` hook restamps again for
+     * every OTHER write path, so this method is a convenience, not the only
+     * way the rollup stays honest. A null `$type` clears the topic (and its
+     * id and account key) entirely.
+     */
+    public function setTopic(?string $type, ?string $id): void
+    {
+        $this->topic_type = $type;
+        $this->topic_id = $type !== null ? $id : null;
+        $this->restampTopicAccountKey();
+    }
+
+    /**
+     * Set the task's origin. Origin is WRITE-ONCE (R16a): freely settable
+     * while `origin_type` is null, rejected once it's set to anything else —
+     * this is the primary enforcement point; guardOriginImmutability() in the
+     * `saving` hook is the belt for any path that bypasses this method.
+     *
+     * @throws \LogicException when origin is already set to a different value.
+     */
+    public function setOrigin(?string $type, ?string $id): void
+    {
+        $id = $type !== null ? $id : null;
+
+        if ($this->origin_type !== null && ($this->origin_type !== $type || $this->origin_id !== $id)) {
+            $was = $this->origin_type.($this->origin_id !== null ? ":{$this->origin_id}" : '');
+
+            throw new \LogicException("Task origin is immutable once set (was `{$was}`).");
+        }
+
+        $this->origin_type = $type;
+        $this->origin_id = $id;
+    }
+
+    /**
+     * Restamp `topic_account_key` from the CURRENT topic_type/topic_id via the
+     * bound TopicResolver — null when the topic is cleared or the resolver has
+     * nothing for it. Unconditional (always recomputes): called directly by
+     * setTopic() for its immediate, read-your-write effect, where an isDirty()
+     * check would be unreliable (two setTopic() calls before any save() both
+     * compare against the same unsynced `original`, so a set-then-clear can
+     * look like a no-op change even though the value truly changed).
+     */
+    protected function restampTopicAccountKey(): void
+    {
+        if ($this->topic_type === null) {
+            $this->topic_account_key = null;
+
+            return;
+        }
+
+        $this->topic_account_key = app(TopicResolver::class)->accountKey($this->topic_type, (string) $this->topic_id);
+    }
+
+    /**
+     * The `saving` hook's entry point: restamps only when topic_type/topic_id
+     * is actually dirty relative to the row's last-synced state, so a save
+     * that never touches the topic never pays for a resolver call. Safe here
+     * (unlike inside setTopic()) because a genuine mutation on an already-
+     * loaded/created row always shows up as dirty at save time.
+     */
+    protected function restampTopicAccountKeyIfDirty(): void
+    {
+        if ($this->isDirty(['topic_type', 'topic_id'])) {
+            $this->restampTopicAccountKey();
+        }
+    }
+
+    /**
+     * The write-once backstop (R16a): once `origin_type` has a value ON THE
+     * ROW (getOriginal — i.e. it survived a prior save), any save that would
+     * change origin_type or origin_id is rejected. A brand-new, not-yet-saved
+     * task has no "original" yet, so creation with an origin already set is
+     * always allowed. This is the "belt" for callers that bypass setOrigin()
+     * (batch/API/CLI validate up front and should never reach it in practice).
+     */
+    protected function guardOriginImmutability(): void
+    {
+        $originalType = $this->getOriginal('origin_type');
+        if ($originalType === null) {
+            return;
+        }
+
+        if ($this->origin_type !== $originalType || $this->origin_id !== $this->getOriginal('origin_id')) {
+            throw new \LogicException("Task origin is immutable once set (was `{$originalType}`).");
+        }
+    }
+
+    /**
+     * Tasks whose topic is this exact type (+ id, when given). Omitting $id
+     * matches ANY id of that type.
+     */
+    public function scopeAboutTopic(Builder $query, string $type, ?string $id = null): Builder
+    {
+        return $query->where('topic_type', $type)
+            ->when($id !== null, fn (Builder $q) => $q->where('topic_id', $id));
+    }
+
+    /**
+     * Tasks whose origin is this exact type (+ id, when given). Omitting $id
+     * matches ANY id of that type (including channel-only rows with a null
+     * origin_id).
+     */
+    public function scopeFromOrigin(Builder $query, string $type, ?string $id = null): Builder
+    {
+        return $query->where('origin_type', $type)
+            ->when($id !== null, fn (Builder $q) => $q->where('origin_id', $id));
+    }
+
+    public function scopeInConversation(Builder $query, int $id): Builder
+    {
+        return $query->where('conversation_id', $id);
+    }
+
+    /**
+     * Tasks whose topic rolls up to this account key. NEVER a visibility
+     * scope — see VisibilityGates, which does not consult this column.
+     */
+    public function scopeAboutAccount(Builder $query, string $key): Builder
+    {
+        return $query->where('topic_account_key', $key);
     }
 
     public function submitter(): BelongsTo

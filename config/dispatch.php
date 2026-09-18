@@ -27,6 +27,13 @@ return [
         'label' => Label::class,
         'task_attachment' => TaskAttachment::class,
         'focus' => \Sgrjr\Dispatch\Models\Focus::class,
+
+        // TASK-995 — the home conversation/arc a task's `conversation_id`
+        // belongsTo. Package default null: Task::conversation() throws a
+        // clear LogicException until a host points this at its own model, and
+        // nothing in the package calls the relation unconfigured. No FK is
+        // added in the package migration either way — the host owns it.
+        'conversation' => null,
     ],
 
     /*
@@ -44,6 +51,13 @@ return [
         'tenant' => NullTenantResolver::class,
         'submitter' => AuthSubmitterResolver::class,
         'notifier' => MailNotifier::class,
+
+        // TASK-995 — the anchor seams. `topic` resolves `topic_type`/
+        // `topic_id` into a model/label/URL/account-key; `origin` resolves
+        // `origin_type`/`origin_id` into a model/label/URL. Neither ever
+        // filters a query or widens visibility — see DispatchGate for that.
+        'topic' => \Sgrjr\Dispatch\Support\NullTopicResolver::class,
+        'origin' => \Sgrjr\Dispatch\Support\NullOriginResolver::class,
     ],
 
     /*

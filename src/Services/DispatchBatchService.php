@@ -5,6 +5,7 @@ namespace Sgrjr\Dispatch\Services;
 use Illuminate\Support\Facades\DB;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
+use Sgrjr\Dispatch\Support\Anchor;
 use Sgrjr\Dispatch\Support\DueDate;
 
 /**
@@ -120,10 +121,10 @@ class DispatchBatchService
         $results = [];
 
         $run = function () use ($normalized, $actorMeta, $actorUserId, &$summary, &$results) {
-            foreach ($normalized as $op) {
+            foreach ($normalized as $i => $op) {
                 $results[] = $op['op'] === 'add'
                     ? $this->applyAdd($op, $actorMeta, $actorUserId, $summary)
-                    : $this->applyUpdate($op, $actorMeta, $actorUserId, $summary);
+                    : $this->applyUpdate($op, $actorMeta, $actorUserId, $summary, $i);
             }
         };
 
@@ -196,6 +197,9 @@ class DispatchBatchService
             $this->assertVocab($i, 'priority', $op['priority'] ?? null, Task::priorities());
             $this->assertVocab($i, 'status', $op['status'] ?? null, Task::statuses());
             $this->assertDueAt($i, $op);
+            $this->assertAnchorInput($i, $op, 'topic');
+            $this->assertAnchorInput($i, $op, 'origin');
+            $this->assertConversationId($i, $op);
 
             foreach (($op['comments'] ?? []) as $c) {
                 if (! is_array($c)) {
@@ -278,6 +282,98 @@ class DispatchBatchService
     }
 
     /**
+     * TASK-995 — validate a topic/origin field UP FRONT, same posture as
+     * assertDueAt(): a malformed shorthand string, or an invalid explicit
+     * `{$field}_type`, must fail before the transaction opens. Format-only —
+     * origin's WRITE-ONCE invariant can't be checked here (it needs the
+     * target task, which validate() never loads); that's enforced in
+     * applyUpdate() via Task::setOrigin().
+     *
+     * @param  array<string,mixed>  $op
+     */
+    protected function assertAnchorInput(int $i, array $op, string $field): void
+    {
+        if (array_key_exists($field, $op)) {
+            $value = $op[$field];
+            if ($value === null || $value === '') {
+                return; // an explicit clear — legal shorthand for topic; origin's
+                        // write-once rule is enforced at apply time.
+            }
+
+            try {
+                Anchor::parse((string) $value);
+            } catch (\InvalidArgumentException $e) {
+                throw new \InvalidArgumentException("Operation {$i}: `{$field}`: ".$e->getMessage());
+            }
+
+            return;
+        }
+
+        $typeKey = "{$field}_type";
+        if (array_key_exists($typeKey, $op) && $op[$typeKey] !== null
+            && ! preg_match('/^[a-z][a-z0-9_]{0,31}$/', (string) $op[$typeKey])) {
+            throw new \InvalidArgumentException(
+                "Operation {$i}: `{$typeKey}` must match ^[a-z][a-z0-9_]{0,31}\$."
+            );
+        }
+    }
+
+    /**
+     * @param  array<string,mixed>  $op
+     */
+    protected function assertConversationId(int $i, array $op): void
+    {
+        if (! array_key_exists('conversation_id', $op) || $op['conversation_id'] === null) {
+            return;
+        }
+
+        $value = $op['conversation_id'];
+        if (! is_int($value) && ! (is_string($value) && ctype_digit($value))) {
+            throw new \InvalidArgumentException("Operation {$i}: `conversation_id` must be an integer or null.");
+        }
+    }
+
+    /**
+     * TASK-995 — resolve a topic/origin field into `[type, id]` (a value),
+     * `[null, null]` (an explicit clear), or null (the field wasn't touched
+     * at all — check with anchorTouched() first). Already validated by
+     * assertAnchorInput(), so parsing here cannot throw.
+     *
+     * @param  array<string,mixed>  $op
+     * @return array{0:?string,1:?string}|null
+     */
+    protected function resolveAnchorInput(array $op, string $field): ?array
+    {
+        if (array_key_exists($field, $op)) {
+            $value = $op[$field];
+
+            return ($value === null || $value === '') ? [null, null] : Anchor::parse((string) $value);
+        }
+
+        $typeKey = "{$field}_type";
+        if (array_key_exists($typeKey, $op)) {
+            $type = $op[$typeKey];
+            if ($type === null) {
+                return [null, null];
+            }
+
+            $idKey = "{$field}_id";
+
+            return [(string) $type, array_key_exists($idKey, $op) && $op[$idKey] !== null ? (string) $op[$idKey] : null];
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  array<string,mixed>  $op
+     */
+    protected function anchorTouched(array $op, string $field): bool
+    {
+        return array_key_exists($field, $op) || array_key_exists("{$field}_type", $op);
+    }
+
+    /**
      * Insert a new task (defaulting to triage), or — when an idempotency `key`
      * resolves to an existing task — leave its fields untouched and only fold in
      * new labels/comments/result. New tasks carry a null submitter; their agent
@@ -326,6 +422,28 @@ class DispatchBatchService
             $attributes['due_at'] = DueDate::parseOrFail($op['due_at']);
         }
 
+        // TASK-995 — topic/origin/conversation are likewise part of CREATION,
+        // not a change: no timeline event, and a fresh task's origin is
+        // always writable regardless of what the op sends. Already validated
+        // (assertAnchorInput), so parsing here cannot throw.
+        if ($this->anchorTouched($op, 'topic')) {
+            [$topicType, $topicId] = $this->resolveAnchorInput($op, 'topic');
+            if ($topicType !== null) {
+                $attributes['topic_type'] = $topicType;
+                $attributes['topic_id'] = $topicId;
+            }
+        }
+        if ($this->anchorTouched($op, 'origin')) {
+            [$originType, $originId] = $this->resolveAnchorInput($op, 'origin');
+            if ($originType !== null) {
+                $attributes['origin_type'] = $originType;
+                $attributes['origin_id'] = $originId;
+            }
+        }
+        if (array_key_exists('conversation_id', $op) && $op['conversation_id'] !== null) {
+            $attributes['conversation_id'] = (int) $op['conversation_id'];
+        }
+
         $task = $key !== null
             ? $this->tasks->firstOrCreateByKey($key, $attributes, $labels)
             : $this->tasks->create($attributes, $labels);
@@ -351,9 +469,10 @@ class DispatchBatchService
      * @param  array<string,mixed>  $op
      * @param  array<string,mixed>  $actorMeta
      * @param  array<string,int>  $summary
+     * @param  int  $i  the operation's index in the manifest, for error messages
      * @return array<string,mixed>
      */
-    protected function applyUpdate(array $op, array $actorMeta, ?int $actorUserId, array &$summary): array
+    protected function applyUpdate(array $op, array $actorMeta, ?int $actorUserId, array &$summary, int $i = 0): array
     {
         /** @var class-string<Task> $taskModel */
         $taskModel = config('dispatch.models.task');
@@ -392,6 +511,28 @@ class DispatchBatchService
             // Date-grained, matching the Livewire editor: re-submitting the same
             // due date is idempotent and mints no event.
             $dueChanged = $dueFrom !== $dueTo;
+        }
+
+        // TASK-995 — topic is EDITABLE (tri-state, like due_at): untouched
+        // unless the op names it, cleared by an explicit null. Origin is
+        // WRITE-ONCE: Task::setOrigin() enforces it, and its LogicException is
+        // translated into the same InvalidArgumentException vocabulary the
+        // rest of this batch validation uses, naming the operation, so a
+        // rejected change here reads like any other validation failure.
+        if ($this->anchorTouched($op, 'topic')) {
+            [$topicType, $topicId] = $this->resolveAnchorInput($op, 'topic');
+            $task->setTopic($topicType, $topicId);
+        }
+        if ($this->anchorTouched($op, 'origin')) {
+            [$originType, $originId] = $this->resolveAnchorInput($op, 'origin');
+            try {
+                $task->setOrigin($originType, $originId);
+            } catch (\LogicException $e) {
+                throw new \InvalidArgumentException("Operation {$i}: {$e->getMessage()}");
+            }
+        }
+        if (array_key_exists('conversation_id', $op)) {
+            $task->conversation_id = $op['conversation_id'] !== null ? (int) $op['conversation_id'] : null;
         }
 
         $from = $task->status;

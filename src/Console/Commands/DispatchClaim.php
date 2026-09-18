@@ -24,6 +24,10 @@ class DispatchClaim extends Command
         {code? : Claim THIS task by code (e.g. TASK-042), if still unclaimed; omit to claim the next candidate}
         {--type= : Restrict to this task type (ignored when a code is given)}
         {--label=* : Restrict to tasks carrying ANY of these labels (a union — all-of is not available). Repeatable. (ignored when a code is given)}
+        {--topic= : Restrict to tasks whose topic matches "<type>[:<id>]" (ignored when a code is given)}
+        {--origin= : Restrict to tasks whose origin matches "<type>[:<id>]" (ignored when a code is given)}
+        {--conversation= : Restrict to tasks in this conversation id (ignored when a code is given)}
+        {--topic-account= : Restrict to tasks whose topic_account_key equals this value (ignored when a code is given)}
         {--assignee= : User id to assign the claimed task to}
         {--no-focus : Ignore any active Focus steering for this claim}
         {--json : Emit machine-readable JSON instead of human text}
@@ -37,6 +41,10 @@ class DispatchClaim extends Command
         $filters = array_filter([
             'type' => $this->option('type'),
             'label' => $this->option('label'),
+            'topic' => $this->option('topic'),
+            'origin' => $this->option('origin'),
+            'conversation' => $this->option('conversation'),
+            'topic_account' => $this->option('topic-account'),
         ]);
 
         $code = $this->argument('code');
@@ -47,7 +55,13 @@ class DispatchClaim extends Command
 
         $assignee = $this->option('assignee');
 
-        $task = $tasks->claim(null, $filters, $assignee !== null ? (int) $assignee : null, $code, ! $this->option('no-focus'));
+        try {
+            $task = $tasks->claim(null, $filters, $assignee !== null ? (int) $assignee : null, $code, ! $this->option('no-focus'));
+        } catch (\InvalidArgumentException $e) {
+            $this->error($e->getMessage());
+
+            return self::FAILURE;
+        }
 
         if ($task === null) {
             return $this->reportNothingClaimed($code);
@@ -110,6 +124,12 @@ class DispatchClaim extends Command
             'label' => $filters['label'] ?? null,
             'code' => $code,
             'no_focus' => $this->option('no-focus') ? 1 : null,
+            // Anchor wire strings travel RAW — the server re-parses them with
+            // the same Anchor::parse().
+            'topic' => $filters['topic'] ?? null,
+            'origin' => $filters['origin'] ?? null,
+            'conversation' => $filters['conversation'] ?? null,
+            'topic_account' => $filters['topic_account'] ?? null,
         ]);
 
         $response = $this->agentPost('claim', $payload);

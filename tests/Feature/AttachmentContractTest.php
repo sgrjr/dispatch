@@ -54,7 +54,10 @@ test('GOLDEN SHAPE: the summary adds exactly attachment_count; nothing else move
     expect(array_keys(TaskPresenter::toArray($task, false)))->toBe([
         'code', 'title', 'type', 'priority', 'status', 'is_public', 'labels',
         'comment_count', 'attachment_count', 'due_at', 'dedupe_key',
-        'submitter', 'assignee', 'assignee_group', 'created_at', 'updated_at',
+        'submitter', 'assignee', 'assignee_group',
+        // TASK-995 anchor fields.
+        'topic_type', 'topic_id', 'topic_account_key', 'origin_type', 'origin_id', 'conversation_id',
+        'created_at', 'updated_at',
     ]);
 });
 
@@ -67,7 +70,12 @@ test('GOLDEN SHAPE: the full view adds exactly attachments[] + a per-comment att
     expect(array_keys($full))->toBe([
         'code', 'title', 'type', 'priority', 'status', 'is_public', 'labels',
         'comment_count', 'attachment_count', 'due_at', 'dedupe_key',
-        'submitter', 'assignee', 'assignee_group', 'created_at', 'updated_at',
+        'submitter', 'assignee', 'assignee_group',
+        // TASK-995 anchor fields.
+        'topic_type', 'topic_id', 'topic_account_key', 'origin_type', 'origin_id', 'conversation_id',
+        'created_at', 'updated_at',
+        // TASK-995 full-only resolver adds.
+        'topic_label', 'topic_url', 'origin_label', 'origin_url',
         'description', 'context', 'attachments', 'comments',
     ]);
 

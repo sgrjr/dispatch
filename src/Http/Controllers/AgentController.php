@@ -12,6 +12,7 @@ use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Services\AgentSessionService;
 use Sgrjr\Dispatch\Services\DispatchBatchService;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
+use Sgrjr\Dispatch\Support\Anchor;
 use Sgrjr\Dispatch\Support\DueDate;
 use Sgrjr\Dispatch\Support\TaskPresenter;
 
@@ -34,14 +35,18 @@ class AgentController extends Controller
     {
         // Query construction, eager-loading, ordering and focus-steering all
         // live in the service (mirrors the CLI). ?no_focus=1 bypasses steering.
-        $task = app(DispatchTaskService::class)->nextCandidate(
-            array_filter([
-                'type' => $request->query('type'),
-                'label' => $request->query('label'),
-            ]),
-            $request->query('status'),
-            ! $request->boolean('no_focus'),
-        );
+        try {
+            $task = app(DispatchTaskService::class)->nextCandidate(
+                $this->anchorQueryFilters($request, [
+                    'type' => $request->query('type'),
+                    'label' => $request->query('label'),
+                ]),
+                $request->query('status'),
+                ! $request->boolean('no_focus'),
+            );
+        } catch (\InvalidArgumentException $e) {
+            abort(422, $e->getMessage());
+        }
 
         return response()->json([
             'task' => $task ? TaskPresenter::toArray($task) : null,
@@ -93,7 +98,7 @@ class AgentController extends Controller
             ]);
         }
 
-        $filters = array_filter([
+        $filters = $this->anchorQueryFilters($request, [
             'type' => $request->query('type'),
             'label' => $request->query('label'),
         ]);
@@ -108,9 +113,13 @@ class AgentController extends Controller
         // The list path's filter + eager-load + priority ordering lives in the
         // service (the count census above keeps its own bespoke aggregate). Not
         // focus-steered — the queue is a full list, not a single pick.
-        $query = $q !== ''
-            ? app(DispatchTaskService::class)->searchQuery($q, $filters, $request->query('status'))
-            : app(DispatchTaskService::class)->queueQuery($filters, $request->query('status'));
+        try {
+            $query = $q !== ''
+                ? app(DispatchTaskService::class)->searchQuery($q, $filters, $request->query('status'))
+                : app(DispatchTaskService::class)->queueQuery($filters, $request->query('status'));
+        } catch (\InvalidArgumentException $e) {
+            abort(422, $e->getMessage());
+        }
 
         $limit = (int) $request->query('limit', 0);
         if ($limit > 0) {
@@ -156,12 +165,24 @@ class AgentController extends Controller
             'type' => ['nullable', 'string'],
             'label' => ['nullable'],
             'code' => ['nullable', 'string'],
+            'topic' => ['nullable', 'string'],
+            'origin' => ['nullable', 'string'],
+            'conversation' => ['nullable'],
+            'topic_account' => ['nullable', 'string'],
         ]);
 
-        $task = app(DispatchTaskService::class)->claim($s, array_filter([
-            'type' => $v['type'] ?? null,
-            'label' => $v['label'] ?? null,
-        ]), null, $v['code'] ?? null, ! $request->boolean('no_focus'));
+        try {
+            $task = app(DispatchTaskService::class)->claim($s, array_filter([
+                'type' => $v['type'] ?? null,
+                'label' => $v['label'] ?? null,
+                'topic' => $v['topic'] ?? null,
+                'origin' => $v['origin'] ?? null,
+                'conversation' => $v['conversation'] ?? null,
+                'topic_account' => $v['topic_account'] ?? null,
+            ]), null, $v['code'] ?? null, ! $request->boolean('no_focus'));
+        } catch (\InvalidArgumentException $e) {
+            abort(422, $e->getMessage());
+        }
 
         // Deliver the FULL shape on claim — description + context + the comments
         // thread — because claim is exactly when the agent commits to a task and
@@ -200,6 +221,13 @@ class AgentController extends Controller
             'public' => ['nullable', 'boolean'],
             'key' => ['nullable', 'string'],
             'due_at' => ['nullable', 'string'],
+            // TASK-995 — agent verbs can set topic/origin/conversation but
+            // NEVER topic_account_key directly (it's stamped server-side by
+            // the TopicResolver — there is deliberately no validation rule
+            // for it here, on any verb).
+            'topic' => ['nullable', 'string'],
+            'origin' => ['nullable', 'string'],
+            'conversation' => ['nullable'],
         ]);
 
         $attributes = array_filter([
@@ -222,6 +250,22 @@ class AgentController extends Controller
             } catch (\InvalidArgumentException $e) {
                 abort(422, $e->getMessage());
             }
+        }
+
+        // Anchors are likewise part of creation — parsed up front (Anchor's ONE
+        // parser) so a malformed one costs a 422, not an orphan task.
+        try {
+            if (! empty($v['topic'])) {
+                [$attributes['topic_type'], $attributes['topic_id']] = Anchor::parse($v['topic']);
+            }
+            if (! empty($v['origin'])) {
+                [$attributes['origin_type'], $attributes['origin_id']] = Anchor::parse($v['origin']);
+            }
+        } catch (\InvalidArgumentException $e) {
+            abort(422, $e->getMessage());
+        }
+        if (array_key_exists('conversation', $v) && $v['conversation'] !== null && $v['conversation'] !== '') {
+            $attributes['conversation_id'] = (int) $v['conversation'];
         }
 
         $labels = $v['labels'] ?? [];
@@ -443,6 +487,26 @@ class AgentController extends Controller
             'status' => AgentSession::STATUS_REVOKED,
             'public_id' => $s->public_id,
             'metrics_recorded' => $metrics !== null,
+        ]);
+    }
+
+    /**
+     * TASK-995 — merge the four anchor query params (`topic`, `origin`,
+     * `conversation`, `topic_account`) onto a base filters array shared by
+     * next/queue. The values travel RAW (a `"<type>[:<id>]"` wire string for
+     * topic/origin) — DispatchTaskService re-parses them with Anchor::parse,
+     * so there's one parser either side of the wire.
+     *
+     * @param  array<string,mixed>  $base
+     * @return array<string,mixed>
+     */
+    private function anchorQueryFilters(Request $request, array $base): array
+    {
+        return array_filter($base + [
+            'topic' => $request->query('topic'),
+            'origin' => $request->query('origin'),
+            'conversation' => $request->query('conversation'),
+            'topic_account' => $request->query('topic_account'),
         ]);
     }
 

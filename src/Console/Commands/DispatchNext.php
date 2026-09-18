@@ -19,6 +19,10 @@ class DispatchNext extends Command
         {--status= : Restrict to a single status (default: open, in_progress, triage)}
         {--type= : Filter to a single type}
         {--label=* : Filter to tasks carrying any of these labels}
+        {--topic= : Filter to tasks whose topic matches "<type>[:<id>]" (id omitted matches any id of that type)}
+        {--origin= : Filter to tasks whose origin matches "<type>[:<id>]"}
+        {--conversation= : Filter to tasks in this conversation id}
+        {--topic-account= : Filter to tasks whose topic_account_key equals this value}
         {--no-focus : Ignore any active Focus steering for this call}
         {--remote : Act on the configured remote agent API (the default while an agent session token is active)}
         {--local : Act on the local DB even while an agent session token is active (overrides sticky-remote)}
@@ -34,6 +38,12 @@ class DispatchNext extends Command
                 'type' => $this->option('type'),
                 'label' => $this->option('label'),
                 'no_focus' => $this->option('no-focus') ? 1 : null,
+                // Anchor wire strings travel RAW — the server re-parses them
+                // with the same Anchor::parse().
+                'topic' => $this->option('topic'),
+                'origin' => $this->option('origin'),
+                'conversation' => $this->option('conversation'),
+                'topic_account' => $this->option('topic-account'),
             ]));
 
             if ($r === null) {
@@ -52,9 +62,19 @@ class DispatchNext extends Command
         $filters = array_filter([
             'type' => $this->option('type'),
             'label' => $this->option('label'),
+            'topic' => $this->option('topic'),
+            'origin' => $this->option('origin'),
+            'conversation' => $this->option('conversation'),
+            'topic_account' => $this->option('topic-account'),
         ]);
 
-        $task = $tasks->nextCandidate($filters, $this->option('status'), ! $this->option('no-focus'));
+        try {
+            $task = $tasks->nextCandidate($filters, $this->option('status'), ! $this->option('no-focus'));
+        } catch (\InvalidArgumentException $e) {
+            $this->error($e->getMessage());
+
+            return self::FAILURE;
+        }
 
         if (! $task) {
             if ($this->option('json')) {

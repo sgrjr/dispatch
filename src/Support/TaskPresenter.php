@@ -56,11 +56,26 @@ class TaskPresenter
             // slot (mutually exclusive with assignee). Null on pre-groups
             // rows, so the frozen contract only ever gains a key.
             'assignee_group' => $task->assignee_group,
+            // TASK-995 anchor fields — flat on BOTH shapes. `topic_account_key`
+            // is a read-only rollup; agent verbs cannot set it directly.
+            'topic_type' => $task->topic_type,
+            'topic_id' => $task->topic_id,
+            'topic_account_key' => $task->topic_account_key,
+            'origin_type' => $task->origin_type,
+            'origin_id' => $task->origin_id,
+            'conversation_id' => $task->conversation_id,
             'created_at' => optional($task->created_at)->toIso8601String(),
             'updated_at' => optional($task->updated_at)->toIso8601String(),
         ];
 
         if ($full) {
+            // Resolver calls (label/url) happen ONLY here, on the full shape —
+            // never per-row in next/queue's summary list. Null-safe: $task->topic
+            // / $task->origin are already null when no anchor is set.
+            $data['topic_label'] = $task->topic?->label();
+            $data['topic_url'] = $task->topic?->url();
+            $data['origin_label'] = $task->origin?->label();
+            $data['origin_url'] = $task->origin?->url();
             $data['description'] = $task->description;
             $data['context'] = $task->context;
             // Task-level attachment metadata (W8-6): existence SIGNALS only — there
@@ -128,11 +143,23 @@ class TaskPresenter
                 'submitter' => 'string|int|null',
                 'assignee' => 'string|int|null',
                 'assignee_group' => 'string|null (config-defined team name holding the assignee slot; mutually exclusive with assignee)',
+                // TASK-995 anchor fields.
+                'topic_type' => 'string|null — short alias (account, plan, title, order, …), never a class name',
+                'topic_id' => 'string|null — a permanent natural key',
+                'topic_account_key' => 'string|null — STORED rollup stamped by the TopicResolver; never settable directly (an agent verb cannot set it)',
+                'origin_type' => 'string|null — message | custnote | exception | contact_form | plan_request | task | an out-of-band channel (email, phone, in_person)',
+                'origin_id' => 'string|null — absent for an out-of-band channel origin',
+                'conversation_id' => 'int|null — the home conversation/arc',
                 'created_at' => 'iso8601',
                 'updated_at' => 'iso8601',
             ],
             'full_adds' => [
                 'description' => 'string|null',
+                // TASK-995 — resolver calls (label/url), full shape only.
+                'topic_label' => 'string|null — human label for the topic anchor, resolved via TopicResolver; null when no topic is set',
+                'topic_url' => 'string|null — link to the topic\'s own page, when the resolver has one',
+                'origin_label' => 'string|null — human label for the origin anchor, resolved via OriginResolver; null when no origin is set',
+                'origin_url' => 'string|null — link to the origin, when the resolver has one',
                 // W15-2: the one-word description sent agents past a complete
                 // machine-filed diagnosis — a sweep DECLINED a live bug whose
                 // context already named its fix commit. For an exception-filed
@@ -174,6 +201,17 @@ class TaskPresenter
                     'commit' => 'string|null (stored under context.result.commit)',
                     'result' => 'object|null (stored under context.result)',
                     'comments' => '[{body:string, internal:bool}]',
+                    // TASK-995 — the shorthand "<type>:<id>" string OR the
+                    // explicit *_type/*_id pair; tri-state like due_at (absent =
+                    // untouched, null = clear). `topic_account_key` is never
+                    // accepted here — it is stamped server-side.
+                    'topic' => 'string|null — shorthand "<type>:<id>" (e.g. "account:0402100000001"); null clears the topic. Alternative to topic_type/topic_id.',
+                    'topic_type' => 'string|null (alternative to the `topic` shorthand)',
+                    'topic_id' => 'string|null (alternative to the `topic` shorthand)',
+                    'origin' => 'string|null — shorthand "<type>[:<id>]" (e.g. "phone", "task:TASK-042"). WRITE-ONCE: settable only while unset; a change once set fails the whole batch. Alternative to origin_type/origin_id.',
+                    'origin_type' => 'string|null (alternative to the `origin` shorthand)',
+                    'origin_id' => 'string|null (alternative to the `origin` shorthand)',
+                    'conversation_id' => 'int|null — set the home conversation; null clears it; absent leaves it untouched',
                 ],
                 // Sizing a manifest by op-count alone is not enough — a single
                 // oversized comment body used to blow a column ceiling and take

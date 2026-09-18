@@ -9,8 +9,10 @@ use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Sgrjr\Dispatch\Contracts\DispatchGate;
 use Sgrjr\Dispatch\Contracts\DispatchNotifier;
+use Sgrjr\Dispatch\Contracts\OriginResolver;
 use Sgrjr\Dispatch\Contracts\SubmitterResolver;
 use Sgrjr\Dispatch\Contracts\TenantResolver;
+use Sgrjr\Dispatch\Contracts\TopicResolver;
 use Sgrjr\Dispatch\Policies\TaskPolicy;
 
 class DispatchServiceProvider extends ServiceProvider
@@ -30,6 +32,11 @@ class DispatchServiceProvider extends ServiceProvider
         $this->app->singleton(TenantResolver::class, fn ($app) => $app->make(config('dispatch.contracts.tenant', \Sgrjr\Dispatch\Support\NullTenantResolver::class)));
         $this->app->singleton(SubmitterResolver::class, fn ($app) => $app->make(config('dispatch.contracts.submitter', \Sgrjr\Dispatch\Support\AuthSubmitterResolver::class)));
         $this->app->singleton(DispatchNotifier::class, fn ($app) => $app->make(config('dispatch.contracts.notifier', \Sgrjr\Dispatch\Support\MailNotifier::class)));
+        // TASK-995 anchor seams — same shallow-mergeConfigFrom fallback as the
+        // four seams above: a host that published config/dispatch.php before
+        // these existed has no `contracts.topic`/`contracts.origin` key.
+        $this->app->singleton(TopicResolver::class, fn ($app) => $app->make(config('dispatch.contracts.topic', \Sgrjr\Dispatch\Support\NullTopicResolver::class)));
+        $this->app->singleton(OriginResolver::class, fn ($app) => $app->make(config('dispatch.contracts.origin', \Sgrjr\Dispatch\Support\NullOriginResolver::class)));
 
         // Backs the DispatchTask facade (programmatic reporting).
         $this->app->singleton(DispatchManager::class);

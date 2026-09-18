@@ -15,6 +15,7 @@ use Sgrjr\Dispatch\Models\LabelAlias;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Support\AgentMetrics;
+use Sgrjr\Dispatch\Support\Anchor;
 
 /**
  * The single place Dispatch tasks are minted.
@@ -250,6 +251,39 @@ class DispatchTaskService
     }
 
     /**
+     * TASK-995 — apply the optional anchor filters (`topic`, `origin`,
+     * `conversation`, `topic_account`) shared by next/queue/find/claim. Each
+     * anchor value is a wire string (`"<type>[:<id>]"`) run through the ONE
+     * parser (Anchor::parse); a malformed one throws InvalidArgumentException
+     * — callers validate up front (same posture as due_at) so this never
+     * surfaces mid-query.
+     *
+     * @param  array{topic?:string,origin?:string,conversation?:int|string,topic_account?:string}  $filters
+     */
+    protected function applyAnchorFilters(Builder $q, array $filters): Builder
+    {
+        if (($topic = $filters['topic'] ?? null) !== null && $topic !== '') {
+            [$type, $id] = Anchor::parse((string) $topic);
+            $q->aboutTopic($type, $id);
+        }
+
+        if (($origin = $filters['origin'] ?? null) !== null && $origin !== '') {
+            [$type, $id] = Anchor::parse((string) $origin);
+            $q->fromOrigin($type, $id);
+        }
+
+        if (($conversation = $filters['conversation'] ?? null) !== null && $conversation !== '') {
+            $q->inConversation((int) $conversation);
+        }
+
+        if (($account = $filters['topic_account'] ?? null) !== null && $account !== '') {
+            $q->aboutAccount((string) $account);
+        }
+
+        return $q;
+    }
+
+    /**
      * The `next`/`claim` candidate ordering: actionable-first, then configured
      * priority rank, then manual position, then id. Uses Task::prioritySql()
      * (config-aware) rather than a hardcoded priority CASE — identical ordering
@@ -335,7 +369,7 @@ class DispatchTaskService
      * (open/in_progress/triage) unless $status pins one; type/label filters
      * narrow (label is any-of). Pass $applyFocus false to bypass steering.
      *
-     * @param  array{type?:string,label?:string|array<int,string>}  $filters
+     * @param  array{type?:string,label?:string|array<int,string>,topic?:string,origin?:string,conversation?:int|string,topic_account?:string}  $filters
      */
     public function nextCandidate(array $filters = [], ?string $status = null, bool $applyFocus = true): ?Task
     {
@@ -346,17 +380,20 @@ class DispatchTaskService
         $label = $filters['label'] ?? null;
 
         $baseQuery = fn () => $this->orderForNext($this->eagerForRead(
-            $taskModel::query()
-                ->when(
-                    $status,
-                    fn ($q, $s) => $q->where('status', $s),
-                    fn ($q) => $q->whereIn('status', ['open', 'in_progress', 'triage'])
-                )
-                ->when($type, fn ($q, $type) => $q->where('type', $type))
-                ->when($label, fn ($q, $label) => $q->whereHas(
-                    'labels',
-                    fn ($lq) => $lq->whereIn('name', LabelAlias::canonicalize((array) $label))
-                ))
+            $this->applyAnchorFilters(
+                $taskModel::query()
+                    ->when(
+                        $status,
+                        fn ($q, $s) => $q->where('status', $s),
+                        fn ($q) => $q->whereIn('status', ['open', 'in_progress', 'triage'])
+                    )
+                    ->when($type, fn ($q, $type) => $q->where('type', $type))
+                    ->when($label, fn ($q, $label) => $q->whereHas(
+                        'labels',
+                        fn ($lq) => $lq->whereIn('name', LabelAlias::canonicalize((array) $label))
+                    )),
+                $filters,
+            )
         ));
 
         return $this->steeredFirst($applyFocus, $baseQuery);
@@ -368,7 +405,7 @@ class DispatchTaskService
      * NOT focus-steered — the queue is a full list, not a single pick. Callers
      * add their own ->limit()/->get().
      *
-     * @param  array{type?:string,label?:string|array<int,string>}  $filters
+     * @param  array{type?:string,label?:string|array<int,string>,topic?:string,origin?:string,conversation?:int|string,topic_account?:string}  $filters
      */
     public function queueQuery(array $filters = [], ?string $status = null): Builder
     {
@@ -379,17 +416,20 @@ class DispatchTaskService
         $label = $filters['label'] ?? null;
 
         return $this->orderForQueue($this->eagerForRead(
-            $taskModel::query()
-                ->when(
-                    $status,
-                    fn ($q, $s) => $q->where('status', $s),
-                    fn ($q) => $q->whereIn('status', ['open', 'in_progress', 'triage'])
-                )
-                ->when($type, fn ($q, $type) => $q->where('type', $type))
-                ->when($label, fn ($q, $label) => $q->whereHas(
-                    'labels',
-                    fn ($lq) => $lq->whereIn('name', LabelAlias::canonicalize((array) $label))
-                ))
+            $this->applyAnchorFilters(
+                $taskModel::query()
+                    ->when(
+                        $status,
+                        fn ($q, $s) => $q->where('status', $s),
+                        fn ($q) => $q->whereIn('status', ['open', 'in_progress', 'triage'])
+                    )
+                    ->when($type, fn ($q, $type) => $q->where('type', $type))
+                    ->when($label, fn ($q, $label) => $q->whereHas(
+                        'labels',
+                        fn ($lq) => $lq->whereIn('name', LabelAlias::canonicalize((array) $label))
+                    )),
+                $filters,
+            )
         ));
     }
 
@@ -410,7 +450,7 @@ class DispatchTaskService
      * duplicate is often recognisable only from the body (a wiring identifier, a
      * PROD_NO) that never made it into the title.
      *
-     * @param  array<string,mixed>  $filters  type/label, same shape as queueQuery
+     * @param  array<string,mixed>  $filters  type/label/topic/origin/conversation/topic_account, same shape as queueQuery
      */
     public function searchQuery(string $term, array $filters = [], ?string $status = null): Builder
     {
@@ -436,18 +476,21 @@ class DispatchTaskService
         $table = (new $taskModel)->getTable();
 
         return $this->eagerForRead(
-            $taskModel::query()
-                ->where(function (Builder $q) use ($like, $table) {
-                    $q->whereRaw("{$table}.title LIKE ? ESCAPE '!'", [$like])
-                        ->orWhereRaw("{$table}.code LIKE ? ESCAPE '!'", [$like])
-                        ->orWhereRaw("{$table}.description LIKE ? ESCAPE '!'", [$like]);
-                })
-                ->when($status, fn ($q, $s) => $q->where('status', $s))
-                ->when($type, fn ($q, $type) => $q->where('type', $type))
-                ->when($label, fn ($q, $label) => $q->whereHas(
-                    'labels',
-                    fn ($lq) => $lq->whereIn('name', LabelAlias::canonicalize((array) $label))
-                ))
+            $this->applyAnchorFilters(
+                $taskModel::query()
+                    ->where(function (Builder $q) use ($like, $table) {
+                        $q->whereRaw("{$table}.title LIKE ? ESCAPE '!'", [$like])
+                            ->orWhereRaw("{$table}.code LIKE ? ESCAPE '!'", [$like])
+                            ->orWhereRaw("{$table}.description LIKE ? ESCAPE '!'", [$like]);
+                    })
+                    ->when($status, fn ($q, $s) => $q->where('status', $s))
+                    ->when($type, fn ($q, $type) => $q->where('type', $type))
+                    ->when($label, fn ($q, $label) => $q->whereHas(
+                        'labels',
+                        fn ($lq) => $lq->whereIn('name', LabelAlias::canonicalize((array) $label))
+                    )),
+                $filters,
+            )
         )->orderByDesc('updated_at')->orderByDesc('id');
     }
 
@@ -469,7 +512,7 @@ class DispatchTaskService
      * filters are ignored, AND steering is forced off, since the code already
      * picks the task.
      *
-     * @param  array{type?:string,label?:string|array<int,string>}  $filters
+     * @param  array{type?:string,label?:string|array<int,string>,topic?:string,origin?:string,conversation?:int|string,topic_account?:string}  $filters
      */
     public function claim(?AgentSession $session = null, array $filters = [], ?int $assigneeUserId = null, ?string $code = null, bool $applyFocus = true): ?Task
     {
@@ -480,23 +523,27 @@ class DispatchTaskService
         // muddy that (and could null out an explicit request), so drop them.
         $type = $code === null ? ($filters['type'] ?? null) : null;
         $label = $code === null ? ($filters['label'] ?? null) : null;
+        $anchorFilters = $code === null ? $filters : [];
 
-        return DB::transaction(function () use ($taskModel, $session, $type, $label, $assigneeUserId, $code, $applyFocus) {
+        return DB::transaction(function () use ($taskModel, $session, $type, $label, $assigneeUserId, $code, $applyFocus, $anchorFilters) {
             // A FRESH lean, LOCKED candidate builder per call — steeredFirst may
             // probe it once per focus plus once for the base, and a locked
             // builder is single-use once ->first() runs. Deliberately lean: no
             // with()/withCount() (subqueries under FOR UPDATE are fragile) —
             // the post-claim loadMissing in the callers hydrates for output.
-            $baseQuery = function () use ($taskModel, $type, $label, $code) {
+            $baseQuery = function () use ($taskModel, $type, $label, $code, $anchorFilters) {
                 $query = $this->orderForNext(
-                    $taskModel::query()
-                        ->whereIn('status', ['open', 'triage'])
-                        ->when($code, fn ($q, $c) => $q->where('code', $c))
-                        ->when($type, fn ($q, $type) => $q->where('type', $type))
-                        ->when($label, fn ($q, $label) => $q->whereHas(
-                            'labels',
-                            fn ($lq) => $lq->whereIn('name', LabelAlias::canonicalize((array) $label))
-                        ))
+                    $this->applyAnchorFilters(
+                        $taskModel::query()
+                            ->whereIn('status', ['open', 'triage'])
+                            ->when($code, fn ($q, $c) => $q->where('code', $c))
+                            ->when($type, fn ($q, $type) => $q->where('type', $type))
+                            ->when($label, fn ($q, $label) => $q->whereHas(
+                                'labels',
+                                fn ($lq) => $lq->whereIn('name', LabelAlias::canonicalize((array) $label))
+                            )),
+                        $anchorFilters,
+                    )
                 );
 
                 // Row-lock the candidate. MySQL/Postgres get SKIP LOCKED so

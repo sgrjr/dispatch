@@ -7,6 +7,7 @@ use Sgrjr\Dispatch\Console\Commands\Concerns\ResolvesTextInput;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
+use Sgrjr\Dispatch\Support\Anchor;
 use Sgrjr\Dispatch\Support\DueDate;
 use Sgrjr\Dispatch\Support\TaskPresenter;
 
@@ -33,6 +34,9 @@ class DispatchAdd extends Command
         {--label=* : Label name(s) to attach; auto-created if missing. Repeatable.}
         {--public : Mark visible outside staff (default: private)}
         {--key= : Idempotency key; returns the existing task with this key instead of creating a duplicate}
+        {--topic= : What the task is ABOUT, as "<type>:<id>" (e.g. account:0402100000001) or "<type>" alone}
+        {--origin= : Where the task came FROM, as "<type>:<id>" or "<type>" alone (e.g. phone). Write-once — see dispatch:schema}
+        {--conversation= : The home conversation/arc id (an integer)}
         {--remote : Act on the configured remote agent API (the default while an agent session token is active)}
         {--local : Act on the local DB even while an agent session token is active (overrides sticky-remote)}
         {--json : Emit machine-readable JSON instead of human text}';
@@ -75,6 +79,35 @@ class DispatchAdd extends Command
             }
         }
 
+        // Anchor flags — validated up front (same posture as --due) so a
+        // malformed one fails before any request is sent or row written.
+        // Anchor::parse is the ONE parser; this is its only local call site.
+        $topicType = $topicId = $originType = $originId = null;
+        if (($topic = $this->option('topic')) !== null) {
+            try {
+                [$topicType, $topicId] = Anchor::parse($topic);
+            } catch (\InvalidArgumentException $e) {
+                $this->error("--topic: {$e->getMessage()}");
+
+                return self::FAILURE;
+            }
+        }
+        if (($origin = $this->option('origin')) !== null) {
+            try {
+                [$originType, $originId] = Anchor::parse($origin);
+            } catch (\InvalidArgumentException $e) {
+                $this->error("--origin: {$e->getMessage()}");
+
+                return self::FAILURE;
+            }
+        }
+        $conversation = $this->option('conversation');
+        if ($conversation !== null && ! ctype_digit((string) $conversation)) {
+            $this->error('--conversation must be a positive integer.');
+
+            return self::FAILURE;
+        }
+
         $labelNames = array_values(array_filter(
             array_map('trim', (array) $this->option('label')),
             fn ($n) => $n !== ''
@@ -108,6 +141,12 @@ class DispatchAdd extends Command
                 // whenever the server got around to parsing it. Absent when
                 // there is no due date (the filter below drops the null).
                 'due_at' => $due?->toIso8601String(),
+                // Anchor wire strings travel RAW — the server re-parses them
+                // with the same Anchor::parse(), so there's one parser and one
+                // source of truth for the format either side of the wire.
+                'topic' => $topic,
+                'origin' => $origin,
+                'conversation' => $conversation,
             ], fn ($v) => $v !== null));
 
             if ($r === null) {
@@ -131,6 +170,17 @@ class DispatchAdd extends Command
         }
         if ($due !== null) {
             $attributes['due_at'] = $due;
+        }
+        if ($topicType !== null) {
+            $attributes['topic_type'] = $topicType;
+            $attributes['topic_id'] = $topicId;
+        }
+        if ($originType !== null) {
+            $attributes['origin_type'] = $originType;
+            $attributes['origin_id'] = $originId;
+        }
+        if ($conversation !== null) {
+            $attributes['conversation_id'] = (int) $conversation;
         }
         $attributes['is_public'] = (bool) $this->option('public');
 
