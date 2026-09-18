@@ -18,6 +18,13 @@ class DispatchShow extends Command
 {
     use TalksToAgentApi;
 
+    /**
+     * How many stack frames a client-error task prints before it is cut off.
+     * A browser stack routinely runs to 60+ frames, almost all of them
+     * framework internals; the head is where the app's own code sits.
+     */
+    private const STACK_FRAMES = 15;
+
     protected $signature = 'dispatch:show
         {code : The task code, e.g. TASK-042}
         {--remote : Act on the configured remote agent API (the default while an agent session token is active)}
@@ -93,16 +100,72 @@ class DispatchShow extends Command
             $ctx = $task->context;
             $this->newLine();
             $this->line('<fg=gray># Diagnostics</>');
+
+            // What broke, and how loudly. Client-error tasks carry these from
+            // DispatchTask::bug(); everything older carries neither, so every
+            // key here is optional and absent keys simply print nothing.
+            $this->lineOfBits([
+                ! empty($ctx['error_type']) ? '<fg=red>'.$this->esc($ctx['error_type']).'</>' : null,
+                ! empty($ctx['severity']) ? 'severity: '.$this->esc($ctx['severity']) : null,
+            ]);
+
+            // "Is this still firing?" — the single most useful triage field, and
+            // the one that used to require a hand query against user_events to
+            // tell a live bug from one that died three releases ago.
+            $this->lineOfBits([
+                isset($ctx['times_seen']) ? 'seen '.$ctx['times_seen'].'x' : null,
+                ! empty($ctx['last_seen']) ? 'last seen: '.$this->esc($ctx['last_seen']) : null,
+            ]);
+
             if (! empty($ctx['url'])) {
-                $this->line('  url: '.$ctx['url']);
+                $this->line('  url: '.$this->esc($ctx['url']));
+            }
+            if (! empty($ctx['inertia_page'])) {
+                $this->line('  page: '.$this->esc($ctx['inertia_page']));
+            }
+            // `component_path` is the newer spelling; `component` is what the
+            // earlier payloads used. Print whichever is there, never both.
+            foreach (['component_path', 'component'] as $key) {
+                if (! empty($ctx[$key])) {
+                    $this->line('  component: '.$this->esc($ctx[$key]));
+                    break;
+                }
             }
             if (! empty($ctx['user_agent'])) {
-                $this->line('  agent: '.$ctx['user_agent']);
+                $this->line('  agent: '.$this->esc($ctx['user_agent']));
             }
+
             $errs = $ctx['console_errors'] ?? [];
             $this->line('  console errors: '.count($errs));
             foreach (array_slice($errs, -5) as $e) {
-                $this->line('    <fg=red>'.($e['type'] ?? 'error').'</>: '.($e['message'] ?? ''));
+                $this->line('    <fg=red>'.($e['type'] ?? 'error').'</>: '.$this->esc($e['message'] ?? ''));
+            }
+
+            // The stack goes last because it is the longest thing in the block.
+            // Trimmed to the frames that carry the signal — the tail of a browser
+            // stack is framework noise, and an untrimmed one buries every field
+            // above it.
+            if (! empty($ctx['stack'])) {
+                $frames = is_array($ctx['stack'])
+                    ? $ctx['stack']
+                    : preg_split('/\R/', (string) $ctx['stack']);
+
+                $frames = array_values(array_filter(
+                    array_map(fn ($f) => trim((string) (is_array($f) ? json_encode($f) : $f)), $frames),
+                    fn ($f) => $f !== ''
+                ));
+
+                $shown = array_slice($frames, 0, self::STACK_FRAMES);
+
+                if ($shown !== []) {
+                    $this->line('  stack:');
+                    foreach ($shown as $frame) {
+                        $this->line('    '.$this->esc($frame));
+                    }
+                    if (($more = count($frames) - count($shown)) > 0) {
+                        $this->line('    <fg=gray>... '.$more.' more frame'.($more === 1 ? '' : 's').'</>');
+                    }
+                }
             }
         }
 
@@ -152,5 +215,25 @@ class DispatchShow extends Command
         }
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Console-format-escape a value that came from a browser payload. Stack
+     * frames routinely contain <anonymous>, and Symfony would otherwise read
+     * that as a (broken) style tag and swallow it.
+     */
+    private function esc(mixed $value): string
+    {
+        return \Symfony\Component\Console\Formatter\OutputFormatter::escape((string) $value);
+    }
+
+    /** Print "  a  ·  b", skipping nulls; print nothing when all are null. */
+    private function lineOfBits(array $bits): void
+    {
+        $bits = array_values(array_filter($bits, fn ($b) => $b !== null && $b !== ''));
+
+        if ($bits !== []) {
+            $this->line('  '.implode('  ·  ', $bits));
+        }
     }
 }

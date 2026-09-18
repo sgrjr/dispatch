@@ -1319,3 +1319,71 @@ test('claim warns when the token cannot outlive a work cycle (W9-5)', function (
     expect($out)->toContain('claiming with only')
         ->and($out)->toContain('may not survive to the close');
 });
+
+test('dispatch:show renders the client-error diagnostics it already stores', function () {
+    // The whole source:frontend triage cohort read as "url + agent + console
+    // errors: 0" and looked contentless, while the payload had carried the
+    // error type, the recurrence counters and the stack all along.
+    $task = app(DispatchTaskService::class)->create(['title' => 'client error task']);
+    $task->context = [
+        'url' => 'https://example.test/accounts/123',
+        'user_agent' => 'Mozilla/5.0',
+        'error_type' => 'TypeError',
+        'severity' => 'error',
+        'times_seen' => 47,
+        'last_seen' => '2026-09-17T12:00:00-04:00',
+        'component_path' => 'resources/js/Pages/Accounts/Edit.vue',
+        'inertia_page' => 'Accounts/Edit',
+        'stack' => implode("\n", array_map(fn ($i) => "at frame{$i} (app.js:{$i})", range(1, 20))),
+    ];
+    $task->save();
+
+    Artisan::call('dispatch:show', ['code' => $task->code]);
+    $out = Artisan::output();
+
+    expect($out)->toContain('TypeError')
+        ->and($out)->toContain('severity: error')
+        // The "still firing?" signal — previously only reachable by hand-querying
+        // user_events.
+        ->and($out)->toContain('seen 47x')
+        ->and($out)->toContain('last seen: 2026-09-17T12:00:00-04:00')
+        ->and($out)->toContain('Accounts/Edit')
+        ->and($out)->toContain('resources/js/Pages/Accounts/Edit.vue')
+        ->and($out)->toContain('at frame1 (app.js:1)')
+        // Trimmed at 15 frames, and it says how many it withheld rather than
+        // silently truncating.
+        ->and($out)->toContain('at frame15 (app.js:15)')
+        ->and($out)->not->toContain('at frame16 (app.js:16)')
+        ->and($out)->toContain('5 more frames');
+});
+
+test('dispatch:show diagnostics stay quiet for a task that carries none of the new keys', function () {
+    // Every key is optional: older rows must render exactly as before, with no
+    // empty headings and no stray separators.
+    $task = app(DispatchTaskService::class)->create(['title' => 'old shape']);
+    $task->context = ['url' => 'https://example.test/x', 'console_errors' => []];
+    $task->save();
+
+    Artisan::call('dispatch:show', ['code' => $task->code]);
+    $out = Artisan::output();
+
+    expect($out)->toContain('# Diagnostics')
+        ->and($out)->toContain('url: https://example.test/x')
+        ->and($out)->toContain('console errors: 0')
+        ->and($out)->not->toContain('severity:')
+        ->and($out)->not->toContain('seen ')
+        ->and($out)->not->toContain('stack:')
+        ->and($out)->not->toContain('component:');
+});
+
+test('dispatch:show does not let a browser stack frame break console formatting', function () {
+    // <anonymous> is ubiquitous in real browser stacks and is a valid-looking
+    // Symfony style tag; unescaped it is swallowed and the frame reads wrong.
+    $task = app(DispatchTaskService::class)->create(['title' => 'anon frame']);
+    $task->context = ['stack' => "at <anonymous> (app.js:1)\nat next (app.js:2)"];
+    $task->save();
+
+    Artisan::call('dispatch:show', ['code' => $task->code]);
+
+    expect(Artisan::output())->toContain('<anonymous>');
+});
