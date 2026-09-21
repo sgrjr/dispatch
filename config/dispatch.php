@@ -46,6 +46,14 @@ return [
     | delivery. The shipped defaults treat any authenticated user as staff
     | (fine for a single team), apply no tenant scoping, and mail updates.
     */
+    // TASK-1001 — the arc block on a task's FULL shape (dispatch:show, claim,
+    // the agent JSON): how many transcript messages the bound
+    // ConversationResolver is asked for. Sibling tasks are never capped — an
+    // arc's task list is the arc.
+    'arc' => [
+        'transcript_limit' => (int) env('DISPATCH_ARC_TRANSCRIPT_LIMIT', 20),
+    ],
+
     'contracts' => [
         'gate' => DefaultGate::class,
         'tenant' => NullTenantResolver::class,
@@ -65,6 +73,13 @@ return [
         // isLane() always false, so no non-null lane can be written until a
         // host binds a real resolver.
         'lanes' => \Sgrjr\Dispatch\Support\NullLaneResolver::class,
+
+        // TASK-1001 — the conversation (envelope) seam. A conversation is an
+        // arc of undefined size (R8); the package owns `conversation_id` and
+        // the arc's shape, the host owns what a conversation IS. The Null
+        // default still yields sibling tasks (the package computes those) —
+        // it just has no label, URL or transcript to offer.
+        'conversation' => \Sgrjr\Dispatch\Support\NullConversationResolver::class,
     ],
 
     /*

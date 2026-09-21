@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Sgrjr\Dispatch\Contracts\DispatchGate;
 use Sgrjr\Dispatch\Contracts\DispatchNotifier;
+use Sgrjr\Dispatch\Contracts\ConversationResolver;
 use Sgrjr\Dispatch\Contracts\LaneResolver;
 use Sgrjr\Dispatch\Contracts\OriginResolver;
 use Sgrjr\Dispatch\Contracts\SubmitterResolver;
@@ -42,6 +43,8 @@ class DispatchServiceProvider extends ServiceProvider
         // published config/dispatch.php before this existed has no
         // `contracts.lanes` key.
         $this->app->singleton(LaneResolver::class, fn ($app) => $app->make(config('dispatch.contracts.lanes', \Sgrjr\Dispatch\Support\NullLaneResolver::class)));
+        // TASK-1001 — the conversation (envelope) seam, same fallback again.
+        $this->app->singleton(ConversationResolver::class, fn ($app) => $app->make(config('dispatch.contracts.conversation', \Sgrjr\Dispatch\Support\NullConversationResolver::class)));
 
         // Backs the DispatchTask facade (programmatic reporting).
         $this->app->singleton(DispatchManager::class);

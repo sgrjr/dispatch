@@ -84,6 +84,8 @@ test('GOLDEN SHAPE: the full view adds exactly attachments[] + a per-comment att
         'lane_label',
         // TASK-997 part B full-only adds (the ball / hand-off).
         'blocked_by', 'blocks',
+        // TASK-1001 full-only add (the arc / home conversation).
+        'arc',
         'description', 'context', 'attachments', 'comments',
     ]);
 

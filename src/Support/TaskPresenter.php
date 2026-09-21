@@ -2,6 +2,7 @@
 
 namespace Sgrjr\Dispatch\Support;
 
+use Sgrjr\Dispatch\Contracts\ConversationResolver;
 use Sgrjr\Dispatch\Contracts\LaneResolver;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskAttachment;
@@ -89,6 +90,12 @@ class TaskPresenter
             // ids — codes are the one identifier that travels off-instance.
             $data['blocked_by'] = $task->blockedBy->pluck('code')->values()->all();
             $data['blocks'] = $task->blocks->pluck('code')->values()->all();
+            // TASK-1001 (R7/R8) — the ARC: the sibling tasks sharing this
+            // task's home conversation, in birth order, plus whatever the
+            // bound ConversationResolver can say about the envelope. Full
+            // shape only: the transcript costs a query, and a list view must
+            // never pay it per row.
+            $data['arc'] = self::arc($task);
             $data['description'] = $task->description;
             $data['context'] = $task->context;
             // Task-level attachment metadata (W8-6): existence SIGNALS only — there
@@ -181,6 +188,9 @@ class TaskPresenter
                 // links, full shape only.
                 'blocked_by' => 'string[] — task CODES currently blocking this one (dispatch_task_links, this task is the BLOCKED side)',
                 'blocks' => 'string[] — task CODES this one blocks (this task is the BLOCKER side)',
+                // TASK-1001 — the arc (R7/R8). Always present; an unhomed
+                // task has conversation_id null and empty lists.
+                'arc' => 'object — the home conversation and its other tasks: {conversation_id: int|null, conversation_label: string|null, conversation_url: string|null, siblings: [{code, title, status, lane, assignee, created_at}] in BIRTH ORDER, transcript: [{id, author, body, at}] oldest-first}. label/url/transcript come from the bound ConversationResolver and are null/[] when none is bound.',
                 // W15-2: the one-word description sent agents past a complete
                 // machine-filed diagnosis — a sweep DECLINED a live bug whose
                 // context already named its fix commit. For an exception-filed
@@ -348,6 +358,65 @@ class TaskPresenter
      *   2. the already-loaded `comments` relation (full shape) — counted in memory;
      *   3. a single COUNT query as a fallback (single-task summaries only).
      */
+    /**
+     * TASK-1001 (R7/R8) — the arc block on the full shape. A conversation is
+     * an arc of undefined size: the package knows which tasks share the
+     * envelope (birth order by id), the bound ConversationResolver supplies
+     * the label, URL and transcript.
+     *
+     * Always present, never null, so a consumer can read `arc.siblings`
+     * without a guard. An unhomed task yields the same shape with a null
+     * `conversation_id` and empty lists — "no arc" and "an arc of one" stay
+     * distinguishable by `conversation_id`, not by a missing key.
+     *
+     * The resolver is rescue-wrapped: a chat backend that is down must not
+     * be the reason `dispatch:show` fails. Context is context.
+     *
+     * Public so `dispatch:show` can render the arc without shaping the whole
+     * task twice (which would also run the resolver twice).
+     *
+     * @return array<string,mixed>
+     */
+    public static function arc(Task $task): array
+    {
+        $id = $task->conversation_id;
+
+        $arc = [
+            'conversation_id' => $id,
+            'conversation_label' => null,
+            'conversation_url' => null,
+            'siblings' => [],
+            'transcript' => [],
+        ];
+
+        if ($id === null) {
+            return $arc;
+        }
+
+        $arc['siblings'] = $task->arc()->map(fn (Task $t) => [
+            'code' => $t->code,
+            'title' => $t->title,
+            'status' => $t->status,
+            'lane' => $t->lane,
+            'assignee' => $t->assignee_user_id ? self::userRef($t->assignee) : null,
+            'created_at' => optional($t->created_at)->toIso8601String(),
+        ])->values()->all();
+
+        try {
+            $resolver = app(ConversationResolver::class);
+            $arc['conversation_label'] = $resolver->label($id);
+            $arc['conversation_url'] = $resolver->url($id);
+            $arc['transcript'] = $resolver->transcript(
+                $id,
+                (int) config('dispatch.arc.transcript_limit', 20),
+            );
+        } catch (\Throwable) {
+            // Leave the resolver-sourced keys at their defaults.
+        }
+
+        return $arc;
+    }
+
     protected static function commentCount(Task $task): int
     {
         $attrs = $task->getAttributes();

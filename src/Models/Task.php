@@ -277,6 +277,35 @@ class Task extends Model
     }
 
     /**
+     * TASK-1001 (R7/R8) — the ARC this task belongs to: every task sharing
+     * its home conversation, in BIRTH ORDER (id, not created_at: two tasks
+     * minted in the same batch share a timestamp, and the arc's whole point
+     * is a stable reading order).
+     *
+     * $includeSelf false gives "the siblings", which is what a task's own
+     * view wants. A task with no conversation has no arc — an empty
+     * collection, never "every unhomed task".
+     *
+     * Deliberately NOT visibility-scoped: like the anchor and lane seams,
+     * this answers a structural question. A caller rendering the arc to a
+     * human applies its own DispatchGate scope — see VisibilityGates.
+     *
+     * @return \Illuminate\Database\Eloquent\Collection<int,static>
+     */
+    public function arc(bool $includeSelf = false)
+    {
+        if ($this->conversation_id === null) {
+            return $this->newCollection();
+        }
+
+        return static::query()
+            ->inConversation((int) $this->conversation_id)
+            ->when(! $includeSelf, fn (Builder $q) => $q->whereKeyNot($this->getKey()))
+            ->orderBy('id')
+            ->get();
+    }
+
+    /**
      * Tasks whose topic rolls up to this account key. NEVER a visibility
      * scope — see VisibilityGates, which does not consult this column.
      */

@@ -97,6 +97,8 @@ class DispatchShow extends Command
             $this->line('  blocks:     '.$task->blocks->pluck('code')->implode(', '));
         }
 
+        $this->printArc($task);
+
         if ($task->description) {
             $this->newLine();
             $this->line('<fg=gray># Description</>');
@@ -243,4 +245,54 @@ class DispatchShow extends Command
             $this->line('  '.implode('  ·  ', $bits));
         }
     }
+
+    /**
+     * TASK-1001 (R7/R8) — the ARC: the other tasks in this task's home
+     * conversation, and the tail of that conversation's transcript.
+     *
+     * Printed between the header and the description because that is the
+     * reading order a human needs: what is this part OF, before what is it.
+     * Silent when the task has no conversation — an unhomed task should not
+     * grow an empty section.
+     */
+    protected function printArc(Task $task): void
+    {
+        $arc = TaskPresenter::arc($task);
+
+        if ($arc['conversation_id'] === null) {
+            return;
+        }
+
+        $this->newLine();
+        $this->line('<fg=gray># Arc</> '.($arc['conversation_label'] ?? ('conversation '.$arc['conversation_id'])));
+        if (! empty($arc['conversation_url'])) {
+            $this->line('  '.$arc['conversation_url']);
+        }
+
+        if ($arc['siblings'] === []) {
+            $this->line('  <fg=gray>(the only task in this conversation so far)</>');
+        }
+
+        foreach ($arc['siblings'] as $sib) {
+            $this->line(sprintf(
+                '  <fg=cyan>%s</> [%s] %s%s',
+                $sib['code'],
+                $sib['status'],
+                $sib['title'],
+                $sib['lane'] !== null ? '  <fg=gray>· '.$sib['lane'].'</>' : '',
+            ));
+        }
+
+        if (! empty($arc['transcript'])) {
+            $this->line('  <fg=gray>recent transcript:</>');
+            foreach ($arc['transcript'] as $m) {
+                $body = trim((string) ($m['body'] ?? ''));
+                if (mb_strlen($body) > 160) {
+                    $body = mb_substr($body, 0, 157).'...';
+                }
+                $this->line('    <fg=gray>'.($m['author'] ?? 'someone').':</> '.$this->esc($body));
+            }
+        }
+    }
+
 }
