@@ -51,7 +51,7 @@ class DispatchShow extends Command
         $taskModel = config('dispatch.models.task');
 
         $task = $taskModel::query()
-            ->with(['labels', 'submitter', 'assignee', 'comments.user', 'attachments', 'comments.attachments'])
+            ->with(['labels', 'submitter', 'assignee', 'comments.user', 'attachments', 'comments.attachments', 'blockedBy', 'blocks'])
             ->where('code', $this->argument('code'))
             ->first();
 
@@ -88,6 +88,13 @@ class DispatchShow extends Command
         }
         if ($task->assignee) {
             $this->line('  assignee:  '.$task->assignee->email);
+        }
+        // TASK-997 part B — real task->task links.
+        if ($task->blockedBy->isNotEmpty()) {
+            $this->line('  blocked by: '.$task->blockedBy->pluck('code')->implode(', '));
+        }
+        if ($task->blocks->isNotEmpty()) {
+            $this->line('  blocks:     '.$task->blocks->pluck('code')->implode(', '));
         }
 
         if ($task->description) {

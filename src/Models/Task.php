@@ -331,6 +331,57 @@ class Task extends Model
         return $query->whereNull('lane');
     }
 
+    /**
+     * TASK-997 part B — the tasks that BLOCK this one (this task is the
+     * blocked side of `dispatch_task_links`). Real dependencies, distinct
+     * from labels/lane: created by {@see
+     * \Sgrjr\Dispatch\Services\DispatchTaskService::linkBlockedBy()} (cycle-
+     * checked there, never here), and by the Ask half of the hand-off.
+     */
+    public function blockedBy(): BelongsToMany
+    {
+        return $this->belongsToMany(config('dispatch.models.task'), 'dispatch_task_links', 'task_id', 'blocked_by_task_id')
+            ->withPivot(['kind', 'created_by_user_id'])
+            ->withTimestamps();
+    }
+
+    /**
+     * The inverse: tasks THIS one blocks (this task is the blocker side).
+     * What {@see \Sgrjr\Dispatch\Services\DispatchTaskService::notifyDependentsOfClosure()}
+     * walks when this task reaches a terminal status.
+     */
+    public function blocks(): BelongsToMany
+    {
+        return $this->belongsToMany(config('dispatch.models.task'), 'dispatch_task_links', 'blocked_by_task_id', 'task_id')
+            ->withPivot(['kind', 'created_by_user_id'])
+            ->withTimestamps();
+    }
+
+    /**
+     * Tasks currently held up by at least one ACTIVE (non-terminal) blocker.
+     * A blocker that has already reached a terminal status ({@see
+     * inactiveStatuses()}) no longer counts — the link row is kept for
+     * history, but it stops gating. Deliberately dynamic (no stored
+     * `blocked` boolean to fall out of sync): the same status check both
+     * scopes share is the one and only source of truth.
+     */
+    public function scopeBlocked(Builder $query): Builder
+    {
+        return $query->whereHas(
+            'blockedBy',
+            fn (Builder $q) => $q->whereNotIn('status', static::inactiveStatuses())
+        );
+    }
+
+    /** The inverse of {@see scopeBlocked()} — no active blocker, or none at all. */
+    public function scopeUnblocked(Builder $query): Builder
+    {
+        return $query->whereDoesntHave(
+            'blockedBy',
+            fn (Builder $q) => $q->whereNotIn('status', static::inactiveStatuses())
+        );
+    }
+
     public function submitter(): BelongsTo
     {
         return $this->belongsTo(config('dispatch.models.user'), 'submitter_user_id');

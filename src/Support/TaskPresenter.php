@@ -84,6 +84,11 @@ class TaskPresenter
             // posture as topic_label/origin_label above. Null when unrouted or
             // when the bound resolver doesn't recognize the stored key.
             $data['lane_label'] = $task->lane !== null ? app(LaneResolver::class)->label($task->lane) : null;
+            // TASK-997 part B — real task->task links, full shape only (like
+            // topic_label/origin_label above): arrays of task CODES, never
+            // ids — codes are the one identifier that travels off-instance.
+            $data['blocked_by'] = $task->blockedBy->pluck('code')->values()->all();
+            $data['blocks'] = $task->blocks->pluck('code')->values()->all();
             $data['description'] = $task->description;
             $data['context'] = $task->context;
             // Task-level attachment metadata (W8-6): existence SIGNALS only — there
@@ -172,6 +177,10 @@ class TaskPresenter
                 'origin_url' => 'string|null — link to the origin, when the resolver has one',
                 // TASK-997 part A — resolver call, full shape only.
                 'lane_label' => 'string|null — human label for `lane`, resolved via LaneResolver; null when unrouted or the resolver doesn\'t recognize the key',
+                // TASK-997 part B (the ball / hand-off) — real task->task
+                // links, full shape only.
+                'blocked_by' => 'string[] — task CODES currently blocking this one (dispatch_task_links, this task is the BLOCKED side)',
+                'blocks' => 'string[] — task CODES this one blocks (this task is the BLOCKER side)',
                 // W15-2: the one-word description sent agents past a complete
                 // machine-filed diagnosis — a sweep DECLINED a live bug whose
                 // context already named its fix commit. For an exception-filed
@@ -232,6 +241,17 @@ class TaskPresenter
                     // way, a non-null value must pass LaneResolver::isLane()
                     // or the WHOLE batch fails naming the operation.
                     'lane' => 'string|null — "<department>" or "<department>:<role>"; tri-state on update like due_at',
+                    // TASK-997 part B — ADDITIVE (never a replace-all), same
+                    // posture as `labels`: entries fold onto whatever links
+                    // the task already carries. Each entry is a task CODE or
+                    // `@ref`, an in-batch reference to an EARLIER op's `ref`
+                    // in this same manifest (what ends the two-batch dance —
+                    // file the blocker and the blocked task's link in ONE
+                    // apply). An unresolvable ref, or a code not found, fails
+                    // the WHOLE batch naming the operation index; so does a
+                    // self-link or a would-be cycle (see
+                    // DispatchTaskService::linkBlockedBy()).
+                    'blocked_by' => 'string[]|null — task codes and/or "@ref" entries to ADD as blockers of this task (add or update)',
                 ],
                 // Sizing a manifest by op-count alone is not enough — a single
                 // oversized comment body used to blow a column ceiling and take
@@ -308,6 +328,11 @@ class TaskPresenter
                 TaskComment::EVENT_MERGED,
                 TaskComment::EVENT_CLAIMED,
                 TaskComment::EVENT_LANE_CHANGE,
+                // TASK-997 part B (the ball / hand-off).
+                TaskComment::EVENT_HANDED_OFF,
+                TaskComment::EVENT_ASKED,
+                TaskComment::EVENT_ANSWERED,
+                TaskComment::EVENT_DEPENDENCY_RESOLVED,
             ],
         ];
     }

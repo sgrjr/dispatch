@@ -177,6 +177,135 @@ php artisan optimize:clear
   (pass/ask), blocked-by links, push notifications, personal lane-scoped
   views, agents serving a lane.
 
+## Unreleased — the ball (hand-off + task links, TASK-997 part B)
+
+**One migration (`dispatch_task_links`), one new agent verb (`handoff`), no breaking change.**
+
+```bash
+composer update sgrjr/dispatch
+php artisan migrate              # 000022: dispatch_task_links
+php artisan optimize:clear
+```
+
+Part B of TASK-997 (see "Lanes" above for part A): the HAND-OFF — who is
+expected to pick a task up next — and real task->task BLOCKED-BY links,
+which is what makes "Ask" (the legacy request -> respond -> dismiss loop)
+work.
+
+**The ball** = the current holder of an open task: a person
+(`assignee_user_id`) or the lane itself (unassigned = unclaimed). Exactly
+one holder, always inside the task's lane.
+
+- **New table `dispatch_task_links`**: `task_id` (the BLOCKED task),
+  `blocked_by_task_id` (the BLOCKER), `kind` (string, default `blocks` —
+  room for `relates` later; nothing reads a second kind yet),
+  `created_by_user_id` nullable, timestamps; unique on (`task_id`,
+  `blocked_by_task_id`, `kind`).
+- **New model API on `Task`**: `blockedBy()` / `blocks()` (belongsToMany
+  through the link table), `scopeBlocked()` / `scopeUnblocked()` —
+  DYNAMIC, computed off the blocker's CURRENT status ({@see
+  Task::inactiveStatuses()}), never a stored boolean that could drift out
+  of sync with the row it describes.
+- **New service method**
+  `DispatchTaskService::handoff(Task $task, Authenticatable $to, ?Authenticatable $actor, array $opts): Task`
+  — `$opts`: `ask` (bool, default false), `lane` (?string — required only
+  to disambiguate), `note` (?string), `due` (?string), `keep_open` (bool,
+  default false). `$actor` is **nullable** — an `AgentSession` isn't an
+  `Authenticatable`, and the CLI is often an unauthenticated trusted
+  context, so a null actor simply means the timeline events below carry no
+  `user_id`, same posture as every other agent/CLI mutation in the package.
+
+  | Recipient's lanes vs. the task's lane | PASS ("your turn") | ASK ("I need this, then it's back to me") |
+  |---|---|---|
+  | Same lane (or BOTH unrouted — see the inert-compatible `sameLane()` reading below) | The ball moves on the SAME task: `assignee_user_id := $to`, ONE `assignee_change` event carrying the note | Still mints a NEW, linked task — even in the same lane |
+  | Different lane, or the task is unrouted and the recipient works ≥1 lane | Mints a new task in the recipient's lane (their single most-specific one, `$opts['lane']` to disambiguate, or a "pick a lane" error); the passing task CLOSES (`status` -> `done`) unless `keep_open` | Mints a new task in the recipient's lane, same selection rule |
+  | Recipient works no lane at all | New task lands in the no-department lane, for an admin to route | Same |
+
+  A cross-lane (or no-lane) pass never simply reassigns — it mints a NEW
+  task (same `conversation_id`; `origin` = `task:<passing code>`) because a
+  person holding another lane's task is invisible to their own manager
+  (R21/R22). An ask ALWAYS mints a new, linked task and BLOCKS the asker's
+  task with it; the asker's task keeps its holder, untouched, for the
+  whole time it's blocked.
+
+  `sameLane()`'s inert-compatible reading: `$taskLane === null &&
+  $recipientLanes === []` counts as "the same place" too — with the
+  shipped `NullLaneResolver` bound, every task and every user is
+  permanently in that state, so a pass degrades to a plain reassignment
+  (no task is ever minted) rather than spinning a same-shape new task on
+  every hand-off. "Nothing can create a lane" holds; "hand-off still works"
+  also holds.
+- **`DispatchTaskService::linkBlockedBy(Task $task, Task $blocker, ?int $actorUserId = null, string $kind = TaskLink::KIND_BLOCKS): TaskLink`**
+  — the primitive behind Ask and the batch `blocked_by` field. A self-link,
+  or a cycle (linking A blocked-by B when B is already, transitively,
+  blocked by A), is refused with a clear `InvalidArgumentException`;
+  re-linking the same pair/kind is idempotent (returns the existing row).
+- **`DispatchTaskService::notifyDependentsOfClosure(Task $task, ?int $actorUserId = null): void`**
+  — "closing a blocker notifies the next holder." A no-op unless $task just
+  reached a terminal status, so it's safe to call unconditionally; wired
+  into `dispatch:done`, `POST agent/done`, `dispatch:batch`'s `update` op,
+  and every Livewire status-change surface (`TaskShow`, `TaskList`,
+  `TaskBoard`). For each task the closer blocks: if the closer's `origin`
+  points back at that dependent (`origin_type` = `task`, `origin_id` = the
+  dependent's own code — the signature an Ask task always carries), **the
+  ball RETURNS**: the dependent is re-assigned to whoever asked (the
+  link's `created_by_user_id`, falling back to its current holder) and
+  gains an `answered` event carrying the closer's last human comment (or
+  its recorded `result.resolution`/`result.commit`). Otherwise it's a
+  plain `blocked_by` link: the dependent gets a `dependency_resolved`
+  event, no reassignment. **Both reuse the EXISTING `DispatchNotifier`
+  seam** (`taskAssigned` for a real reassignment, `taskCommented`
+  otherwise) — no new channel.
+- **New CLI**:
+  `dispatch:handoff <CODE> --to=<id|email> [--ask] [--lane=] [--note=|--note-file=] [--due=] [--keep-open]`,
+  local and `--remote` (`POST agent/handoff`). `--to` accepts a numeric user
+  id or an email, same convention as `dispatch:import`'s
+  submitter/assignee resolution.
+
+  ⚠️ **A host must add `handoff` to its published `agent.verbs`** (or
+  re-publish `config/dispatch.php --force` and re-apply customizations)
+  before any session can be GRANTED the scope — the exact same
+  "stale-published-config" trap that previously disabled `batch` (see
+  "Enabling the batch verb" below; the fix is identical, just for
+  `handoff`). Without it, the verb 403s "not scoped" regardless of what a
+  session requests. `php artisan dispatch:doctor` flags this the same way
+  it flags a missing `batch`.
+- **New JSON fields, FULL shape only** (never the summary/list shape,
+  matching `lane_label`'s posture): `blocked_by` / `blocks` — arrays of
+  task **codes** (never ids — codes are the identifier that travels
+  off-instance). `dispatch:show` prints them as plain lines.
+- **New batch op field `blocked_by`**: an array of task codes and/or
+  `@ref` entries — an in-batch reference to an EARLIER op's `ref` in the
+  SAME manifest, resolved to that op's minted code. This is what ends the
+  two-batch dance: file the blocker and the blocked task's link in ONE
+  `dispatch:batch` / `POST agent/batch` call instead of two round-trips.
+  ADDITIVE, same posture as `labels` — never a replace-all. An
+  unresolvable `@ref`, an unknown code, a self-link, or a would-be cycle
+  fails the WHOLE batch, naming the operation index.
+- **New event types** (`Sgrjr\Dispatch\Models\TaskComment`): `handed_off`
+  (a cross-lane/no-lane pass, recorded on the PASSING task),  `asked` (on
+  the asker's task, when the ask mints the recipient's task), `answered`
+  (on the asker's task, when the ask closes and the ball returns),
+  `dependency_resolved` (on a dependent task, a plain — non-ask —
+  `blocked_by` link's blocker closing).
+- **Livewire `TaskShow`**: a new "Hand off" panel (staff/`update`-ability
+  only) — a person picker (the same assignable-users pool as the assignee
+  dropdown), an Ask checkbox, a note, an optional lane disambiguator
+  (shown only once a real `LaneResolver` is bound and needed), plus the
+  blocked-by/blocks lists as plain links to those tasks. **Deliberately
+  NOT gated on a real `LaneResolver` being bound** — see the inert reading
+  of `sameLane()` above — so the panel stays useful on a host that hasn't
+  adopted lanes at all. A cross-lane pass redirects the page to the new
+  continuation task (mirroring `mergeInto()`'s redirect); a same-lane pass
+  or an ask refreshes in place.
+- **Visibility unchanged**: neither `dispatch_task_links` nor `lane`
+  widens who can see a task — `DispatchGate::scopeVisible()` remains the
+  one and only visibility scope, pinned by a test that greps
+  `VisibilityGates`'s source for both the table and the relation names.
+- **Out of scope for this release**: push notifications, personal
+  lane-scoped views, agents serving a lane (still part A's stated
+  out-of-scope list — part B doesn't touch it either).
+
 ## Unreleased — label cleanup (`/labels`) + a full-width layout
 
 **One migration, no config key, no asset republish.**

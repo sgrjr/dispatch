@@ -72,6 +72,20 @@ class TaskShow extends Component
     /** TASK-997 part A — the lane picked in the "Route to…" picker (canRoute() users, or a lane member claiming an unrouted task for their department). */
     public string $routeLaneChoice = '';
 
+    /**
+     * TASK-997 part B — the "Hand off" panel: who gets the ball, whether
+     * it's an Ask, an optional note, and (only when the choice is
+     * ambiguous — see DispatchTaskService::handoff()) which of the
+     * recipient's lanes to use.
+     */
+    public string $handoffToUserId = '';
+
+    public bool $handoffAsk = false;
+
+    public string $handoffNote = '';
+
+    public string $handoffLaneChoice = '';
+
     protected $listeners = ['commentAdded' => '$refresh'];
 
     public function mount(Task $task): void
@@ -252,6 +266,10 @@ class TaskShow extends Component
         // never throws.
         if ($statusChanged) {
             app(DispatchNotifier::class)->taskStatusChanged($this->task, $oldStatus, $this->task->status, Auth::user());
+            // TASK-997 part B — "closing a blocker notifies the next
+            // holder." A no-op unless $this->task just went terminal AND
+            // has dependents.
+            app(DispatchTaskService::class)->notifyDependentsOfClosure($this->task, Auth::id());
         }
         if ($assigneeChanged) {
             $notifier = app(DispatchNotifier::class);
@@ -477,6 +495,56 @@ class TaskShow extends Component
     }
 
     /**
+     * TASK-997 part B — pass or ask. Errors (an ambiguous/invalid lane pick)
+     * surface on `handoffLaneChoice`, matching claimForSelf()/routeTask()'s
+     * posture. A cross-lane/no-lane PASS returns a DIFFERENT task (the
+     * continuation) — the ball is no longer here, so the page follows it
+     * (mirroring mergeInto()'s redirect). A same-lane pass or an ask returns
+     * THIS task (moved, or now blocked) — stay put and refresh in place.
+     */
+    public function handoffTask(): void
+    {
+        Gate::authorize('update', $this->task);
+
+        $this->validate(['handoffToUserId' => 'required']);
+
+        $to = AssignableUsers::query()->whereKey($this->handoffToUserId)->first();
+        if ($to === null) {
+            $this->addError('handoffToUserId', 'Pick a user from the list.');
+
+            return;
+        }
+
+        $originalCode = $this->task->code;
+
+        try {
+            $result = app(DispatchTaskService::class)->handoff($this->task, $to, Auth::user(), array_filter([
+                'ask' => $this->handoffAsk,
+                'lane' => $this->handoffLaneChoice !== '' ? $this->handoffLaneChoice : null,
+                'note' => $this->handoffNote !== '' ? $this->handoffNote : null,
+            ], fn ($v) => $v !== null && $v !== false));
+        } catch (\InvalidArgumentException $e) {
+            $this->addError('handoffLaneChoice', $e->getMessage());
+
+            return;
+        }
+
+        $this->handoffToUserId = '';
+        $this->handoffAsk = false;
+        $this->handoffNote = '';
+        $this->handoffLaneChoice = '';
+
+        if ($result->code !== $originalCode) {
+            $this->redirect(route('dispatch.show', $result), navigate: false);
+
+            return;
+        }
+
+        $this->task = $result->load(['labels', 'submitter', 'assignee', 'attachments', 'blockedBy', 'blocks']);
+        $this->dispatch('task-saved');
+    }
+
+    /**
      * Mark this task a duplicate and fold it into another (F5). The target is
      * resolved by code through the SAME visibility scope used everywhere else
      * in the package (DispatchGate::scopeVisible), so staff can never merge
@@ -572,6 +640,14 @@ class TaskShow extends Component
             'myLaneOptions' => $myLaneOptions,
             'canRouteLane' => $canRouteLane,
             'allLaneOptions' => $allLaneOptions,
+            // TASK-997 part B — the ball. Same pool as the assignee dropdown;
+            // the panel itself works with the inert NullLaneResolver too (a
+            // same-lane pass degrades to a plain reassignment — see
+            // DispatchTaskService::sameLane()), so it is NOT gated on
+            // $laneActive.
+            'handoffOptions' => $this->canEdit() ? AssignableUsers::options() : collect(),
+            'blockedByTasks' => $this->task->blockedBy()->get(['dispatch_tasks.id', 'dispatch_tasks.code', 'dispatch_tasks.title', 'dispatch_tasks.status']),
+            'blocksTasks' => $this->task->blocks()->get(['dispatch_tasks.id', 'dispatch_tasks.code', 'dispatch_tasks.title', 'dispatch_tasks.status']),
         ])->layout('dispatch::components.layout');
     }
 }

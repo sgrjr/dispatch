@@ -69,7 +69,7 @@ class DispatchClaim extends Command
             return $this->reportNothingClaimed($code);
         }
 
-        $task->loadMissing('labels', 'submitter', 'assignee', 'comments.user', 'attachments', 'comments.attachments');
+        $task->loadMissing('labels', 'submitter', 'assignee', 'comments.user', 'attachments', 'comments.attachments', 'blockedBy', 'blocks');
         $claimedAt = optional(
             $task->comments->where('event_type', TaskComment::EVENT_CLAIMED)->max('created_at')
         )->toIso8601String();

@@ -12,6 +12,7 @@ use Sgrjr\Dispatch\Contracts\LaneResolver;
 use Sgrjr\Dispatch\Livewire\Concerns\HasVocabMultiFilters;
 use Sgrjr\Dispatch\Models\Focus;
 use Sgrjr\Dispatch\Models\TaskComment;
+use Sgrjr\Dispatch\Services\DispatchTaskService;
 use Sgrjr\Dispatch\Support\LabelFacets;
 use Sgrjr\Dispatch\Support\NullLaneResolver;
 
@@ -180,6 +181,8 @@ class TaskBoard extends Component
             // path in the package fires (see TaskShow::saveMeta()), now wired
             // up for a board-driven move too. DispatchNotifier never throws.
             app(DispatchNotifier::class)->taskStatusChanged($task, $fromStatus, $toStatus, $user);
+            // TASK-997 part B — "closing a blocker notifies the next holder."
+            app(DispatchTaskService::class)->notifyDependentsOfClosure($task, Auth::id());
         }
     }
 
@@ -361,6 +364,8 @@ class TaskBoard extends Component
             );
 
             $notifier->taskStatusChanged($task, $fromStatus, $toStatus, $user);
+            // TASK-997 part B — "closing a blocker notifies the next holder."
+            app(DispatchTaskService::class)->notifyDependentsOfClosure($task, Auth::id());
         }
 
         $this->selectedIds = [];

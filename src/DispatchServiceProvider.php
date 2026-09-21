@@ -260,6 +260,8 @@ class DispatchServiceProvider extends ServiceProvider
             \Sgrjr\Dispatch\Console\Commands\DispatchLabelsRetire::class,
             // Agent layer (Wave 1) — auto-register once the classes land.
             \Sgrjr\Dispatch\Console\Commands\DispatchClaim::class,
+            // TASK-997 part B — the ball (hand-off).
+            \Sgrjr\Dispatch\Console\Commands\DispatchHandoff::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchBatch::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchSchema::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchSessionRequest::class,

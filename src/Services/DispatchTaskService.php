@@ -9,6 +9,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Sgrjr\Dispatch\Contracts\DispatchNotifier;
 use Sgrjr\Dispatch\Contracts\LaneResolver;
 use Sgrjr\Dispatch\Contracts\SubmitterResolver;
 use Sgrjr\Dispatch\Contracts\TenantResolver;
@@ -16,8 +17,10 @@ use Sgrjr\Dispatch\Models\AgentSession;
 use Sgrjr\Dispatch\Models\LabelAlias;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
+use Sgrjr\Dispatch\Models\TaskLink;
 use Sgrjr\Dispatch\Support\AgentMetrics;
 use Sgrjr\Dispatch\Support\Anchor;
+use Sgrjr\Dispatch\Support\DueDate;
 use Sgrjr\Dispatch\Support\Lane;
 
 /**
@@ -776,6 +779,481 @@ class DispatchTaskService
         }
 
         return array_values(array_unique($result));
+    }
+
+    /**
+     * TASK-997 part B, R15/R22 — the hand-off ("the ball"). $to is always a
+     * PERSON; where they sit relative to $task's lane decides what happens:
+     *
+     *   - $to already works $task's lane (or both are unrouted — see
+     *     `sameLane()`, the inert-compatible reading of R21/R22): the ball
+     *     moves on THIS SAME task (assignee := $to).
+     *   - Otherwise: a NEW task is minted in one of $to's lanes (their single
+     *     most-specific one, or `$opts['lane']` to disambiguate, or the
+     *     no-department lane when $to works none) — same conversation_id,
+     *     origin = `task:<this code>`, assigned to $to. The ball never
+     *     simply leaves its lane: a person holding another lane's task is
+     *     invisible to their own manager.
+     *
+     * PASS (`$opts['ask']` false, the default): when a new task is minted,
+     * THIS task closes (status -> done) unless `$opts['keep_open']` — its
+     * part is done. ASK (`$opts['ask']` true): ALWAYS mints a new task, even
+     * when $to works this task's own lane, and that new task BLOCKS this
+     * one (a real {@see TaskLink} row) instead of closing it — $task keeps
+     * its holder, untouched, and gains the blocked-by link. See {@see
+     * notifyDependentsOfClosure()} for the return-the-ball half: it runs
+     * whenever ANY task reaches a terminal status and, for an ask
+     * specifically, reassigns the asker's task back to them with the
+     * answer.
+     *
+     * $actor is nullable (not the non-nullable Authenticatable a first read
+     * of the contract might suggest): an AgentSession is not an
+     * Authenticatable, and the CLI is a trusted, often-unauthenticated
+     * context (mirroring `create()`'s "an agent task can carry a null
+     * submitter" posture) — a null actor simply means the timeline events
+     * below carry no user_id, same as every other agent/CLI mutation.
+     *
+     * @param  array{ask?:bool,lane?:?string,note?:?string,due?:?string,keep_open?:bool}  $opts
+     * @return Task the task now carrying the ball: THIS task (pass, same
+     *              lane; ask, always — it never moves), or the newly minted
+     *              continuation (a pass that left the lane).
+     *
+     * @throws \InvalidArgumentException when `$opts['lane']` isn't one of
+     *                                   $to's lanes, or omitting it leaves
+     *                                   more than one candidate (mirrors
+     *                                   claimForUser()'s "pick a lane").
+     */
+    public function handoff(Task $task, Authenticatable $to, ?Authenticatable $actor, array $opts = []): Task
+    {
+        $ask = (bool) ($opts['ask'] ?? false);
+        $recipientLanes = app(LaneResolver::class)->lanesFor($to);
+        $sameLane = $this->sameLane($task->lane, $recipientLanes);
+
+        if (! $ask && $sameLane) {
+            return $this->passWithinLane($task, $to, $actor, $opts);
+        }
+
+        $lane = $sameLane
+            ? $task->lane
+            : $this->pickHandoffLane($recipientLanes, $opts['lane'] ?? null);
+
+        return $ask
+            ? $this->createAskTask($task, $to, $actor, $opts, $lane)
+            : $this->createContinuationTask($task, $to, $actor, $opts, $lane);
+    }
+
+    /**
+     * The "does the ball stay in the same place, lane-wise" test behind
+     * handoff()'s row-1-vs-not decision. A real lane match is the obvious
+     * case; `$taskLane === null && $recipientLanes === []` is the
+     * inert-compatible reading — when NEITHER side has any lane at all
+     * (the shipped NullLaneResolver, or a real resolver for a person who
+     * happens to work none), there is nothing for the ball to "leave", so a
+     * plain reassignment is correct rather than spinning a same-shape new
+     * task. This is what keeps "handoff still works for same-lane
+     * assignment" true with the Null resolver bound.
+     *
+     * @param  array<int,string>  $recipientLanes
+     */
+    protected function sameLane(?string $taskLane, array $recipientLanes): bool
+    {
+        return $taskLane !== null
+            ? in_array($taskLane, $recipientLanes, true)
+            : $recipientLanes === [];
+    }
+
+    /**
+     * Resolve which lane a MINTED continuation/ask task lands in, when the
+     * recipient does NOT already work the passing task's lane. Mirrors
+     * claimForUser()'s reduction exactly, but for a THIRD PARTY (the
+     * recipient), not the caller — so the messages name "the recipient"
+     * rather than "you". Zero candidates (R15) is not an error: the new
+     * task lands in the no-department lane for an admin to route.
+     *
+     * @param  array<int,string>  $recipientLanes
+     */
+    protected function pickHandoffLane(array $recipientLanes, ?string $requested): ?string
+    {
+        if ($requested !== null) {
+            if (! in_array($requested, $recipientLanes, true)) {
+                throw new \InvalidArgumentException("`{$requested}` is not one of the recipient's lanes.");
+            }
+
+            return $requested;
+        }
+
+        $candidates = $this->reduceLanesToMostSpecific($recipientLanes);
+
+        if (count($candidates) === 1) {
+            return $candidates[0];
+        }
+        if (count($candidates) > 1) {
+            throw new \InvalidArgumentException('Pick a lane for the recipient: '.implode(', ', $candidates));
+        }
+
+        return null; // no lanes at all — lands in the no-department lane.
+    }
+
+    /**
+     * PASS, same lane (or both unrouted): the ball moves on THIS task. ONE
+     * assignee_change event carries the note; a given `due` is applied
+     * tri-state, same posture as every other due-date write surface.
+     *
+     * @param  array{note?:?string,due?:?string}  $opts
+     */
+    protected function passWithinLane(Task $task, Authenticatable $to, ?Authenticatable $actor, array $opts): Task
+    {
+        $note = $opts['note'] ?? null;
+        $actorId = $actor?->getAuthIdentifier();
+
+        return DB::transaction(function () use ($task, $to, $actor, $actorId, $note, $opts) {
+            $fromId = $task->assignee_user_id;
+            $toId = $to->getAuthIdentifier();
+
+            $dueChanged = false;
+            $dueFrom = null;
+            $dueTo = null;
+            if (array_key_exists('due', $opts) && $opts['due'] !== null) {
+                $dueFrom = $task->due_at?->toDateString();
+                $due = DueDate::resolve($opts['due']);
+                $task->due_at = $due;
+                $dueTo = $due?->toDateString();
+                $dueChanged = $dueFrom !== $dueTo;
+            }
+
+            $task->assignee_user_id = $toId;
+            $task->save();
+
+            $task->recordEvent(
+                TaskComment::EVENT_ASSIGNEE_CHANGE,
+                $actorId,
+                array_filter(['from' => $fromId, 'to' => $toId, 'note' => $note], fn ($v) => $v !== null),
+                $note ? "Passed to {$this->userLabel($to)}: {$note}" : "Passed to {$this->userLabel($to)}.",
+            );
+
+            if ($dueChanged) {
+                $task->recordEvent(
+                    TaskComment::EVENT_COMMENT,
+                    $actorId,
+                    ['due_at' => ['from' => $dueFrom, 'to' => $dueTo]],
+                    $dueTo ? "Due date set to {$dueTo}." : 'Due date cleared.',
+                );
+            }
+
+            app(DispatchNotifier::class)->taskAssigned($task, $fromId, (int) $toId, $actor);
+
+            return $task->refresh();
+        });
+    }
+
+    /**
+     * PASS, cross-lane (or no lane at all): mint the continuation task and,
+     * unless `$opts['keep_open']`, close THIS one — its part is done.
+     * Returns the NEW task (where the ball now is).
+     *
+     * @param  array{note?:?string,due?:?string,keep_open?:bool}  $opts
+     */
+    protected function createContinuationTask(Task $task, Authenticatable $to, ?Authenticatable $actor, array $opts, ?string $lane): Task
+    {
+        $note = $opts['note'] ?? null;
+        $actorId = $actor?->getAuthIdentifier();
+
+        return DB::transaction(function () use ($task, $to, $actor, $actorId, $note, $opts, $lane) {
+            $new = $this->mintHandoffTask($task, $to, $actor, $lane, $note, 'Passed from');
+
+            $task->recordEvent(
+                TaskComment::EVENT_HANDED_OFF,
+                $actorId,
+                array_filter(['to' => $to->getAuthIdentifier(), 'continued_as' => $new->code, 'note' => $note], fn ($v) => $v !== null),
+                "Passed to {$this->userLabel($to)} — continued as {$new->code}.",
+            );
+
+            if (empty($opts['keep_open'])) {
+                $from = $task->status;
+                $task->status = 'done';
+                $task->save();
+
+                $task->recordEvent(
+                    TaskComment::EVENT_STATUS_CHANGE,
+                    $actorId,
+                    ['from' => $from, 'to' => 'done'],
+                    "Status changed from `{$from}` to `done` (handed off — continued as {$new->code}).",
+                );
+
+                app(DispatchNotifier::class)->taskStatusChanged($task, $from, 'done', $actor);
+            }
+
+            return $new;
+        });
+    }
+
+    /**
+     * ASK: mint a task for $to (in $lane, which by the time this is called
+     * is either $task's own lane — $to works it too — or the recipient's
+     * resolved lane) that BLOCKS $task, then link them. $task keeps its
+     * holder untouched. Returns $task (refreshed) — the ball never moves for
+     * an ask; only {@see notifyDependentsOfClosure()} moves it, when the ask
+     * closes.
+     *
+     * @param  array{note?:?string,due?:?string}  $opts
+     */
+    protected function createAskTask(Task $task, Authenticatable $to, ?Authenticatable $actor, array $opts, ?string $lane): Task
+    {
+        $note = $opts['note'] ?? null;
+        $actorId = $actor?->getAuthIdentifier();
+
+        return DB::transaction(function () use ($task, $to, $actor, $actorId, $note, $opts, $lane) {
+            $askTask = $this->mintHandoffTask($task, $to, $actor, $lane, $note, 'Requested via');
+
+            if (array_key_exists('due', $opts) && $opts['due'] !== null) {
+                $askTask->due_at = DueDate::resolve($opts['due']);
+                $askTask->save();
+            }
+
+            // The asker (whoever performs THIS ask) is who the ball returns
+            // to when $askTask closes — see returnTheBall(). A null $actor
+            // (agent-driven ask) simply falls back to whoever already holds
+            // $task at close time.
+            $this->linkBlockedBy($task, $askTask, $actorId);
+
+            $task->recordEvent(
+                TaskComment::EVENT_ASKED,
+                $actorId,
+                array_filter(['to' => $to->getAuthIdentifier(), 'blocked_by' => $askTask->code, 'note' => $note], fn ($v) => $v !== null),
+                "Asked {$this->userLabel($to)} — blocked by {$askTask->code}.".($note ? " {$note}" : ''),
+            );
+
+            return $task->refresh();
+        });
+    }
+
+    /**
+     * Shared mint step for both a pass-continuation and an ask task: same
+     * title/type/priority/visibility/is_public/submitter/conversation as
+     * $task (this IS that work, continuing or being asked-about), status
+     * `open` (already vetted, actionable — not a fresh `triage` report),
+     * `origin` = `task:<$task->code>`, assigned to $to. The create-time
+     * "request received" receipt is suppressed (quietly()) — $to gets the
+     * notification that actually matters here (taskAssigned, the EXISTING
+     * seam, no new channel) instead of $task's submitter being told
+     * "received" a second time for a task they didn't submit.
+     */
+    protected function mintHandoffTask(Task $task, Authenticatable $to, ?Authenticatable $actor, ?string $lane, ?string $note, string $verb): Task
+    {
+        $attributes = [
+            'title' => $task->title,
+            'type' => $task->type,
+            'priority' => $task->priority,
+            'status' => 'open',
+            'description' => $note ?? "{$verb} {$task->code}.",
+            'submitter_user_id' => $task->submitter_user_id,
+            'assignee_user_id' => (int) $to->getAuthIdentifier(),
+            'is_public' => (bool) $task->is_public,
+            'visibility' => $task->visibility,
+            'origin_type' => 'task',
+            'origin_id' => $task->code,
+        ];
+        if ($task->conversation_id !== null) {
+            $attributes['conversation_id'] = $task->conversation_id;
+        }
+        if ($lane !== null) {
+            $attributes['lane'] = $lane;
+        }
+
+        $new = $this->quietly(fn () => $this->create($attributes, [], $actor));
+
+        app(DispatchNotifier::class)->taskAssigned($new, null, (int) $to->getAuthIdentifier(), $actor);
+
+        return $new;
+    }
+
+    /** A human-readable name for a message — falls back to the auth id. */
+    protected function userLabel(Authenticatable $user): string
+    {
+        return (string) ($user->name ?? $user->getAuthIdentifier());
+    }
+
+    /**
+     * TASK-997 part B — link $blocker as one of $task's blockers (a real
+     * `dispatch_task_links` row), refusing a self-link or a cycle. Idempotent:
+     * re-linking the same pair/kind returns the existing row.
+     *
+     * Cycle check: walking $blocker's OWN blocked-by chain (its blockers,
+     * their blockers, ...) must never reach $task — if it did, $task would
+     * end up (transitively) blocked by something $task itself blocks.
+     *
+     * @throws \InvalidArgumentException on a self-link or a would-be cycle.
+     */
+    public function linkBlockedBy(Task $task, Task $blocker, ?int $actorUserId = null, string $kind = TaskLink::KIND_BLOCKS): TaskLink
+    {
+        if ($task->is($blocker)) {
+            throw new \InvalidArgumentException("{$task->code} cannot be blocked by itself.");
+        }
+
+        if ($this->wouldCreateCycle($task, $blocker)) {
+            throw new \InvalidArgumentException(
+                "Linking {$task->code} blocked-by {$blocker->code} would create a cycle — ".
+                "{$blocker->code} is already (transitively) blocked by {$task->code}."
+            );
+        }
+
+        return TaskLink::query()->firstOrCreate(
+            ['task_id' => $task->id, 'blocked_by_task_id' => $blocker->id, 'kind' => $kind],
+            ['created_by_user_id' => $actorUserId],
+        );
+    }
+
+    /**
+     * BFS over `dispatch_task_links` starting at $blocker, following ITS
+     * blocked-by edges (its blockers, their blockers, ...). True if $task is
+     * ever reached — meaning $blocker is already (transitively) blocked by
+     * $task, so linking $task blocked-by $blocker would close a cycle. A
+     * self-link ($task === $blocker) is caught here too (the walk starts AT
+     * $blocker and the very first node checked is $blocker itself).
+     */
+    protected function wouldCreateCycle(Task $task, Task $blocker): bool
+    {
+        $visited = [];
+        $queue = [$blocker->id];
+
+        while ($queue !== []) {
+            $current = array_shift($queue);
+            if (isset($visited[$current])) {
+                continue;
+            }
+            $visited[$current] = true;
+
+            if ($current === $task->id) {
+                return true;
+            }
+
+            $ids = TaskLink::query()->where('task_id', $current)->pluck('blocked_by_task_id')->all();
+            foreach ($ids as $id) {
+                if (! isset($visited[$id])) {
+                    $queue[] = $id;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * TASK-997 part B, §3 — "closing a blocker notifies the next holder."
+     * Called by every surface that writes a task's status (dispatch:done +
+     * `POST agent/done`, `dispatch:batch`, TaskShow/TaskList/TaskBoard) right
+     * after a REAL transition into a terminal status ({@see
+     * Task::isInactive()}); a no-op otherwise, so it's safe to call
+     * unconditionally.
+     *
+     * For each task $task blocks: if $task's origin points back at that
+     * dependent (`origin_type` = `task`, `origin_id` = the dependent's own
+     * code) — the signature an Ask task carries, since {@see
+     * createAskTask()} always sets it — the ball RETURNS (reassign + the
+     * answer). Otherwise it's a plain `blocked_by` link: just notify + record
+     * that the blocker resolved. Both reuse the EXISTING DispatchNotifier
+     * seam (taskAssigned / taskCommented) — no new channel.
+     */
+    public function notifyDependentsOfClosure(Task $task, ?int $actorUserId = null): void
+    {
+        if (! $task->isInactive()) {
+            return;
+        }
+
+        foreach ($task->blocks as $dependent) {
+            $isAskReturn = $task->origin_type === 'task' && $task->origin_id === $dependent->code;
+
+            if ($isAskReturn) {
+                $this->returnTheBall($dependent, $task, $actorUserId);
+            } else {
+                $this->notifyGenericDependency($dependent, $task, $actorUserId);
+            }
+        }
+    }
+
+    /**
+     * The Ask return: $dependent (the asker's task) is re-assigned back to
+     * whoever asked (the link's `created_by_user_id` — falling back to
+     * $dependent's CURRENT assignee when that's null, e.g. a null-actor
+     * agent-driven ask, so an unassigned dependent doesn't get force-
+     * reassigned to nobody), and gets an event carrying the closed ask's
+     * answer (its last human comment, or its recorded result).
+     */
+    protected function returnTheBall(Task $dependent, Task $closedAsk, ?int $actorUserId): void
+    {
+        $pivot = TaskLink::query()
+            ->where('task_id', $dependent->id)
+            ->where('blocked_by_task_id', $closedAsk->id)
+            ->first();
+        $askerId = $pivot?->created_by_user_id ?? $dependent->assignee_user_id;
+
+        $fromAssignee = $dependent->assignee_user_id;
+        $dependent->assignee_user_id = $askerId;
+        $dependent->save();
+
+        $answer = $this->summarizeAnswer($closedAsk);
+
+        $comment = $dependent->recordEvent(
+            TaskComment::EVENT_ANSWERED,
+            $actorUserId,
+            array_filter(['from' => $closedAsk->code, 'answer' => $answer], fn ($v) => $v !== null),
+            $answer ? "Answered by {$closedAsk->code}: {$answer}" : "Answered by {$closedAsk->code}.",
+        );
+
+        $notifier = app(DispatchNotifier::class);
+        if ($askerId !== $fromAssignee) {
+            $notifier->taskAssigned($dependent, $fromAssignee, $askerId, null);
+        }
+        $notifier->taskCommented($dependent, $comment);
+    }
+
+    /**
+     * The plain (non-ask) case: a task blocked by $closedBlocker just had its
+     * blocker resolve. Record it and notify via taskCommented (the existing
+     * seam) — no reassignment, since a generic `blocked_by` link never held
+     * $dependent's assignment in the first place.
+     */
+    protected function notifyGenericDependency(Task $dependent, Task $closedBlocker, ?int $actorUserId): void
+    {
+        $comment = $dependent->recordEvent(
+            TaskComment::EVENT_DEPENDENCY_RESOLVED,
+            $actorUserId,
+            ['blocker' => $closedBlocker->code, 'status' => $closedBlocker->status],
+            "Blocker {$closedBlocker->code} is now `{$closedBlocker->status}`.",
+        );
+
+        app(DispatchNotifier::class)->taskCommented($dependent, $comment);
+    }
+
+    /**
+     * The "answer" carried by an Ask's return event: prefer the closed ask's
+     * latest human comment (the natural place a closer writes "here's what I
+     * found"), falling back to its recorded result's `resolution` or
+     * `commit` (§17C close conventions), else null — an ask can close with
+     * neither and the return event still fires, just without an inline
+     * answer body.
+     */
+    protected function summarizeAnswer(Task $closedAsk): ?string
+    {
+        $lastComment = $closedAsk->comments()
+            ->where('event_type', TaskComment::EVENT_COMMENT)
+            ->orderByDesc('id')
+            ->first();
+        if ($lastComment !== null && trim((string) $lastComment->body) !== '') {
+            return $lastComment->body;
+        }
+
+        $result = $closedAsk->context['result'] ?? null;
+        if (is_array($result)) {
+            if (! empty($result['resolution'])) {
+                return (string) $result['resolution'];
+            }
+            if (! empty($result['commit'])) {
+                return "commit {$result['commit']}";
+            }
+        }
+
+        return null;
     }
 
     /**

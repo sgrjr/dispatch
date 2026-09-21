@@ -430,6 +430,8 @@ class TaskList extends Component
         );
 
         app(DispatchNotifier::class)->taskStatusChanged($task, $from, $to, $actor);
+        // TASK-997 part B — "closing a blocker notifies the next holder."
+        app(DispatchTaskService::class)->notifyDependentsOfClosure($task, $actor?->getAuthIdentifier());
 
         return true;
     }
@@ -452,6 +454,8 @@ class TaskList extends Component
         );
 
         app(DispatchNotifier::class)->taskStatusChanged($task, $from, 'declined', $actor);
+        // TASK-997 part B — "closing a blocker notifies the next holder."
+        app(DispatchTaskService::class)->notifyDependentsOfClosure($task, $actor?->getAuthIdentifier());
 
         return true;
     }

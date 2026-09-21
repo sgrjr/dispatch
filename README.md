@@ -1372,6 +1372,136 @@ serving a lane.
 
 ---
 
+## The ball (hand-off + task links, TASK-997 part B)
+
+**The ball** is the current holder of an open task: a person
+(`assignee_user_id`) or the lane itself (unassigned = unclaimed). Exactly
+one holder, always inside the task's lane. This section is part B of the
+lane work above — read "Lanes" first.
+
+**Pass vs. Ask.** A **pass** ("your turn") moves the ball; an **ask** ("I
+need this from you, then it's back to me") never moves it — it mints a
+linked task that BLOCKS the asker's task, and closing that linked task
+returns the ball with the answer. This is the legacy request -> respond ->
+dismiss loop, rebuilt on real data instead of an inbox thread.
+
+```php
+// Pass: same lane -> moves the ball on THIS task; a different lane (or no
+// lane at all) -> mints a continuation task in the recipient's lane and
+// closes this one (unless keep_open). $actor is nullable — an AgentSession
+// isn't an Authenticatable, and the CLI is often unauthenticated.
+$tasks->handoff($task, $recipient, $actor, ['note' => 'over to you']);
+
+// Ask: ALWAYS mints a linked task, even within the same lane, and blocks
+// $task with it. $task keeps its holder untouched until the ask closes.
+$tasks->handoff($task, $recipient, $actor, ['ask' => true, 'note' => 'what\'s the status on this?']);
+
+// Disambiguate which of the recipient's lanes gets a minted task, when
+// they work more than one (mirrors claimForUser()'s "pick a lane").
+$tasks->handoff($task, $recipient, $actor, ['lane' => 'marketing:developer']);
+```
+
+A cross-lane (or no-lane) pass never simply reassigns — moving the ball
+there would make it invisible to the recipient's own manager (R21/R22), so
+it mints a NEW task instead: same `conversation_id`, `origin` =
+`task:<passing code>`, assigned to the recipient. With the shipped
+`NullLaneResolver` bound, every task and every user reads as "the same
+(no) lane," so a pass always degrades to a plain reassignment — nothing is
+ever minted, and hand-off keeps working exactly as before the lane feature
+existed.
+
+**Real blocked-by links.** A new `dispatch_task_links` table backs actual
+task->task dependencies — not a label, not a comment:
+
+```php
+Task::inLane('ops'); // (lane scopes, from part A, for context)
+
+$task->blockedBy;               // tasks that BLOCK this one
+$task->blocks;                  // tasks THIS one blocks
+Task::blocked();                // tasks with at least one ACTIVE blocker
+Task::unblocked();              // the inverse — no active blocker, or none at all
+
+// The primitive behind Ask and the batch `blocked_by` field. Refuses a
+// self-link or a cycle (A blocked-by B when B is already, transitively,
+// blocked by A); idempotent on a re-link.
+$tasks->linkBlockedBy($task, $blocker);
+```
+
+`scopeBlocked()`/`scopeUnblocked()` are DYNAMIC — computed off the
+blocker's current status, not a stored boolean — so a blocker reaching a
+terminal status (`done`/`declined`/`backburner`) immediately unblocks its
+dependents with no separate "unblock" write.
+
+**Closing a blocker notifies the next holder.**
+`DispatchTaskService::notifyDependentsOfClosure(Task $task, ?int
+$actorUserId = null)` is a no-op unless `$task` just reached a terminal
+status, so every status-writing surface calls it unconditionally
+(`dispatch:done`, `POST agent/done`, `dispatch:batch`'s `update` op,
+`TaskShow`/`TaskList`/`TaskBoard`). For each dependent: if the closer's
+`origin` points back at it — the signature every Ask task carries — **the
+ball returns**: the dependent is re-assigned to whoever asked and gains an
+`answered` event carrying the closer's last comment (or its recorded
+result). A plain (non-ask) `blocked_by` link just gets a
+`dependency_resolved` event. **Both reuse the existing `DispatchNotifier`
+seam** (`taskAssigned` / `taskCommented`) — no new notification channel.
+
+**CLI + agent API.**
+
+```bash
+php artisan dispatch:handoff TASK-042 --to=jane@example.test --note="your turn"
+php artisan dispatch:handoff TASK-042 --to=42 --ask --note="what's the ETA?"
+php artisan dispatch:handoff TASK-042 --to=jane@example.test --lane=marketing:sales --remote
+```
+
+`--to` accepts a numeric user id or an email. `--remote` posts to `POST
+agent/handoff`, gated by the `handoff` scope.
+
+> ⚠️ **A host must add `handoff` to its published `agent.verbs`** (or
+> re-publish `config/dispatch.php`) before any session can be granted the
+> scope, or the verb 403s "not scoped" — the identical trap `batch` hit;
+> see UPGRADING.md and "Enabling the batch verb" below.
+
+**Batch.** `dispatch:batch` / `POST agent/batch` accept `blocked_by` on
+both `add` and `update` — an array of task codes and/or `@ref` entries (an
+in-batch reference to an EARLIER op's `ref` in the same manifest). This is
+what ends the two-batch dance: file the blocker and the blocked task's
+link in ONE manifest.
+
+```json
+{"operations": [
+  {"op": "add", "ref": "blocker", "title": "Confirm the vendor SKU"},
+  {"op": "add", "title": "Ship the reprint", "blocked_by": ["@blocker"]}
+]}
+```
+
+Additive, like `labels` — never a replace-all. An unresolvable `@ref`, an
+unknown code, a self-link, or a would-be cycle fails the WHOLE batch,
+naming the operation index.
+
+**JSON shape.** `blocked_by` / `blocks` — arrays of task **codes** — are on
+the FULL shape only (never the summary/list shape), matching `lane_label`'s
+posture. `dispatch:show` prints them as plain lines.
+
+**Board UI.** `TaskShow` gets a "Hand off" panel (staff only) — a person
+picker, an Ask checkbox, a note, a lane disambiguator (shown only when a
+real `LaneResolver` is bound and the pick is genuinely ambiguous), and the
+blocked-by/blocks lists as plain links. It is **not** gated on a real
+`LaneResolver` being bound — a pass degrades to a plain reassignment under
+the inert default, so the panel stays useful on a host that hasn't adopted
+lanes at all. A cross-lane pass redirects the page to the new continuation
+task; a same-lane pass or an ask refreshes in place.
+
+**Visibility unchanged.** Neither `dispatch_task_links` nor `lane` widens
+who can see a task — `DispatchGate::scopeVisible()` remains the one gate,
+pinned by a test.
+
+**Migration.** One new package migration
+(`2026_01_01_000022_create_dispatch_task_links_table.php`) creates
+`dispatch_task_links` — nothing changes until a caller starts writing to
+it (via `handoff()`/`linkBlockedBy()`/the batch `blocked_by` field).
+
+---
+
 ## Next steps
 
 - Read `config/dispatch.php` top to bottom — every option has a comment

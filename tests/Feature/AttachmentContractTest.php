@@ -82,6 +82,8 @@ test('GOLDEN SHAPE: the full view adds exactly attachments[] + a per-comment att
         'topic_label', 'topic_url', 'origin_label', 'origin_url',
         // TASK-997 part A full-only resolver add.
         'lane_label',
+        // TASK-997 part B full-only adds (the ball / hand-off).
+        'blocked_by', 'blocks',
         'description', 'context', 'attachments', 'comments',
     ]);
 

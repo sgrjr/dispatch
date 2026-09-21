@@ -121,11 +121,25 @@ class DispatchBatchService
         ];
         $results = [];
 
-        $run = function () use ($normalized, $actorMeta, $actorUserId, &$summary, &$results) {
+        // TASK-997 part B — `@ref` resolution for `blocked_by` (the in-batch
+        // reference that ends the two-batch dance: file the blocker AND the
+        // blocked task's link in ONE manifest). Built up as ops are applied,
+        // in array order — a ref resolves only to an EARLIER op in this same
+        // manifest; a forward reference is simply unresolvable (the "unknown
+        // ref" error names it as such).
+        $refMap = [];
+
+        $run = function () use ($normalized, $actorMeta, $actorUserId, &$summary, &$results, &$refMap) {
             foreach ($normalized as $i => $op) {
-                $results[] = $op['op'] === 'add'
-                    ? $this->applyAdd($op, $actorMeta, $actorUserId, $summary)
-                    : $this->applyUpdate($op, $actorMeta, $actorUserId, $summary, $i);
+                $result = $op['op'] === 'add'
+                    ? $this->applyAdd($op, $actorMeta, $actorUserId, $summary, $refMap, $i)
+                    : $this->applyUpdate($op, $actorMeta, $actorUserId, $summary, $i, $refMap);
+
+                if (! empty($op['ref']) && isset($result['code'])) {
+                    $refMap[$op['ref']] = $result['code'];
+                }
+
+                $results[] = $result;
             }
         };
 
@@ -202,6 +216,7 @@ class DispatchBatchService
             $this->assertAnchorInput($i, $op, 'origin');
             $this->assertConversationId($i, $op);
             $this->assertLaneInput($i, $op);
+            $this->assertBlockedByInput($i, $op);
 
             foreach (($op['comments'] ?? []) as $c) {
                 if (! is_array($c)) {
@@ -365,6 +380,78 @@ class DispatchBatchService
     }
 
     /**
+     * TASK-997 part B — format-only validation of `blocked_by`, up front like
+     * every other field here: an array of non-empty strings (a task code, or
+     * `@ref` naming an earlier op's `ref` in this same manifest). ADDITIVE,
+     * same posture as `labels` — never a replace-all, so there is no "clear"
+     * sentinel to accept. The actual codes/refs can only be resolved at APPLY
+     * time (a ref may point at a task this very manifest is about to mint),
+     * so an unknown code/ref is a validation error surfaced there instead —
+     * still before the transaction commits, since the whole apply is one.
+     *
+     * @param  array<string,mixed>  $op
+     */
+    protected function assertBlockedByInput(int $i, array $op): void
+    {
+        if (! array_key_exists('blocked_by', $op) || $op['blocked_by'] === null) {
+            return;
+        }
+
+        if (! is_array($op['blocked_by'])) {
+            throw new \InvalidArgumentException("Operation {$i}: `blocked_by` must be an array of task codes (or `@ref` values).");
+        }
+
+        foreach ($op['blocked_by'] as $v) {
+            if (! is_string($v) || trim($v) === '') {
+                throw new \InvalidArgumentException("Operation {$i}: every `blocked_by` entry must be a non-empty string (a task code or `@ref`).");
+            }
+        }
+    }
+
+    /**
+     * TASK-997 part B — resolve+apply `blocked_by` on an already-persisted
+     * $task: each entry is either `@<ref>` (an earlier op's `ref` in THIS
+     * manifest, resolved via $refMap) or a literal task code, looked up and
+     * linked via {@see DispatchTaskService::linkBlockedBy()} (which owns the
+     * self-link/cycle checks). Any failure — unknown ref, unknown code, a
+     * cycle — is wrapped naming the operation index and rolls back the WHOLE
+     * batch, same posture as origin's write-once violation above.
+     *
+     * @param  array<int,string>  $codes
+     * @param  array<string,string>  $refMap
+     */
+    protected function applyBlockedBy(Task $task, array $codes, array $refMap, int $i, ?int $actorUserId): void
+    {
+        /** @var class-string<Task> $taskModel */
+        $taskModel = config('dispatch.models.task');
+
+        foreach ($codes as $entry) {
+            $code = $entry;
+
+            if (str_starts_with($entry, '@')) {
+                $ref = substr($entry, 1);
+                if (! array_key_exists($ref, $refMap)) {
+                    throw new \InvalidArgumentException(
+                        "Operation {$i}: `blocked_by` references unknown ref `@{$ref}` — it must be an EARLIER op's `ref` in this same manifest."
+                    );
+                }
+                $code = $refMap[$ref];
+            }
+
+            $blocker = $taskModel::query()->where('code', $code)->first();
+            if ($blocker === null) {
+                throw new \InvalidArgumentException("Operation {$i}: `blocked_by` code `{$code}` not found.");
+            }
+
+            try {
+                $this->tasks->linkBlockedBy($task, $blocker, $actorUserId);
+            } catch (\InvalidArgumentException $e) {
+                throw new \InvalidArgumentException("Operation {$i}: {$e->getMessage()}");
+            }
+        }
+    }
+
+    /**
      * TASK-995 — resolve a topic/origin field into `[type, id]` (a value),
      * `[null, null]` (an explicit clear), or null (the field wasn't touched
      * at all — check with anchorTouched() first). Already validated by
@@ -413,9 +500,10 @@ class DispatchBatchService
      * @param  array<string,mixed>  $op
      * @param  array<string,mixed>  $actorMeta
      * @param  array<string,int>  $summary
+     * @param  array<string,string>  $refMap  TASK-997 part B — earlier ops' `ref` -> minted code, for `blocked_by`'s `@ref` entries
      * @return array<string,mixed>
      */
-    protected function applyAdd(array $op, array $actorMeta, ?int $actorUserId, array &$summary): array
+    protected function applyAdd(array $op, array $actorMeta, ?int $actorUserId, array &$summary, array $refMap = [], int $i = 0): array
     {
         $labels = $this->labelNames($op['labels'] ?? []);
         $key = ! empty($op['key']) ? (string) $op['key'] : null;
@@ -430,6 +518,9 @@ class DispatchBatchService
             $this->tasks->attachLabels($existing, $labels);
             $summary['comments_added'] += $this->appendComments($existing, $op['comments'] ?? [], $actorUserId, $actorMeta);
             $this->recordResultIfAny($existing, $op);
+            if (! empty($op['blocked_by'])) {
+                $this->applyBlockedBy($existing, (array) $op['blocked_by'], $refMap, $i, $actorUserId);
+            }
 
             return $this->addResult($op, $existing, false);
         }
@@ -496,6 +587,13 @@ class DispatchBatchService
         $summary['comments_added'] += $this->appendComments($task, $op['comments'] ?? [], $actorUserId, $actorMeta);
         $this->recordResultIfAny($task, $op);
 
+        // TASK-997 part B — `blocked_by` on `add`: additive, resolved AFTER
+        // the task is minted (a fresh task has its own code available to
+        // OTHER later ops' `@ref`s the moment this returns — see apply()).
+        if (! empty($op['blocked_by'])) {
+            $this->applyBlockedBy($task, (array) $op['blocked_by'], $refMap, $i, $actorUserId);
+        }
+
         return $this->addResult($op, $task, true);
     }
 
@@ -509,9 +607,10 @@ class DispatchBatchService
      * @param  array<string,mixed>  $actorMeta
      * @param  array<string,int>  $summary
      * @param  int  $i  the operation's index in the manifest, for error messages
+     * @param  array<string,string>  $refMap  TASK-997 part B — earlier ops' `ref` -> minted code, for `blocked_by`'s `@ref` entries
      * @return array<string,mixed>
      */
-    protected function applyUpdate(array $op, array $actorMeta, ?int $actorUserId, array &$summary, int $i = 0): array
+    protected function applyUpdate(array $op, array $actorMeta, ?int $actorUserId, array &$summary, int $i = 0, array $refMap = []): array
     {
         /** @var class-string<Task> $taskModel */
         $taskModel = config('dispatch.models.task');
@@ -604,6 +703,11 @@ class DispatchBatchService
                 "Status changed from {$from} to {$to}.",
             );
             $summary['statuses_changed']++;
+
+            // TASK-997 part B — "closing a blocker notifies the next
+            // holder." A no-op unless $task just went terminal AND has
+            // dependents.
+            $this->tasks->notifyDependentsOfClosure($task, $actorUserId);
         }
 
         // Memorialize an agent-caused due-date change in the SAME words the
@@ -633,6 +737,12 @@ class DispatchBatchService
         $this->tasks->attachLabels($task, $this->labelNames($op['labels'] ?? []));
         $summary['comments_added'] += $this->appendComments($task, $op['comments'] ?? [], $actorUserId, $actorMeta);
         $this->recordResultIfAny($task, $op);
+
+        // TASK-997 part B — `blocked_by` on `update`: additive (never a
+        // replace-all), same posture as `labels` above.
+        if (! empty($op['blocked_by'])) {
+            $this->applyBlockedBy($task, (array) $op['blocked_by'], $refMap, $i, $actorUserId);
+        }
 
         $summary['tasks_updated']++;
 

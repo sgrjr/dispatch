@@ -421,7 +421,7 @@ return [
         'poll_interval' => (int) env('DISPATCH_AGENT_POLL_INTERVAL', 5),
         'request_throttle' => env('DISPATCH_AGENT_REQUEST_THROTTLE', '10,1'),
         'verb_throttle' => env('DISPATCH_AGENT_VERB_THROTTLE', '120,1'),
-        'verbs' => ['next', 'queue', 'show', 'add', 'note', 'done', 'claim', 'batch'],
+        'verbs' => ['next', 'queue', 'show', 'add', 'note', 'done', 'claim', 'batch', 'handoff'],
 
         // Explicit denylist — the supported way to WITHHOLD a shipped verb. The
         // grant ceiling for an explicitly-requested scope is the UNION of `verbs`

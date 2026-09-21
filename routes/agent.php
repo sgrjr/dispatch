@@ -46,6 +46,10 @@ Route::middleware(['dispatch.agent', 'throttle:dispatch-agent-verb'])->group(fun
     Route::get('queue', [AgentController::class, 'queue'])->middleware('dispatch.agent.scope:queue')->name('queue');
     Route::get('show/{code}', [AgentController::class, 'show'])->middleware('dispatch.agent.scope:show')->name('show');
     Route::post('claim', [AgentController::class, 'claim'])->middleware('dispatch.agent.scope:claim')->name('claim');
+    // TASK-997 part B — the hand-off (pass/ask). A host must add `handoff` to
+    // its published `agent.verbs` (or re-publish config/dispatch.php) before
+    // any session can be granted the scope — see UPGRADING.md.
+    Route::post('handoff', [AgentController::class, 'handoff'])->middleware('dispatch.agent.scope:handoff')->name('handoff');
     Route::post('add', [AgentController::class, 'add'])->middleware('dispatch.agent.scope:add')->name('add');
     Route::post('note', [AgentController::class, 'note'])->middleware('dispatch.agent.scope:note')->name('note');
     Route::post('done', [AgentController::class, 'done'])->middleware('dispatch.agent.scope:done')->name('done');

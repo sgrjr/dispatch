@@ -204,6 +204,12 @@ class DispatchDone extends Command
             "Status changed from `{$previous}` to `{$status}`."
         );
 
+        // TASK-997 part B — "closing a blocker notifies the next holder."
+        // A no-op unless $task just went terminal AND has dependents.
+        if ($previous !== $status) {
+            $tasks->notifyDependentsOfClosure($task, Auth::id());
+        }
+
         // Memorialized in the SAME words the Livewire editor and the batch/HTTP
         // paths use, so the timeline reads identically no matter which surface
         // moved the date.

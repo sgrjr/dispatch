@@ -143,11 +143,11 @@ class AgentController extends Controller
         // usable handle — otherwise losing the code leaves it with an identifier
         // that only the write paths (batch/import) can resolve.
         $task = $taskModel::query()
-            ->with(['labels', 'submitter', 'assignee', 'comments.user', 'attachments', 'comments.attachments'])
+            ->with(['labels', 'submitter', 'assignee', 'comments.user', 'attachments', 'comments.attachments', 'blockedBy', 'blocks'])
             ->where('code', $code)
             ->first()
             ?? $taskModel::query()
-                ->with(['labels', 'submitter', 'assignee', 'comments.user', 'attachments', 'comments.attachments'])
+                ->with(['labels', 'submitter', 'assignee', 'comments.user', 'attachments', 'comments.attachments', 'blockedBy', 'blocks'])
                 ->where('dedupe_key', $code)
                 ->first();
 
@@ -195,7 +195,7 @@ class AgentController extends Controller
         // needs the human's direction (which lives in the description/comments,
         // invisible in the summary shape that next/queue return). Load the
         // relations the full presenter reads so it doesn't lazy-load per row.
-        $task?->load('labels', 'submitter', 'assignee', 'comments.user', 'attachments', 'comments.attachments');
+        $task?->load('labels', 'submitter', 'assignee', 'comments.user', 'attachments', 'comments.attachments', 'blockedBy', 'blocks');
 
         // The claim timestamp rides top-level (beside `task`) for zero-parse
         // reuse as `--since` on the closing `done --with-metrics`. It also
@@ -211,6 +211,77 @@ class AgentController extends Controller
             'task' => $task ? TaskPresenter::toArray($task, true) : null,
             'claimed_at' => $claimedAt,
         ]);
+    }
+
+    /**
+     * TASK-997 part B — the hand-off (pass/ask) verb. `to` is a user
+     * reference: a numeric id, or an email (matched the same way
+     * DispatchImport/SyncController resolve `submitter`/`assignee`). $actor
+     * is null — an AgentSession is not an Authenticatable, matching every
+     * other agent-driven mutation in this controller (identity lives in
+     * meta, not a fake actor); {@see DispatchTaskService::handoff()}'s
+     * $actor parameter is nullable for exactly this reason.
+     *
+     * ⚠️ A host must add `handoff` to its published `agent.verbs` (or
+     * re-publish the config) before any session can be GRANTED the scope —
+     * same trap as `batch` (see UPGRADING.md). Without it, this route 403s
+     * "not scoped" regardless of what a session requests.
+     */
+    public function handoff(Request $request): JsonResponse
+    {
+        $s = $this->session($request);
+
+        $v = $request->validate([
+            'code' => ['required', 'string'],
+            'to' => ['required', 'string'],
+            'ask' => ['nullable', 'boolean'],
+            'lane' => ['nullable', 'string'],
+            'note' => ['nullable', 'string'],
+            'due_at' => ['nullable', 'string'],
+            'keep_open' => ['nullable', 'boolean'],
+        ]);
+
+        /** @var class-string<Task> $taskModel */
+        $taskModel = config('dispatch.models.task');
+        $task = $taskModel::query()->where('code', $v['code'])->first();
+        abort_if($task === null, 404);
+
+        $to = $this->resolveUserRef($v['to']);
+        abort_if($to === null, 422, "No user found for `to`: {$v['to']}");
+
+        try {
+            $result = app(DispatchTaskService::class)->handoff($task, $to, null, [
+                'ask' => (bool) ($v['ask'] ?? false),
+                'lane' => $v['lane'] ?? null,
+                'note' => $v['note'] ?? null,
+                'due' => $v['due_at'] ?? null,
+                'keep_open' => (bool) ($v['keep_open'] ?? false),
+            ]);
+        } catch (\InvalidArgumentException $e) {
+            abort(422, $e->getMessage());
+        }
+
+        $result->load('labels', 'submitter', 'assignee', 'comments.user', 'attachments', 'comments.attachments', 'blockedBy', 'blocks');
+
+        return response()->json([
+            'task' => TaskPresenter::toArray($result, true),
+        ]);
+    }
+
+    /**
+     * A user reference off the wire (`to`, `submitter`/`assignee` elsewhere):
+     * an email (contains `@`) or a numeric id. Mirrors
+     * DispatchImport::resolveUserId()/SyncController's convention exactly, so
+     * a host never has to guess which format an endpoint wants.
+     */
+    private function resolveUserRef(string $ref): mixed
+    {
+        /** @var class-string $userModel */
+        $userModel = config('dispatch.models.user');
+
+        return str_contains($ref, '@')
+            ? $userModel::query()->where('email', $ref)->first()
+            : $userModel::query()->find((int) $ref);
     }
 
     public function add(Request $request): JsonResponse
@@ -392,6 +463,12 @@ class AgentController extends Controller
             $this->agentMeta($s, ['from' => $from, 'to' => $to]),
             "Status changed from {$from} to {$to}.",
         );
+
+        // TASK-997 part B — "closing a blocker notifies the next holder."
+        // A no-op unless $task just went terminal AND has dependents.
+        if ($from !== $to) {
+            app(DispatchTaskService::class)->notifyDependentsOfClosure($task);
+        }
 
         // Memorialized in the SAME words the Livewire editor uses, so the
         // timeline reads identically whether the board or an agent moved it.

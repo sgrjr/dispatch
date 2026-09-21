@@ -25,6 +25,19 @@ class TaskComment extends Model
     // TASK-997 part A — a task's `lane` changed (routeToLane(), claimForUser()
     // joining a lane, or a batch `update` op's tri-state `lane`).
     public const EVENT_LANE_CHANGE = 'lane_change';
+    // TASK-997 part B (the ball / hand-off) — recorded on the PASSING task
+    // when a cross-lane/no-lane pass mints a continuation task and closes
+    // this one.
+    public const EVENT_HANDED_OFF = 'handed_off';
+    // Recorded on the ASKER's task when an ask mints the recipient's linked
+    // (blocking) task.
+    public const EVENT_ASKED = 'asked';
+    // Recorded on the ASKER's task when the ask closes and the ball returns
+    // — carries the answer (the ask's closing note/result).
+    public const EVENT_ANSWERED = 'answered';
+    // Recorded on a dependent task when one of its blockers reaches a
+    // terminal status, for a plain (non-ask) `blocked_by` link.
+    public const EVENT_DEPENDENCY_RESOLVED = 'dependency_resolved';
 
     protected $table = 'dispatch_task_comments';
 

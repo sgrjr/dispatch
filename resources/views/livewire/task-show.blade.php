@@ -419,6 +419,74 @@
         </section>
     @endif
 
+    {{-- TASK-997 part B — the ball: pass ("your turn") or ask ("I need this
+         from you, then it's back to me"). Staff (`update`-ability) only,
+         same gate as the meta editor and the Lane panel — but NOT gated on
+         $laneActive: with the inert NullLaneResolver bound, a "pass" simply
+         degrades to a plain reassignment (see
+         DispatchTaskService::sameLane()), so the panel stays useful on a
+         host that hasn't adopted lanes at all. Also shows blocked-by/blocks
+         as plain links — real dependencies, always visible when they exist,
+         regardless of lanes. --}}
+    @if ($this->canEdit())
+        <section class="dispatch-card" style="margin-top: 1rem;">
+            <h2 class="dispatch-section-title">Hand off</h2>
+
+            @if ($blockedByTasks->isNotEmpty() || $blocksTasks->isNotEmpty())
+                <div style="margin-bottom: 0.75rem; font-size: 0.82rem;">
+                    @if ($blockedByTasks->isNotEmpty())
+                        <p style="margin: 0 0 0.3rem;">
+                            Blocked by:
+                            @foreach ($blockedByTasks as $b)
+                                <a href="{{ route('dispatch.show', $b) }}" class="dispatch-card-code" wire:key="blocked-by-{{ $b->id }}">{{ $b->code }}</a>
+                                <span style="color: var(--dispatch-text-muted);">({{ str_replace('_', ' ', $b->status) }})</span>{{ ! $loop->last ? ',' : '' }}
+                            @endforeach
+                        </p>
+                    @endif
+                    @if ($blocksTasks->isNotEmpty())
+                        <p style="margin: 0;">
+                            Blocks:
+                            @foreach ($blocksTasks as $b)
+                                <a href="{{ route('dispatch.show', $b) }}" class="dispatch-card-code" wire:key="blocks-{{ $b->id }}">{{ $b->code }}</a>
+                                <span style="color: var(--dispatch-text-muted);">({{ str_replace('_', ' ', $b->status) }})</span>{{ ! $loop->last ? ',' : '' }}
+                            @endforeach
+                        </p>
+                    @endif
+                </div>
+            @endif
+
+            <div style="display:flex; flex-wrap:wrap; gap:0.5rem; align-items:flex-start;">
+                <select wire:model="handoffToUserId" class="dispatch-select" style="width:auto; min-width:12rem;">
+                    <option value="">Hand off to…</option>
+                    @foreach ($handoffOptions as $opt)
+                        <option value="{{ $opt->id }}">{{ $opt->name }}</option>
+                    @endforeach
+                </select>
+
+                @if ($laneActive)
+                    <select wire:model="handoffLaneChoice" class="dispatch-select" style="width:auto;">
+                        <option value="">Lane (if ambiguous)…</option>
+                        @foreach (($allLaneOptions ?: $myLaneOptions) as $key => $label)
+                            <option value="{{ $key }}">{{ $label }}</option>
+                        @endforeach
+                    </select>
+                @endif
+
+                <label style="display:flex; align-items:center; gap:0.35rem; font-size:0.8rem;">
+                    <input type="checkbox" wire:model="handoffAsk">
+                    Ask (blocks this task instead of closing it)
+                </label>
+
+                <button type="button" wire:click="handoffTask" wire:loading.attr="disabled" wire:target="handoffTask" class="dispatch-btn is-secondary">
+                    {{ $handoffAsk ? 'Ask' : 'Hand off' }}
+                </button>
+            </div>
+            <textarea wire:model="handoffNote" rows="2" placeholder="Note (optional) — becomes the hand-off's description, or rides the pass event" class="dispatch-textarea" style="margin-top:0.5rem;"></textarea>
+            @error('handoffToUserId') <p class="dispatch-error">{{ $message }}</p> @enderror
+            @error('handoffLaneChoice') <p class="dispatch-error">{{ $message }}</p> @enderror
+        </section>
+    @endif
+
     {{-- Watchers (W13-2): who's subscribed, plus "watch on behalf of" — the
          picked teammate is immediately watching (no opt-in step; they decline
          via Stop watching on their own visit). Pool = the assignable-users
