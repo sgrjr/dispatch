@@ -2,6 +2,8 @@
 
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Support\Facades\Schema;
+use Livewire\Livewire;
+use Sgrjr\Dispatch\Livewire\AgentSessions;
 use Sgrjr\Dispatch\Contracts\LaneResolver;
 use Sgrjr\Dispatch\Models\AgentSession;
 use Sgrjr\Dispatch\Models\Task;
@@ -395,4 +397,70 @@ test('the approved poll tells the agent which lane it was granted', function () 
     $svc->approve($session, dispatchMakeUser(94100)->id);
 
     expect($svc->poll($req['public_id'], $req['device_code'])['lane'])->toBe('ops:triage');
+});
+
+// --- the approval UI ------------------------------------------------------
+
+test('the approval queue seeds the lane control with the grant it would make', function () {
+    bindAgentLaneResolver();
+    config(['dispatch.agent.lane' => 'ops']);
+    $this->actingAs(dispatchMakeUser(1));
+
+    $svc = app(AgentSessionService::class);
+    $req = $svc->request('ui-agent', 'work', ['lane' => 'ops:triage']);
+    $session = AgentSession::where('public_id', $req['public_id'])->firstOrFail();
+
+    // Seeded from the REQUEST, not the config default — the control must show
+    // the pending decision rather than a second opinion about it.
+    Livewire::test(AgentSessions::class)
+        ->assertSet('approveLane.'.$session->id, 'ops:triage')
+        ->call('approve', $session->id);
+
+    expect($session->fresh()->lane)->toBe('ops:triage');
+});
+
+test('the approver can re-lane a pending session before granting it', function () {
+    bindAgentLaneResolver();
+    $this->actingAs(dispatchMakeUser(1));
+
+    $svc = app(AgentSessionService::class);
+    $req = $svc->request('ui-agent-2', 'work', ['lane' => 'ops:triage']);
+    $session = AgentSession::where('public_id', $req['public_id'])->firstOrFail();
+
+    Livewire::test(AgentSessions::class)
+        ->set('approveLane.'.$session->id, 'support')
+        ->call('approve', $session->id);
+
+    expect($session->fresh()->lane)->toBe('support');
+});
+
+test('the approver can clear the lane, granting an unrestricted session', function () {
+    bindAgentLaneResolver();
+    config(['dispatch.agent.lane' => 'ops']);
+    $this->actingAs(dispatchMakeUser(1));
+
+    $svc = app(AgentSessionService::class);
+    $req = $svc->request('ui-agent-3', 'work', ['lane' => 'ops:triage']);
+    $session = AgentSession::where('public_id', $req['public_id'])->firstOrFail();
+
+    // The empty option must mean "no lane", not "fall back to the default" —
+    // otherwise the approver has no way to grant a whole-board session.
+    Livewire::test(AgentSessions::class)
+        ->set('approveLane.'.$session->id, '')
+        ->call('approve', $session->id);
+
+    expect($session->fresh()->lane)->toBeNull();
+});
+
+test('the approval queue renders every lane option and the no-lane choice', function () {
+    bindAgentLaneResolver();
+    $this->actingAs(dispatchMakeUser(1));
+
+    $svc = app(AgentSessionService::class);
+    $svc->request('ui-agent-4', 'work', ['lane' => 'ops:triage']);
+
+    Livewire::test(AgentSessions::class)
+        ->assertSee('No lane — the whole board')
+        ->assertSee('Ops · Triage')
+        ->assertSee('Support');
 });
