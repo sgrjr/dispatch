@@ -5,6 +5,7 @@ namespace Sgrjr\Dispatch\Livewire;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Component;
 use Sgrjr\Dispatch\Contracts\DispatchGate;
+use Sgrjr\Dispatch\Contracts\LaneResolver;
 use Sgrjr\Dispatch\Models\AgentSession;
 use Sgrjr\Dispatch\Services\AgentSessionService;
 
@@ -43,6 +44,17 @@ class AgentSessions extends Component
      */
     public array $approveScopes = [];
 
+    /**
+     * TASK-999 (R24) — per-approval LANE selection, keyed by session id → the
+     * lane key the approver will grant ('' = unrestricted). Seeded in render()
+     * with what approve() would grant untouched, for the same reason
+     * $approveScopes is: the control shows the pending decision, not a second
+     * opinion about it.
+     *
+     * @var array<int,string>
+     */
+    public array $approveLane = [];
+
     public function mount(): void
     {
         if (! app(DispatchGate::class)->isStaff(Auth::user())) {
@@ -62,7 +74,12 @@ class AgentSessions extends Component
         // apply its config default; any preset passes straight through as the TTL.
         $ttl = (int) ($this->approveTtl[$id] ?? 0) ?: null;
 
-        app(AgentSessionService::class)->approve($session, (int) Auth::id(), $ttl, $this->selectedScopes($session));
+        // Unlike scopes, the lane control is ALWAYS seeded and always
+        // submitted, so there is no absent-vs-explicit distinction to
+        // preserve here — whatever the select holds is the decision.
+        $lane = (string) ($this->approveLane[$session->id] ?? '');
+
+        app(AgentSessionService::class)->approve($session, (int) Auth::id(), $ttl, $this->selectedScopes($session), $lane);
     }
 
     public function deny(int $id): void
@@ -203,11 +220,26 @@ class AgentSessions extends Component
             if (! array_key_exists($session->id, $this->approveScopes)) {
                 $this->approveScopes[$session->id] = $this->pendingGrant($session);
             }
+            if (! array_key_exists($session->id, $this->approveLane)) {
+                $this->approveLane[$session->id] = (string) app(AgentSessionService::class)
+                    ->resolveLane($session->requested_meta['lane'] ?? null);
+            }
+        }
+
+        // Lane options for the approve control: every lane the host recognizes,
+        // plus the explicit "no lane" (unrestricted) choice. Rescued because a
+        // host may bind a resolver that reaches its own tables — the approval
+        // queue must still render if that lookup fails.
+        try {
+            $laneOptions = app(LaneResolver::class)->lanes();
+        } catch (\Throwable) {
+            $laneOptions = [];
         }
 
         return view('dispatch::livewire.agent-sessions', [
             'pending' => $pending,
             'scopeCards' => $cards,
+            'laneOptions' => $laneOptions,
             'active' => $active,
             'ended' => $ended,
             'metrics' => $this->metricsSummary($active->concat($ended)),

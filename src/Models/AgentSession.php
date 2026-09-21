@@ -3,6 +3,7 @@
 namespace Sgrjr\Dispatch\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Sgrjr\Dispatch\Support\Lane;
 
 /**
  * A human-commissioned, session-scoped credential for a remote agent (§19/§20).
@@ -32,6 +33,7 @@ class AgentSession extends Model
         'poll_secret_hash',
         'requested_meta',
         'scopes',
+        'lane',
         'status',
         'token_hash',
         'token_delivered_at',
@@ -129,6 +131,25 @@ class AgentSession extends Model
         return $this->status === self::STATUS_APPROVED
             && $this->expires_at !== null
             && now()->lt($this->expires_at);
+    }
+
+    /**
+     * TASK-999 (R24) — the lanes this session's `next`/`claim` are SERVED,
+     * or null when the session carries no lane (unrestricted: the whole open
+     * board, the pre-TASK-999 behavior).
+     *
+     * The granted `lane` plus every lane it sits under, so a
+     * `marketing:developer` session is also served work addressed to the
+     * whole `marketing` department but never to `marketing:sales`.
+     * {@see \Sgrjr\Dispatch\Support\Lane::selfAndAncestors()}
+     *
+     * @return array<int,string>|null
+     */
+    public function servedLanes(): ?array
+    {
+        $lane = is_string($this->lane) ? trim($this->lane) : '';
+
+        return $lane === '' ? null : Lane::selfAndAncestors($lane);
     }
 
     /**

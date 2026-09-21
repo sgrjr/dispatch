@@ -5,6 +5,7 @@ namespace Sgrjr\Dispatch\Http\Controllers;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Sgrjr\Dispatch\Contracts\LaneResolver;
 use Sgrjr\Dispatch\Services\AgentSessionService;
 
 /**
@@ -27,8 +28,18 @@ class AgentSessionController extends Controller
             'purpose' => ['nullable', 'string', 'max:2000'],
             'scopes' => ['nullable', 'array'],
             'scopes.*' => ['string'],
+            // TASK-999 (R24) — the lane this session asks to SERVE. Validated
+            // here, at request time, so a typo is a legible 422 to the agent
+            // rather than a surprise the approver has to notice. An explicit
+            // '' asks for an unrestricted session; omitting it takes the
+            // host default (dispatch.agent.lane).
+            'lane' => ['nullable', 'string', 'max:96'],
             'meta' => ['nullable', 'array'],
         ]);
+
+        if (! empty($v['lane']) && ! app(LaneResolver::class)->isLane($v['lane'])) {
+            abort(422, "`{$v['lane']}` is not a valid lane.");
+        }
 
         // Carry an explicit scopes request through to requested_meta. Preserve an
         // explicit empty scopes:[] (= request nothing → deny-all on approve);
@@ -38,6 +49,11 @@ class AgentSessionController extends Controller
         $meta = $v['meta'] ?? [];
         if (array_key_exists('scopes', $v)) {
             $meta['scopes'] = $v['scopes'] ?? [];
+        }
+        // Same absent-vs-explicit distinction as scopes: an ABSENT lane takes
+        // the host default at approval, an explicit '' asks for no lane at all.
+        if (array_key_exists('lane', $v)) {
+            $meta['lane'] = (string) ($v['lane'] ?? '');
         }
 
         $payload = app(AgentSessionService::class)->request(

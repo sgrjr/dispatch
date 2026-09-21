@@ -332,6 +332,42 @@ class Task extends Model
     }
 
     /**
+     * TASK-999 (R24) — the work a holder of $lanes is SERVED: those exact
+     * lanes, plus (when $includeUnrouted) the no-department lane. Callers
+     * pass an already-expanded set — {@see Lane::selfAndAncestors()} for a
+     * single holder — so this scope never expands anything itself, and in
+     * particular never reaches DOWN into sub-lanes the way
+     * {@see scopeInLane()} does. A `marketing:developer` holder is served
+     * `marketing:developer` + bare `marketing` + unrouted; never
+     * `marketing:sales`, never another department.
+     *
+     * Routing only — never a visibility scope (R14). This narrows which
+     * candidates `next`/`claim` OFFER; it does not decide who may read a
+     * task (see VisibilityGates) and it never applies to claim-by-code.
+     *
+     * @param  array<int,string>  $lanes
+     */
+    public function scopeServedByLanes(Builder $query, array $lanes, bool $includeUnrouted = true): Builder
+    {
+        // Serving nothing must match NOTHING. An empty closure would add no
+        // constraints and silently widen to the whole board — the exact
+        // failure this scope exists to prevent.
+        if ($lanes === [] && ! $includeUnrouted) {
+            return $query->whereRaw('1 = 0');
+        }
+
+        return $query->where(function (Builder $q) use ($lanes, $includeUnrouted) {
+            if ($lanes !== []) {
+                $q->whereIn('lane', $lanes);
+            }
+
+            if ($includeUnrouted) {
+                $q->orWhereNull('lane');
+            }
+        });
+    }
+
+    /**
      * TASK-997 part B — the tasks that BLOCK this one (this task is the
      * blocked side of `dispatch_task_links`). Real dependencies, distinct
      * from labels/lane: created by {@see

@@ -164,6 +164,22 @@
                         </details>
                     </div>
                     <div class="dispatch-agent-actions">
+                        {{-- TASK-999 (R24): the lane decides what next/claim will
+                             even OFFER this agent, so the approver sets it here
+                             beside the scopes rather than discovering it later. --}}
+                        <div class="dispatch-agent-ttl">
+                            <label for="lane-{{ $session->id }}">lane</label>
+                            <select id="lane-{{ $session->id }}" wire:model="approveLane.{{ $session->id }}" class="dispatch-select">
+                                <option value="">No lane — the whole board</option>
+                                @foreach ($laneOptions as $laneKey)
+                                    <option value="{{ $laneKey }}">{{ app(\Sgrjr\Dispatch\Contracts\LaneResolver::class)->label($laneKey) ?? $laneKey }}</option>
+                                @endforeach
+                                @php($requestedLane = (string) ($session->requested_meta['lane'] ?? ''))
+                                @if ($requestedLane !== '' && ! in_array($requestedLane, $laneOptions, true))
+                                    <option value="{{ $requestedLane }}">{{ $requestedLane }} (requested — not a current lane)</option>
+                                @endif
+                            </select>
+                        </div>
                         <div class="dispatch-agent-ttl">
                             <label for="ttl-{{ $session->id }}">session length</label>
                             <select id="ttl-{{ $session->id }}" wire:model="approveTtl.{{ $session->id }}" class="dispatch-select">
@@ -194,6 +210,12 @@
                         <div>
                             <span class="dispatch-list-title">{{ $session->agent_name }}</span>
                             <span class="dispatch-badge is-success">approved</span>
+                            {{-- TASK-999: what this live session's next/claim are served. --}}
+                            @if ($session->lane)
+                                <span class="dispatch-badge is-info" title="dispatch:next / claim serve this lane (and the departments above it); any other task is still claimable by code.">lane: {{ $session->lane }}</span>
+                            @else
+                                <span class="dispatch-badge" title="No lane granted — next/claim see the whole board.">no lane</span>
+                            @endif
                         </div>
                         <div class="dispatch-agent-meta">
                             approved {{ $session->approved_at?->diffForHumans() }}

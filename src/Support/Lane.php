@@ -37,4 +37,29 @@ class Lane
     {
         return str_contains($lane, ':');
     }
+
+    /**
+     * TASK-999 (R24) — $lane plus every lane it sits UNDER, most specific
+     * first: `marketing:developer` → `['marketing:developer', 'marketing']`.
+     *
+     * This is the "reaches me" set, and it is deliberately asymmetric with
+     * {@see \Sgrjr\Dispatch\Models\Task::scopeInLane()}'s department-expands-
+     * downward semantics. A holder of `marketing:developer` is reached by
+     * work addressed to the whole department (R22: "a bare `marketing` task
+     * reaches every marketing member") but NEVER by a sibling sub-lane's
+     * unclaimed work (`marketing:sales`) — noise removed by relevance.
+     *
+     * @return array<int,string>
+     */
+    public static function selfAndAncestors(string $lane): array
+    {
+        $out = [$lane];
+
+        while (($pos = strrpos($lane, ':')) !== false) {
+            $lane = substr($lane, 0, $pos);
+            $out[] = $lane;
+        }
+
+        return $out;
+    }
 }

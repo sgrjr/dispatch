@@ -24,6 +24,7 @@ class DispatchSessionRequest extends Command
     protected $signature = 'dispatch:session:request
         {--name= : Agent name to identify this session as}
         {--purpose= : Short human-readable purpose for the session}
+        {--lane= : The lane this session asks to SERVE — next/claim then offer only that lane, the departments above it, and (by config) the no-department lane. Omit for the host default; pass an empty value to ask for an unrestricted session. Claim-by-code is always exempt.}
         {--scope=* : Narrow the requested verb set. Repeatable. OMIT to request the full grantable allowlist (the recommended default — the approver sees and controls the grant).}
         {--wait=0 : After showing the user_code, block in-process for approval for up to N seconds (bare --wait ≈60s) and collect the token — the whole commissioning in ONE command. Omit for the two-step flow (poll with dispatch:session:status).}
         {--code-file= : Write the user_code (JSON: user_code/public_id/expires_at) to this file the moment it is known — lets a blocked/buffered harness read the code from another process}
@@ -49,6 +50,12 @@ class DispatchSessionRequest extends Command
         $name = $this->option('name') ?: 'agent';
         $purpose = $this->option('purpose');
         $scopes = array_values(array_filter(array_map('trim', (array) $this->option('scope')), fn ($s) => $s !== ''));
+        // Absent vs. explicit matters here exactly as it does for scopes: a
+        // missing --lane takes the host default at approval, `--lane=` asks
+        // for no lane at all. option() returns null when the flag is absent
+        // and '' when it is passed empty, so don't collapse the two.
+        $lane = $this->option('lane');
+        $lane = $lane === null ? null : trim((string) $lane);
 
         // Only send `scopes` when the caller deliberately narrowed them. The
         // server treats an ABSENT key as "approver grants the full allowlist"
@@ -61,6 +68,9 @@ class DispatchSessionRequest extends Command
         ];
         if ($scopes !== []) {
             $payload['scopes'] = $scopes;
+        }
+        if ($lane !== null) {
+            $payload['lane'] = $lane;
         }
 
         try {
@@ -118,6 +128,7 @@ class DispatchSessionRequest extends Command
             'agent_name' => $name,
             'purpose' => $purpose,
             'scopes' => $scopes,
+            'lane' => $lane,
         ]);
 
         // --code-file: surface the user_code out-of-band the moment it is known.
@@ -138,6 +149,11 @@ class DispatchSessionRequest extends Command
         $this->line($scopes === []
             ? 'Requested: the full grantable verb set (narrow next time with --scope=… if needed).'
             : 'Requested scopes: '.implode(', ', $scopes));
+        if ($lane !== null) {
+            $this->line($lane === ''
+                ? 'Requested lane: none — an unrestricted session (next/claim see the whole board).'
+                : "Requested lane: {$lane} (next/claim serve that lane; the approver can change it).");
+        }
         $this->newLine();
 
         // One-shot commissioning: with --wait, fall straight into the approval

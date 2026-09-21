@@ -34,11 +34,20 @@ class AgentController extends Controller
 {
     public function next(Request $request): JsonResponse
     {
+        $s = $this->session($request);
+
         // Query construction, eager-loading, ordering and focus-steering all
         // live in the service (mirrors the CLI). ?no_focus=1 bypasses steering.
+        //
+        // TASK-999 (R24): `served_lanes` comes from the APPROVED SESSION, never
+        // the query string — an agent can't widen its own reach. It is merged
+        // after the wire filters for the same reason. (claim() derives the same
+        // set from the session it is already handed.)
         try {
             $task = app(DispatchTaskService::class)->nextCandidate(
-                $this->anchorQueryFilters($request, [
+                array_filter([
+                    'served_lanes' => $s->servedLanes(),
+                ]) + $this->anchorQueryFilters($request, [
                     'type' => $request->query('type'),
                     'label' => $request->query('label'),
                 ]),

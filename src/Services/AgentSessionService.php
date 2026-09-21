@@ -4,6 +4,7 @@ namespace Sgrjr\Dispatch\Services;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Sgrjr\Dispatch\Contracts\LaneResolver;
 use Sgrjr\Dispatch\Models\AgentSession;
 
 /**
@@ -75,11 +76,17 @@ class AgentSessionService
      * explicit scopes (what the approver kept in the UI), else the ones requested
      * at request-time, else the full allowlist — see resolveGrant().
      *
+     * $lane (TASK-999/R24) resolves the same way: what the approver chose,
+     * else what the request named, else the host default. An explicit `''`
+     * means "no lane" — an unrestricted session — and is distinct from null
+     * ("the approver didn't touch it").
+     *
      * @param  array<int,string>|null  $scopes
      */
-    public function approve(AgentSession $session, int $userId, ?int $ttl = null, ?array $scopes = null): AgentSession
+    public function approve(AgentSession $session, int $userId, ?int $ttl = null, ?array $scopes = null, ?string $lane = null): AgentSession
     {
         $session->scopes = $this->resolveGrant($scopes ?? ($session->requested_meta['scopes'] ?? null));
+        $session->lane = $this->resolveLane($lane ?? ($session->requested_meta['lane'] ?? null));
         $session->save();
 
         $session->approve($userId, $ttl ?? (int) config('dispatch.agent.session_ttl', 10800));
@@ -105,6 +112,50 @@ class AgentSessionService
         }
 
         return array_values(array_intersect(array_map('strval', $requested), $this->grantCeiling()));
+    }
+
+    /**
+     * TASK-999 (R24) — turn a requested lane into the lane actually granted.
+     *
+     *  - null (nobody named one) → the host default, `dispatch.agent.lane`;
+     *  - `''` → no lane: an UNRESTRICTED session (the whole open board). The
+     *    approver's deliberate "don't scope this one" — never widened into
+     *    the default;
+     *  - anything else → validated through the bound LaneResolver. An
+     *    unrecognized key falls back to the default rather than silently
+     *    becoming unrestricted: a lane that was renamed or retired must not
+     *    turn into a wider grant than the requester asked for.
+     *
+     * Public for the same reason resolveGrant() is: the approval UI shows the
+     * human the lane they are about to grant, rather than re-deriving it.
+     */
+    public function resolveLane(?string $lane): ?string
+    {
+        if ($lane === null) {
+            $lane = config('dispatch.agent.lane');
+            $lane = is_string($lane) ? $lane : null;
+
+            if ($lane === null) {
+                return null;
+            }
+        }
+
+        $lane = trim($lane);
+
+        if ($lane === '') {
+            return null;
+        }
+
+        if (! app(LaneResolver::class)->isLane($lane)) {
+            $fallback = config('dispatch.agent.lane');
+            $fallback = is_string($fallback) ? trim($fallback) : '';
+
+            return $fallback !== '' && $fallback !== $lane && app(LaneResolver::class)->isLane($fallback)
+                ? $fallback
+                : null;
+        }
+
+        return $lane;
     }
 
     /**
@@ -220,6 +271,12 @@ class AgentSessionService
                         'token' => $token,
                         'poll_interval' => $pollInterval,
                         'expires_at' => optional($locked->expires_at)->toIso8601String(),
+                        // TASK-999 — the GRANTED lane (which may differ from
+                        // the requested one: the approver can change it). The
+                        // agent needs to know what next/claim will offer it,
+                        // and this is the only response that carries it.
+                        'lane' => $locked->lane,
+                        'scopes' => $locked->scopes,
                     ];
                 }
 

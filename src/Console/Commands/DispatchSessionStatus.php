@@ -200,12 +200,18 @@ class DispatchSessionStatus extends Command
                         // Session-start marker: session:end's default metrics
                         // window opens here (token delivery = session begins).
                         'stored_at' => now()->toIso8601String(),
+                        // TASK-999 — the GRANTED lane, which may differ from the
+                        // one requested (the approver can change it). Stored so
+                        // reportActive() and session:refresh both speak from the
+                        // grant rather than from what was asked for.
+                        'lane' => array_key_exists('lane', $body) ? $body['lane'] : ($data['lane'] ?? null),
                     ]));
                     // Say what the token CHANGES (sticky-remote) and what to run
                     // next, so the loop starts from this output, not from a doc.
                     $this->info($this->stickyRemoteEnabled()
                         ? 'Approved — token stored. dispatch verbs now target the remote by default while this session is active (pass --local for the local DB).'
                         : 'Approved — token stored; run the verbs with --remote.');
+                    $this->reportGrantedLane($body['lane'] ?? null);
                     $this->line('Start with:  <fg=gray>php artisan dispatch:queue --count</>   then claim what you\'ll work: <fg=gray>dispatch:claim <CODE></>');
                     $this->line('When all work is closed out:  <fg=gray>php artisan dispatch:session:end</>');
                 } else {
@@ -242,6 +248,28 @@ class DispatchSessionStatus extends Command
      *
      * @param  array<string,mixed>  $data  the token dotfile contents
      */
+    /**
+     * TASK-999 (R24) — say which lane this session serves, because it decides
+     * what `next`/`claim` will even offer. Silence here would leave an empty
+     * `next` looking like an empty BOARD; naming the lane makes it read as the
+     * scope it is. Null = unrestricted, and says so rather than saying nothing.
+     */
+    private function reportGrantedLane(?string $lane): void
+    {
+        $lane = is_string($lane) ? trim($lane) : '';
+
+        if ($lane === '') {
+            $this->line('  Lane: none — next/claim see the whole board.');
+
+            return;
+        }
+
+        $this->line("  Lane: <fg=cyan>{$lane}</> — next/claim serve this lane"
+            .(str_contains($lane, ':') ? ' and the department above it' : ' and its sub-lanes')
+            .(config('dispatch.agent.lane_includes_unrouted', true) ? ', plus unrouted work' : '')
+            .'. Claim any other task by code.');
+    }
+
     private function reportActive(array $data): int
     {
         $name = $data['agent_name'] ?? 'agent';
@@ -249,6 +277,7 @@ class DispatchSessionStatus extends Command
         $storedAt = $data['stored_at'] ?? null;
 
         $this->info("Active agent session: {$name} (token stored locally).");
+        $this->reportGrantedLane($data['lane'] ?? null);
         if (is_string($storedAt) && $storedAt !== '') {
             $this->line("  Approved / token stored: {$storedAt}");
         }

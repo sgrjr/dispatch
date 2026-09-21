@@ -423,6 +423,25 @@ return [
         'verb_throttle' => env('DISPATCH_AGENT_VERB_THROTTLE', '120,1'),
         'verbs' => ['next', 'queue', 'show', 'add', 'note', 'done', 'claim', 'batch', 'handoff'],
 
+        // TASK-999 (R24) — the lane an agent session SERVES by default: which
+        // work `next`/`claim` will offer it. Null (the default) = unrestricted,
+        // the whole open board, so a host that hasn't adopted lanes sees no
+        // change. A session can request a different lane (`--lane=`), and the
+        // approver sees and can change it at /it/agent-sessions before granting
+        // — this is only what an unspecified request falls back to.
+        //
+        // A session granted `marketing:developer` is served that lane plus the
+        // departments above it (bare `marketing`), never a sibling sub-lane
+        // (`marketing:sales`) and never another department. Claim-by-code is
+        // always exempt, so a human can still hand an agent any task.
+        'lane' => env('DISPATCH_AGENT_LANE'),
+
+        // Does a laned agent also get the NO-DEPARTMENT lane (R15: that lane is
+        // open to any user or department)? True keeps unrouted work reachable —
+        // the sane default while a backlog is still mostly unlaned. Set false to
+        // require a human to route work into a lane before any agent claims it.
+        'lane_includes_unrouted' => (bool) env('DISPATCH_AGENT_LANE_INCLUDES_UNROUTED', true),
+
         // Explicit denylist — the supported way to WITHHOLD a shipped verb. The
         // grant ceiling for an explicitly-requested scope is the UNION of `verbs`
         // and the package's known verbs (AgentSessionService::KNOWN_VERBS), so a

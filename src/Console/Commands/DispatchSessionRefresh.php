@@ -7,7 +7,7 @@ use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 
 /**
  * The baked-in resolution pipeline for an auto-expired / dropped session:
- * re-request a session with the SAME identity and scopes as the one that died,
+ * re-request a session with the SAME identity, scopes and lane as the one that died,
  * flagged as a renewal in the purpose so the approving human sees the
  * extend/reset context in the Agent Sessions UI, then block for approval and
  * store the fresh token (which clears the dropped-session guard).
@@ -50,6 +50,12 @@ class DispatchSessionRefresh extends Command
         $name = $ctx['agent_name'] ?? 'agent';
         $purpose = $ctx['purpose'] ?? null;
         $scopes = array_values(array_filter((array) ($ctx['scopes'] ?? []), 'is_string'));
+        // TASK-999 — renew into the SAME lane the dead session served. Null
+        // (never requested one) stays absent so the host default still
+        // applies; an explicit '' (deliberately unrestricted) is carried
+        // through, which is why the array_filter below only drops nulls.
+        $lane = ($ctx['lane'] ?? null);
+        $lane = is_string($lane) ? $lane : null;
 
         // Name the renewal for the approver: which session died, and why.
         $renewal = 'renewal'
@@ -69,6 +75,7 @@ class DispatchSessionRefresh extends Command
             '--name' => $name,
             '--purpose' => $purpose,
             '--scope' => $scopes,
+            '--lane' => $lane,
             '--wait' => $wait === null ? '60' : (string) $wait,
             '--secret' => $this->option('secret'),
         ], fn ($v) => $v !== null && $v !== []));

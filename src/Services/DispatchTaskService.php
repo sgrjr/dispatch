@@ -310,6 +310,39 @@ class DispatchTaskService
     }
 
     /**
+     * TASK-999 (R24) — narrow `next`/`claim` candidates to the lanes the
+     * CALLER is served. Unlike `lane`, this is NOT a wire filter: the agent
+     * API sets `$filters['served_lanes']` from the approved session's granted
+     * lane, so an agent cannot widen its own reach by omitting a flag. A
+     * caller with no served lane (`null`/absent) is unrestricted — the
+     * pre-TASK-999 whole-board behavior every non-agent path keeps.
+     *
+     * It composes with a user-supplied `lane` filter rather than replacing
+     * it: `--lane=` narrows WITHIN what you are served, and asking for a
+     * lane you aren't served correctly yields nothing.
+     *
+     * The no-department lane rides along by default (R15: that lane is open
+     * to any user or department); `dispatch.agent.lane_includes_unrouted`
+     * turns it off for a host that wants unrouted work triaged by a human
+     * before any agent can claim it.
+     *
+     * @param  array{served_lanes?:array<int,string>|null}  $filters
+     */
+    protected function applyServedLanes(Builder $q, array $filters): Builder
+    {
+        $served = $filters['served_lanes'] ?? null;
+
+        if (! is_array($served) || $served === []) {
+            return $q;
+        }
+
+        return $q->servedByLanes(
+            $served,
+            (bool) config('dispatch.agent.lane_includes_unrouted', true),
+        );
+    }
+
+    /**
      * The `next`/`claim` candidate ordering: actionable-first, then configured
      * priority rank, then manual position, then id. Uses Task::prioritySql()
      * (config-aware) rather than a hardcoded priority CASE — identical ordering
@@ -395,7 +428,11 @@ class DispatchTaskService
      * (open/in_progress/triage) unless $status pins one; type/label filters
      * narrow (label is any-of). Pass $applyFocus false to bypass steering.
      *
-     * @param  array{type?:string,label?:string|array<int,string>,topic?:string,origin?:string,conversation?:int|string,topic_account?:string,lane?:string}  $filters
+     * TASK-999 — `served_lanes` (set by the agent API from the approved
+     * session's lane, never by the wire) narrows candidates to the lanes the
+     * caller is served; see {@see applyServedLanes()}.
+     *
+     * @param  array{type?:string,label?:string|array<int,string>,topic?:string,origin?:string,conversation?:int|string,topic_account?:string,lane?:string,served_lanes?:array<int,string>}  $filters
      */
     public function nextCandidate(array $filters = [], ?string $status = null, bool $applyFocus = true): ?Task
     {
@@ -406,7 +443,7 @@ class DispatchTaskService
         $label = $filters['label'] ?? null;
 
         $baseQuery = fn () => $this->orderForNext($this->eagerForRead(
-            $this->applyLaneFilter($this->applyAnchorFilters(
+            $this->applyServedLanes($this->applyLaneFilter($this->applyAnchorFilters(
                 $taskModel::query()
                     ->when(
                         $status,
@@ -419,7 +456,7 @@ class DispatchTaskService
                         fn ($lq) => $lq->whereIn('name', LabelAlias::canonicalize((array) $label))
                     )),
                 $filters,
-            ), $filters)
+            ), $filters), $filters)
         ));
 
         return $this->steeredFirst($applyFocus, $baseQuery);
@@ -538,6 +575,11 @@ class DispatchTaskService
      * filters are ignored, AND steering is forced off, since the code already
      * picks the task.
      *
+     * TASK-999 (R24): when $session carries a granted lane, candidates are
+     * narrowed to the lanes it serves — its lane, the departments above it,
+     * and (by config) the no-department lane. Claim-by-$code bypasses that
+     * narrowing, so a human can still hand an agent any task.
+     *
      * @param  array{type?:string,label?:string|array<int,string>,topic?:string,origin?:string,conversation?:int|string,topic_account?:string,lane?:string}  $filters
      */
     public function claim(?AgentSession $session = null, array $filters = [], ?int $assigneeUserId = null, ?string $code = null, bool $applyFocus = true): ?Task
@@ -551,6 +593,16 @@ class DispatchTaskService
         $label = $code === null ? ($filters['label'] ?? null) : null;
         $anchorFilters = $code === null ? $filters : [];
 
+        // TASK-999 (R24) — the SESSION is the authority on which lanes it is
+        // served, so derive that here rather than trusting the caller to pass
+        // it: no transport can widen an agent's reach by omitting a key. A
+        // named $code is exempt (it already fell out with $anchorFilters
+        // above) — handing an agent a specific task stays possible from any
+        // lane, which is what "or tasks held by the agent explicitly" means.
+        if ($code === null && ($sessionLanes = $session?->servedLanes()) !== null) {
+            $anchorFilters['served_lanes'] = $sessionLanes;
+        }
+
         return DB::transaction(function () use ($taskModel, $session, $type, $label, $assigneeUserId, $code, $applyFocus, $anchorFilters) {
             // A FRESH lean, LOCKED candidate builder per call — steeredFirst may
             // probe it once per focus plus once for the base, and a locked
@@ -563,7 +615,7 @@ class DispatchTaskService
             // the UI claim action instead).
             $baseQuery = function () use ($taskModel, $type, $label, $code, $anchorFilters) {
                 $query = $this->orderForNext(
-                    $this->applyLaneFilter($this->applyAnchorFilters(
+                    $this->applyServedLanes($this->applyLaneFilter($this->applyAnchorFilters(
                         $taskModel::query()
                             ->whereIn('status', ['open', 'triage'])
                             ->when($code, fn ($q, $c) => $q->where('code', $c))
@@ -573,7 +625,7 @@ class DispatchTaskService
                                 fn ($lq) => $lq->whereIn('name', LabelAlias::canonicalize((array) $label))
                             )),
                         $anchorFilters,
-                    ), $anchorFilters)
+                    ), $anchorFilters), $anchorFilters)
                 );
 
                 // Row-lock the candidate. MySQL/Postgres get SKIP LOCKED so

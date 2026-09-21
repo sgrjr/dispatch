@@ -107,6 +107,53 @@ php artisan optimize:clear
   `DispatchGate::scopeVisible()` — the anchor fields cannot widen who sees a
   task, pinned by a test.
 
+## Unreleased — agents serve a lane (TASK-999, R24)
+
+**One migration; inert until a session is granted a lane.** An approved agent
+session now carries the lane it SERVES, and `next`/`claim` offer it only that
+work. A session with no lane behaves exactly as before.
+
+```bash
+composer update sgrjr/dispatch
+php artisan migrate              # 000013: lane on dispatch_agent_sessions
+php artisan optimize:clear
+```
+
+- **One new nullable column on `dispatch_agent_sessions`**: `lane`,
+  string(96). `null` = unrestricted — the whole open board, the
+  pre-TASK-999 behavior — so nothing changes until you set one.
+- **What a laned session is served**: its lane, plus the departments ABOVE it
+  (`marketing:developer` is also served bare `marketing`, because
+  whole-department work reaches every member — R22), plus, by config, the
+  no-department lane. **Never** a sibling sub-lane (`marketing:sales`) and
+  never another department. This is the reverse of the `--lane=` FILTER,
+  which expands a bare department DOWN into its sub-lanes.
+- **Claim-by-code is exempt.** `dispatch:claim <CODE>` still works on any
+  task, from any lane — that is how a human hands an agent a specific task.
+- **The lane is a GRANT, not a client setting.** `dispatch:session:request
+  --lane=…` asks; the approver sees it at `/it/agent-sessions` and can change
+  it before granting; the server reads it off the session row. Passing
+  `?lane=` on a verb still only narrows WITHIN what the session is served, so
+  an agent cannot widen its own reach. An unrecognized lane 422s at request
+  time.
+- **Two new config keys** (both optional):
+  - `dispatch.agent.lane` (`DISPATCH_AGENT_LANE`) — the lane an unspecified
+    request falls back to. Default null (unrestricted).
+  - `dispatch.agent.lane_includes_unrouted`
+    (`DISPATCH_AGENT_LANE_INCLUDES_UNROUTED`, default **true**) — whether a
+    laned agent also gets the no-department lane. True keeps unrouted work
+    reachable while a backlog is still mostly unlaned; false requires a human
+    to route work into a lane before any agent can claim it.
+- **`approve()` gained a fifth parameter**, `?string $lane = null`, after
+  `$scopes`. Additive — existing callers are unaffected. `''` means "no lane"
+  (deliberately unrestricted) and is distinct from `null` ("nobody chose"),
+  which falls back to the config default.
+- **The approved poll response now carries `lane` and `scopes`**, so an agent
+  learns the grant it actually received rather than the one it asked for.
+  `dispatch:session:status` prints it on both collection and every later
+  probe — worth knowing, because an empty `next` under a lane is a scope, not
+  an empty board.
+
 ## Unreleased — lanes (TASK-997 part A)
 
 **One migration, one new contract seam, no breaking change — inert until you bind a LaneResolver.**
