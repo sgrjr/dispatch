@@ -13,6 +13,7 @@ use Illuminate\Database\QueryException;
 use Sgrjr\Dispatch\Contracts\OriginResolver;
 use Sgrjr\Dispatch\Contracts\TopicResolver;
 use Sgrjr\Dispatch\Support\Anchor;
+use Sgrjr\Dispatch\Support\Lane;
 
 class Task extends Model
 {
@@ -69,6 +70,9 @@ class Task extends Model
         'origin_type',
         'origin_id',
         'conversation_id',
+        // TASK-997 part A — the department (or role sub-lane) that WORKS this
+        // task. Routing only — see VisibilityGates, which never reads this.
+        'lane',
     ];
 
     protected $casts = [
@@ -279,6 +283,52 @@ class Task extends Model
     public function scopeAboutAccount(Builder $query, string $key): Builder
     {
         return $query->where('topic_account_key', $key);
+    }
+
+    /**
+     * TASK-997 part A — tasks in $lane, with DEPARTMENT-vs-EXACT semantics
+     * (R15): a bare department key (`marketing`) matches that department AND
+     * every one of its sub-lanes (`lane = 'marketing' OR lane LIKE
+     * 'marketing:%'`); a `dept:role` key matches exactly. {@see Lane::NONE}
+     * ('none') is the reserved token for the NO-DEPARTMENT lane and matches
+     * `whereNull('lane')` — never a real lane key. Routing only — never a
+     * visibility scope; see VisibilityGates, which does not consult `lane`.
+     */
+    public function scopeInLane(Builder $query, string $lane): Builder
+    {
+        if ($lane === Lane::NONE) {
+            return $query->whereNull('lane');
+        }
+
+        if (Lane::isSubLane($lane)) {
+            return $query->where('lane', $lane);
+        }
+
+        return $query->where(function (Builder $q) use ($lane) {
+            $q->where('lane', $lane)->orWhere('lane', 'like', $lane.':%');
+        });
+    }
+
+    /**
+     * Tasks whose `lane` is EXACTLY one of $lanes (no department-vs-sub-lane
+     * expansion) — what a personal "my lanes" view uses with
+     * LaneResolver::lanesFor(), which already returns the user's specific
+     * lane keys.
+     *
+     * @param  array<int,string>  $lanes
+     */
+    public function scopeInLanes(Builder $query, array $lanes): Builder
+    {
+        return $query->whereIn('lane', $lanes);
+    }
+
+    /**
+     * Tasks in the NO-DEPARTMENT lane (R15) — open, every staff user sees
+     * them, any user or department can claim from them.
+     */
+    public function scopeUnrouted(Builder $query): Builder
+    {
+        return $query->whereNull('lane');
     }
 
     public function submitter(): BelongsTo

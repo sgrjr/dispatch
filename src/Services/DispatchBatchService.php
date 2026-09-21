@@ -3,6 +3,7 @@
 namespace Sgrjr\Dispatch\Services;
 
 use Illuminate\Support\Facades\DB;
+use Sgrjr\Dispatch\Contracts\LaneResolver;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Support\Anchor;
@@ -200,6 +201,7 @@ class DispatchBatchService
             $this->assertAnchorInput($i, $op, 'topic');
             $this->assertAnchorInput($i, $op, 'origin');
             $this->assertConversationId($i, $op);
+            $this->assertLaneInput($i, $op);
 
             foreach (($op['comments'] ?? []) as $c) {
                 if (! is_array($c)) {
@@ -334,6 +336,35 @@ class DispatchBatchService
     }
 
     /**
+     * TASK-997 part A — validate `lane` UP FRONT, same posture as
+     * assertDueAt()/assertAnchorInput(): a non-null value must pass
+     * LaneResolver::isLane() before the transaction opens, or the WHOLE batch
+     * fails naming the operation. `null`/`""` is always legal (an explicit
+     * clear to the no-department lane — see applyUpdate()); an ADD's clear is
+     * simply nothing to carry, matching due_at's "a new task has nothing to
+     * remove."
+     *
+     * @param  array<string,mixed>  $op
+     */
+    protected function assertLaneInput(int $i, array $op): void
+    {
+        if (! array_key_exists('lane', $op)) {
+            return;
+        }
+
+        $lane = $op['lane'];
+        if ($lane === null || $lane === '') {
+            return;
+        }
+
+        if (! app(LaneResolver::class)->isLane((string) $lane)) {
+            throw new \InvalidArgumentException(
+                "Operation {$i}: `lane` `{$lane}` is not a valid lane (see dispatch:schema)."
+            );
+        }
+    }
+
+    /**
      * TASK-995 — resolve a topic/origin field into `[type, id]` (a value),
      * `[null, null]` (an explicit clear), or null (the field wasn't touched
      * at all — check with anchorTouched() first). Already validated by
@@ -444,6 +475,14 @@ class DispatchBatchService
             $attributes['conversation_id'] = (int) $op['conversation_id'];
         }
 
+        // TASK-997 part A — lane is likewise part of CREATION: set silently
+        // (no timeline event) when a non-empty value is given; an empty/null
+        // value on add is nothing to carry (a brand-new task has no lane to
+        // clear). Already validated (assertLaneInput).
+        if (array_key_exists('lane', $op) && $op['lane'] !== null && $op['lane'] !== '') {
+            $attributes['lane'] = (string) $op['lane'];
+        }
+
         $task = $key !== null
             ? $this->tasks->firstOrCreateByKey($key, $attributes, $labels)
             : $this->tasks->create($attributes, $labels);
@@ -535,6 +574,19 @@ class DispatchBatchService
             $task->conversation_id = $op['conversation_id'] !== null ? (int) $op['conversation_id'] : null;
         }
 
+        // TASK-997 part A — `lane` is tri-state like `due_at`: absent = the
+        // task's routing is untouched, null/"" clears it to the no-department
+        // lane, any other value is already validated (assertLaneInput).
+        $laneFrom = null;
+        $laneTo = null;
+        $laneChanged = false;
+        if (array_key_exists('lane', $op)) {
+            $laneFrom = $task->lane;
+            $laneTo = ($op['lane'] === null || $op['lane'] === '') ? null : (string) $op['lane'];
+            $task->lane = $laneTo;
+            $laneChanged = $laneFrom !== $laneTo;
+        }
+
         $from = $task->status;
         $to = $op['status'] ?? null;
         $statusChanged = $to !== null && $to !== $from;
@@ -563,6 +615,18 @@ class DispatchBatchService
                 $actorUserId,
                 $actorMeta + ['due_at' => ['from' => $dueFrom, 'to' => $dueTo]],
                 $dueTo ? "Due date set to {$dueTo}." : 'Due date cleared.',
+            );
+        }
+
+        // TASK-997 part A — a real lane change gets its own event type
+        // (EVENT_LANE_CHANGE), distinct from the generic due_at comment above,
+        // so a routing change is queryable/filterable on the timeline.
+        if ($laneChanged) {
+            $task->recordEvent(
+                TaskComment::EVENT_LANE_CHANGE,
+                $actorUserId,
+                $actorMeta + ['from' => $laneFrom, 'to' => $laneTo],
+                $laneTo !== null ? "Routed to {$laneTo}." : 'Lane cleared.',
             );
         }
 

@@ -107,6 +107,76 @@ php artisan optimize:clear
   `DispatchGate::scopeVisible()` — the anchor fields cannot widen who sees a
   task, pinned by a test.
 
+## Unreleased — lanes (TASK-997 part A)
+
+**One migration, one new contract seam, no breaking change — inert until you bind a LaneResolver.**
+
+```bash
+composer update sgrjr/dispatch
+php artisan migrate              # 000021: lane
+php artisan optimize:clear
+```
+
+- **One new nullable column on `dispatch_tasks`**: `lane`, string(96), indexed
+  with `status`. `null` is the NO-DEPARTMENT lane (R15) — open, every staff
+  user sees it, any user or department can claim from it — not "unknown."
+  No backfill: a lane key is host data (a department, or a role-named
+  sub-lane like `marketing:developer`), resolved through the new
+  `LaneResolver` seam.
+- **A lane decides ROUTING, never visibility** (R14) — same doctrine as the
+  anchor fields' `topic_account_key`. `DispatchGate::scopeVisible()` never
+  reads `lane`, pinned by a test.
+- **New contract seam**: `LaneResolver` (`dispatch.contracts.lanes` —
+  plural, matching the array key), defaulting to `NullLaneResolver`. With
+  the Null default bound, the WHOLE feature is inert: `isLane()` is always
+  false, so no write path can persist a non-null lane, every list is empty,
+  and `canRoute()` is always false. If your published `config/dispatch.php`
+  predates this release, the shallow `mergeConfigFrom` means the
+  `contracts.lanes` key is simply absent — the package falls back to
+  `NullLaneResolver` in code either way, so this is safe to skip; republish
+  (`--force`) only if you want the key visible for editing.
+- **New model API on `Task`**: `scopeInLane()` (department-vs-exact
+  semantics — a bare `marketing` matches `marketing` AND every
+  `marketing:*` sub-lane; a `dept:role` key matches exactly;
+  `Sgrjr\Dispatch\Support\Lane::NONE` ('none') means the no-department
+  lane), `scopeInLanes()` (exact set membership), `scopeUnrouted()`.
+- **New service methods on `DispatchTaskService`**: `claimForUser(Task,
+  Authenticatable, ?lane)` — a human claiming a task for themselves; when
+  the task is unrouted it also auto-joins one of the claimer's lanes (the
+  single most-specific one, or an explicit `$lane`, or a "pick a lane" error
+  when ambiguous) — and `routeToLane(Task, lane, Authenticatable)` — put a
+  task in a lane, unclaimed, allowed for an admin (`canRoute()`) on any
+  task, or for a lane member pulling an UNROUTED task into their own lane.
+  Both are distinct from the pre-existing `claim()`, which powers the AGENT
+  verb loop and **never** sets a lane.
+- **New CLI flag**: `dispatch:add --lane=` at creation (validated against the
+  bound LaneResolver — locally when persisting locally; a `--remote` call
+  forwards the raw value for the AUTHORITATIVE host to validate, since your
+  dev box's own binding is very likely the inert default).
+  `dispatch:next`/`queue`/`find`/`claim` gain `--lane=<key|none>` as a
+  FILTER, local and `--remote` — `claim`'s filter narrows candidates only;
+  claiming through the agent verb loop never sets a lane.
+- **New batch-op field**: `lane` (tri-state like `due_at` — absent =
+  untouched, `null`/`""` clears to the no-department lane on `update`; set
+  silently at creation on `add`). A non-null value failing
+  `LaneResolver::isLane()` fails the WHOLE batch, naming the operation. A
+  real change to an existing task's lane records a new `lane_change`
+  timeline event (`TaskComment::EVENT_LANE_CHANGE`).
+- **New capture config**: `dispatch.capture.lane` (env
+  `DISPATCH_CAPTURE_LANE`) stamps a lane on every NEW footer-widget capture.
+  An invalid value is ignored + logged, never a failed capture.
+- **The agent JSON contract (`dispatch:schema`) gained fields, never lost
+  any**: `lane` on both the summary and full shapes; `lane_label` on the
+  full shape only.
+- **Board UI**: `TaskShow` shows the lane badge and, for staff, a "Claim for
+  me" / "Route to…" panel (hidden entirely unless a real LaneResolver is
+  bound). `TaskBoard`'s swimlane mode (`?lanes=1`) groups by `lane` — "No
+  department" first — once a real LaneResolver is bound; otherwise it keeps
+  today's elevated-label grouping unchanged.
+- **Out of scope for this release** (a later wave, "part B"): hand-off
+  (pass/ask), blocked-by links, push notifications, personal lane-scoped
+  views, agents serving a lane.
+
 ## Unreleased — label cleanup (`/labels`) + a full-width layout
 
 **One migration, no config key, no asset republish.**

@@ -22,6 +22,9 @@ class TaskComment extends Model
     public const EVENT_CLAIMED = 'claimed';
     public const EVENT_WATCHER_ADDED = 'watcher_added';
     public const EVENT_VISIBILITY_CHANGE = 'visibility_change';
+    // TASK-997 part A — a task's `lane` changed (routeToLane(), claimForUser()
+    // joining a lane, or a batch `update` op's tri-state `lane`).
+    public const EVENT_LANE_CHANGE = 'lane_change';
 
     protected $table = 'dispatch_task_comments';
 

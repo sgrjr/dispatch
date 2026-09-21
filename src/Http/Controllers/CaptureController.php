@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
+use Sgrjr\Dispatch\Contracts\LaneResolver;
 use Sgrjr\Dispatch\Services\AttachmentService;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
 
@@ -46,13 +47,19 @@ class CaptureController extends Controller
             }
         }
 
-        $task = $tasks->create([
+        $task = $tasks->create(array_filter([
             'title' => $data['title'],
             'type' => $data['type'] ?? 'bug',
             'description' => $description !== '' ? $description : null,
             'status' => 'triage',
             'context' => $context,
-        ], ['source:widget'], Auth::user());
+            // TASK-997 part A — dispatch.capture.lane stamps every NEW widget
+            // capture with a configured lane (e.g. a dev-lane-only feedback
+            // form). An invalid config value is ignored + logged, never a
+            // failed capture — a bug report must never be lost over a lane
+            // misconfiguration.
+            'lane' => $this->captureLane(),
+        ], fn ($v) => $v !== null), ['source:widget'], Auth::user());
 
         foreach ((array) $request->file('files', []) as $file) {
             $attachments->store($file, $task, Auth::id());
@@ -63,5 +70,28 @@ class CaptureController extends Controller
             'title' => $task->title,
             'url' => route(config('dispatch.routes.name_prefix', 'dispatch.').'show', $task),
         ], 201);
+    }
+
+    /**
+     * The configured `dispatch.capture.lane` (TASK-997 part A), or null when
+     * unset or invalid. Validated against the bound LaneResolver here — never
+     * inside DispatchTaskService::create(), which has no opinion on lanes —
+     * so a stale/misconfigured value degrades to "no lane stamped" instead of
+     * losing the whole capture.
+     */
+    protected function captureLane(): ?string
+    {
+        $lane = config('dispatch.capture.lane');
+        if (empty($lane)) {
+            return null;
+        }
+
+        if (! app(LaneResolver::class)->isLane((string) $lane)) {
+            logger()->warning("dispatch.capture.lane is set to an unrecognized lane: {$lane}");
+
+            return null;
+        }
+
+        return (string) $lane;
     }
 }

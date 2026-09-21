@@ -31,7 +31,9 @@ class DispatchManager
      * @param  array<string,mixed>  $options  type, priority, description,
      *         labels[], public, context[], key (dedupe), signature, submitter,
      *         topic / origin ("<type>[:<id>]" anchor strings) and
-     *         conversation (int) — see the anchor fields (TASK-995)
+     *         conversation (int) — see the anchor fields (TASK-995) — and
+     *         lane (a lane key, validated through LaneResolver and DROPPED,
+     *         not failed, if invalid — TASK-997 part A)
      */
     public function report(string $title, array $options = []): ?Task
     {
@@ -145,11 +147,16 @@ class DispatchManager
     }
 
     /**
-     * The anchor options (TASK-995) as task attributes: `topic` / `origin` are
-     * "<type>[:<id>]" strings through Anchor::parse (the one parser), and
-     * `conversation` is the home conversation id. A malformed anchor is logged
-     * and DROPPED — never the report itself: losing an exception report over a
-     * bad topic string would be the worse failure.
+     * The anchor + lane options (TASK-995, TASK-997 part A) as task
+     * attributes: `topic` / `origin` are "<type>[:<id>]" strings through
+     * Anchor::parse (the one parser), `conversation` is the home conversation
+     * id, and `lane` is a lane key validated through the bound LaneResolver.
+     * A malformed anchor, or a lane the resolver rejects, is logged and
+     * DROPPED — never the report itself: losing an exception report over a
+     * bad topic string (or an unrecognized lane) would be the worse failure.
+     * This is the ONE write path in the whole lane contract that degrades
+     * this way instead of failing loud — every other surface (CLI, agent API,
+     * batch) returns a hard validation error.
      *
      * @param  array<string,mixed>  $options
      * @return array<string,mixed>
@@ -176,6 +183,20 @@ class DispatchManager
 
         if (! empty($options['conversation'])) {
             $attributes['conversation_id'] = (int) $options['conversation'];
+        }
+
+        if (! empty($options['lane'])) {
+            $lane = (string) $options['lane'];
+
+            try {
+                if (app(\Sgrjr\Dispatch\Contracts\LaneResolver::class)->isLane($lane)) {
+                    $attributes['lane'] = $lane;
+                } else {
+                    logger()->warning("DispatchTask reporter dropped an unrecognized lane: {$lane}");
+                }
+            } catch (Throwable $ignored) {
+                // never break the report over a lane resolver failure
+            }
         }
 
         return $attributes;

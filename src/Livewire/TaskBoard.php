@@ -8,10 +8,12 @@ use Livewire\Attributes\Url;
 use Livewire\Component;
 use Sgrjr\Dispatch\Contracts\DispatchGate;
 use Sgrjr\Dispatch\Contracts\DispatchNotifier;
+use Sgrjr\Dispatch\Contracts\LaneResolver;
 use Sgrjr\Dispatch\Livewire\Concerns\HasVocabMultiFilters;
 use Sgrjr\Dispatch\Models\Focus;
 use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Support\LabelFacets;
+use Sgrjr\Dispatch\Support\NullLaneResolver;
 
 /**
  * Full-page Kanban board. Columns are Task::statuses() in configured order;
@@ -478,33 +480,53 @@ class TaskBoard extends Component
 
         $byStatus->put('done', $doneItems);
 
-        // Swimlanes (W8-5): a second grouping axis over the already-ordered,
-        // already-capped columns. Each task's lane is its first elevated
-        // label's value (LabelFacets::laneKey; '—' when it has none). Per-column
-        // order is preserved because we push in the existing iteration order.
-        // The done column's GLOBAL cap is untouched — lanes just split whatever
-        // the capped set already contains. Off = one unlabeled lane row that
+        // Swimlanes (W8-5, + TASK-997 part A). A second grouping axis over the
+        // already-ordered, already-capped columns. Per-column order is
+        // preserved because we push in the existing iteration order. The done
+        // column's GLOBAL cap is untouched — lanes just split whatever the
+        // capped set already contains. Off = one unlabeled lane row that
         // reproduces the original single-grid board, so the blade has one path.
+        //
+        // Grouping key: when a REAL LaneResolver is bound (not the inert
+        // NullLaneResolver), group by the `lane` COLUMN — "No department"
+        // (an unrouted task) sorts FIRST, the rest naturally by key. This is a
+        // genuinely different axis than the label-derived one below (routing
+        // vs. an elevated label), so it only takes over once a host has
+        // actually adopted lanes; otherwise every task groups under "No
+        // department" and swimlanes would be pure noise. A host with the
+        // inert default keeps TODAY's behavior: grouped by each task's first
+        // elevated label (LabelFacets::laneKey; '—' when it has none), that
+        // bucket sorting LAST.
+        $laneResolver = app(LaneResolver::class);
+        $groupByDeptLane = ! ($laneResolver instanceof NullLaneResolver);
+
         if ($this->swimlanes) {
             $byLaneStatus = [];
             $laneSeen = [];
             foreach ($byStatus as $status => $cards) {
                 foreach ($cards as $task) {
-                    $lane = LabelFacets::laneKey($task) ?? '—';
+                    $lane = $groupByDeptLane ? ($task->lane ?? '—') : (LabelFacets::laneKey($task) ?? '—');
                     $laneSeen[$lane] = true;
                     $byLaneStatus[$lane][$status] = ($byLaneStatus[$lane][$status] ?? collect())->push($task);
                 }
             }
 
-            // Sorted lane order, '—' (no elevated label) always last.
             $lanes = array_values(array_diff(array_keys($laneSeen), ['—']));
             sort($lanes, SORT_NATURAL | SORT_FLAG_CASE);
             if (isset($laneSeen['—'])) {
-                $lanes[] = '—';
+                // Department lanes: "No department" (unrouted) leads, since
+                // it's the open lane everyone can claim from. Label-derived
+                // lanes keep their existing "no elevated label" LAST order.
+                $groupByDeptLane ? array_unshift($lanes, '—') : $lanes[] = '—';
             }
 
             $laneRows = array_map(
-                fn ($lane) => ['label' => $lane, 'byStatus' => collect($byLaneStatus[$lane])],
+                fn ($lane) => [
+                    'label' => $groupByDeptLane
+                        ? ($lane === '—' ? 'No department' : ($laneResolver->label($lane) ?? $lane))
+                        : $lane,
+                    'byStatus' => collect($byLaneStatus[$lane]),
+                ],
                 $lanes,
             );
         } else {

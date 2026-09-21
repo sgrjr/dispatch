@@ -117,6 +117,7 @@ Dispatch's portability seams are bound in `config/dispatch.php` under
     'submitter' => Sgrjr\Dispatch\Support\AuthSubmitterResolver::class,
     'topic' => Sgrjr\Dispatch\Support\NullTopicResolver::class,
     'origin' => Sgrjr\Dispatch\Support\NullOriginResolver::class,
+    'lanes' => Sgrjr\Dispatch\Support\NullLaneResolver::class,
 ],
 ```
 
@@ -127,9 +128,11 @@ Dispatch's portability seams are bound in `config/dispatch.php` under
 | **SubmitterResolver** | `Sgrjr\Dispatch\Contracts\SubmitterResolver` | `AuthSubmitterResolver` — current auth id, or the lowest-id user for system/CLI captures | Who a task is attributed to when there's no clear actor |
 | **TopicResolver** | `Sgrjr\Dispatch\Contracts\TopicResolver` | `NullTopicResolver` — no-op | Resolves a task's `topic_type`/`topic_id` anchor (what it's ABOUT) into a model/label/URL, and stamps the `topic_account_key` rollup. See "Anchor fields" below |
 | **OriginResolver** | `Sgrjr\Dispatch\Contracts\OriginResolver` | `NullOriginResolver` — no-op | Resolves a task's `origin_type`/`origin_id` anchor (where it came FROM) into a model/label/URL. See "Anchor fields" below |
+| **LaneResolver** | `Sgrjr\Dispatch\Contracts\LaneResolver` | `NullLaneResolver` — no-op (inert) | Validates/labels/lists lanes (the department, or role sub-lane, that WORKS a task) and decides who may route/claim into one. See "Lanes" below |
 
-Neither TopicResolver nor OriginResolver ever filters a query or widens
-visibility — that stays exclusively `DispatchGate::scopeVisible()`'s job.
+Neither TopicResolver, OriginResolver, nor LaneResolver ever filters a query
+or widens visibility — that stays exclusively `DispatchGate::scopeVisible()`'s
+job.
 
 The shipped `DefaultGate` is fine for a small single-team app where "logged
 in" == "staff". Most real installs split staff from submitters — bind your
@@ -1223,6 +1226,149 @@ six columns (all nullable — nothing changes until you start writing them) and
 backfills `origin_type` from a few pre-existing `source:*` labels
 (`source:exception` → `exception`, `source:contact-form` → `contact_form`,
 `source:email` → `email`), only where `origin_type` is still null.
+
+---
+
+## Lanes (routing, TASK-997 part A)
+
+A task's **lane** names the department (or a role-named sub-lane of a
+department) that WORKS it — routing, exactly like the anchor fields' topic
+account key, **never** visibility. It's ONE string:
+`"<department>"` or `"<department>:<role>"` (e.g. `marketing`,
+`marketing:developer`, `marketing:sales`, `customer_service`). The package
+treats a lane key as opaque and host-validated — the only structure it knows
+is "the part before the first `:` is the department"
+(`Sgrjr\Dispatch\Support\Lane::department()`).
+
+`null` is the **no-department lane** (R15) — open, every staff user sees it,
+any user or department can claim from it, an admin can route it anywhere.
+It is represented by `null` at the column/model layer and by the reserved
+filter token `Sgrjr\Dispatch\Support\Lane::NONE` (`'none'`) on the wire —
+never a real lane key a resolver returns.
+
+**Query scopes:**
+
+```php
+Task::inLane('marketing');            // 'marketing' OR any 'marketing:*' sub-lane
+Task::inLane('marketing:developer');  // exact match (carries a ':')
+Task::inLane(Lane::NONE);             // the no-department lane — whereNull('lane')
+Task::inLanes(['marketing:developer', 'customer_service']); // exact set membership
+Task::unrouted();                     // same as inLane(Lane::NONE)
+```
+
+**Claiming and routing** (`Sgrjr\Dispatch\Services\DispatchTaskService`):
+
+```php
+// A human claims a task for themselves. If it's currently unrouted, this
+// also joins one of the claimer's lanes: the $lane given (must be one of
+// theirs), else their single most-specific lane, else a "pick a lane" error.
+// An already-routed task's lane is left untouched either way.
+$tasks->claimForUser($task, $user, $lane = null);
+
+// Put a task in a lane, UNCLAIMED (assignee cleared; assignee_group is left
+// alone — see "Groups" above, a separate config-only concept). Allowed for an
+// admin (LaneResolver::canRoute()) on ANY task/lane, or for a lane member
+// pulling an UNROUTED task into one of THEIR OWN lanes.
+$tasks->routeToLane($task, 'marketing:developer', $actor);
+```
+
+The pre-existing `DispatchTaskService::claim()` — the AGENT verb loop's
+claim (CLI `dispatch:claim`, `POST agent/claim`) — is unchanged and **never**
+sets a lane; it only accepts `lane` as a candidate FILTER, same as
+`topic`/`origin`.
+
+**CLI + agent API.** `dispatch:add --lane=` at creation;
+`dispatch:next`/`queue`/`find`/`claim` take `--lane=<key|none>` as a filter
+(agent API query param: `lane`, identical syntax). The JSON shape carries
+`lane` flat on both the summary and full views; the full view additionally
+resolves `lane_label` (resolver call happens only there, never per-row in a
+list).
+
+**Batch ops** (`dispatch:batch` / `POST agent/batch`) accept `lane`,
+tri-state like `due_at`: absent on `update` leaves it untouched, `null`/`""`
+clears it to the no-department lane; on `add` it's set silently at creation.
+A non-null value that fails `LaneResolver::isLane()` fails the WHOLE batch,
+naming the operation. A real change on `update` records a `lane_change`
+timeline event (`TaskComment::EVENT_LANE_CHANGE`).
+
+**The capture widget.** `dispatch.capture.lane` (env `DISPATCH_CAPTURE_LANE`)
+stamps a lane on every NEW footer-widget capture — e.g. route bug reports
+from a specific page to `marketing:developer`. An invalid/unrecognized value
+is ignored and logged, never a failed capture.
+
+**Binding your own resolver:**
+
+```php
+// config/dispatch.php
+'contracts' => [
+    'lanes' => App\Support\Dispatch\AppLaneResolver::class,
+],
+```
+
+```php
+class AppLaneResolver implements \Sgrjr\Dispatch\Contracts\LaneResolver
+{
+    public function isLane(string $lane): bool
+    {
+        return in_array($lane, $this->lanes(), true);
+    }
+
+    public function label(string $lane): ?string
+    {
+        return match ($lane) {
+            'marketing' => 'Marketing',
+            'marketing:developer' => 'Marketing · Developer',
+            'marketing:sales' => 'Marketing · Sales',
+            default => null,
+        };
+    }
+
+    public function lanes(): array
+    {
+        return ['marketing', 'marketing:developer', 'marketing:sales'];
+    }
+
+    public function lanesFor(\Illuminate\Contracts\Auth\Authenticatable $user): array
+    {
+        return $user->department_lanes ?? []; // however your app tracks this
+    }
+
+    public function lanesManagedBy(\Illuminate\Contracts\Auth\Authenticatable $user): array
+    {
+        return $user->manages_lanes ?? [];
+    }
+
+    public function memberIds(string $lane): array
+    {
+        return \App\Models\User::query()->whereJsonContains('department_lanes', $lane)->pluck('id')->all();
+    }
+
+    public function canRoute(\Illuminate\Contracts\Auth\Authenticatable $user): bool
+    {
+        return (bool) ($user->is_admin ?? false);
+    }
+}
+```
+
+**Visibility.** A task's lane never widens or narrows who can see it —
+`DispatchGate::scopeVisible()` remains the one and only visibility scope in
+the system, and it never consults `lane`, pinned by a test.
+
+**Board UI.** `TaskShow` shows the lane badge and — for staff, only once a
+real `LaneResolver` is bound — a "Claim for me" / "Route to…" panel.
+`TaskBoard`'s swimlane mode (`?lanes=1`) groups by `lane` ("No department"
+first) once a real resolver is bound; otherwise it keeps its pre-existing
+elevated-label grouping (`LabelFacets::laneKey`) unchanged — a genuinely
+different, config-only axis (see "Groups" above) left alone by this feature.
+
+**Migration.** One new package migration
+(`2026_01_01_000021_add_lane_to_dispatch_tasks_table.php`) adds the single
+nullable `lane` column (indexed with `status`) — nothing changes until you
+bind a real `LaneResolver` and start writing it.
+
+**Out of scope for this release** — a later wave: hand-off (pass/ask),
+blocked-by links, push notifications, personal lane-scoped views, agents
+serving a lane.
 
 ---
 

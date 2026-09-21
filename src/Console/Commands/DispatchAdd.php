@@ -5,6 +5,7 @@ namespace Sgrjr\Dispatch\Console\Commands;
 use Illuminate\Console\Command;
 use Sgrjr\Dispatch\Console\Commands\Concerns\ResolvesTextInput;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
+use Sgrjr\Dispatch\Contracts\LaneResolver;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
 use Sgrjr\Dispatch\Support\Anchor;
@@ -37,6 +38,7 @@ class DispatchAdd extends Command
         {--topic= : What the task is ABOUT, as "<type>:<id>" (e.g. account:0402100000001) or "<type>" alone}
         {--origin= : Where the task came FROM, as "<type>:<id>" or "<type>" alone (e.g. phone). Write-once — see dispatch:schema}
         {--conversation= : The home conversation/arc id (an integer)}
+        {--lane= : Route to this lane at creation, as "<department>" or "<department>:<role>" (e.g. marketing:developer) — validated against the bound LaneResolver}
         {--remote : Act on the configured remote agent API (the default while an agent session token is active)}
         {--local : Act on the local DB even while an agent session token is active (overrides sticky-remote)}
         {--json : Emit machine-readable JSON instead of human text}';
@@ -108,6 +110,18 @@ class DispatchAdd extends Command
             return self::FAILURE;
         }
 
+        // --lane: validated ONLY against the LOCAL binding, and only when
+        // this call will actually persist locally. A --remote call forwards
+        // the raw value and lets the AUTHORITATIVE (production) LaneResolver
+        // validate it server-side — this dev box's own binding is very likely
+        // the inert NullLaneResolver and would reject every real lane.
+        $lane = $this->option('lane');
+        if ($lane !== null && $lane !== '' && ! $this->targetsRemote() && ! app(LaneResolver::class)->isLane($lane)) {
+            $this->error("--lane `{$lane}` is not a valid lane (see dispatch:schema).");
+
+            return self::FAILURE;
+        }
+
         $labelNames = array_values(array_filter(
             array_map('trim', (array) $this->option('label')),
             fn ($n) => $n !== ''
@@ -147,6 +161,7 @@ class DispatchAdd extends Command
                 'topic' => $topic,
                 'origin' => $origin,
                 'conversation' => $conversation,
+                'lane' => $lane,
             ], fn ($v) => $v !== null));
 
             if ($r === null) {
@@ -182,6 +197,9 @@ class DispatchAdd extends Command
         if ($conversation !== null) {
             $attributes['conversation_id'] = (int) $conversation;
         }
+        if ($lane !== null && $lane !== '') {
+            $attributes['lane'] = $lane;
+        }
         $attributes['is_public'] = (bool) $this->option('public');
 
         $task = $key !== null
@@ -205,6 +223,9 @@ class DispatchAdd extends Command
         }
         if ($labelNames) {
             $this->line('  labels: '.implode(', ', $labelNames));
+        }
+        if ($task->lane) {
+            $this->line('  lane: '.$task->lane);
         }
 
         return self::SUCCESS;

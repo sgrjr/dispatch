@@ -58,6 +58,13 @@ return [
         // filters a query or widens visibility — see DispatchGate for that.
         'topic' => \Sgrjr\Dispatch\Support\NullTopicResolver::class,
         'origin' => \Sgrjr\Dispatch\Support\NullOriginResolver::class,
+
+        // TASK-997 part A — the lane seam. Resolves/validates the `lane`
+        // column (the department or role sub-lane that WORKS a task — routing,
+        // never visibility). The Null default makes the whole feature inert:
+        // isLane() always false, so no non-null lane can be written until a
+        // host binds a real resolver.
+        'lanes' => \Sgrjr\Dispatch\Support\NullLaneResolver::class,
     ],
 
     /*
@@ -216,6 +223,14 @@ return [
         // by the routes file (a later wave). null/false = no throttle; a
         // limiter string like '30,1' (30/min), or ['max' => 30, 'per' => 1].
         'throttle' => '60,1',
+
+        // TASK-997 part A — the lane the footer "Report a Bug / Feedback"
+        // widget stamps on every NEW capture, e.g. 'marketing:developer' for a
+        // dev-lane-only support form. null (default) stamps no lane. A value
+        // that fails LaneResolver::isLane() is ignored (logged), never a
+        // failed capture — the same graceful-degradation posture as every
+        // other lane write path's invalid input.
+        'lane' => env('DISPATCH_CAPTURE_LANE'),
     ],
 
     /*

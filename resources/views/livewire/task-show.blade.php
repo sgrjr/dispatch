@@ -49,6 +49,12 @@
                     @if (($task->visibility ?? '') === \Sgrjr\Dispatch\Models\Task::VISIBILITY_PARTICIPANTS)
                         <span class="dispatch-badge is-warning" title="Visible only to the submitter, assignee, and watchers">participants only</span>
                     @endif
+                    {{-- TASK-997 part A: the lane badge, shown only when a real
+                         LaneResolver is bound (see TaskShow::render()'s $laneActive) —
+                         routing metadata, never a visibility signal. --}}
+                    @if ($laneActive)
+                        <span class="dispatch-badge" title="Lane">{{ $laneLabel ?? 'No department' }}</span>
+                    @endif
                     @include('dispatch::livewire.partials.label-chips', ['labels' => $task->labels, 'context' => 'detail'])
                 </div>
             </div>
@@ -353,6 +359,62 @@
                 <button type="button" wire:click="saveMeta" wire:loading.attr="disabled" wire:target="saveMeta" class="dispatch-btn">
                     Save properties
                 </button>
+            </div>
+        </section>
+    @endif
+
+    {{-- TASK-997 part A — lane routing actions. Staff (`update`-ability) only,
+         same gate as the meta editor: routing a task is not a new visibility
+         surface. Hidden entirely unless a real LaneResolver is bound (see
+         TaskShow::render()'s $laneActive) — nothing to offer against the inert
+         NullLaneResolver. "Claim for me" self-assigns and — only for an
+         UNROUTED task — auto-joins one of the claimer's lanes (a picker
+         appears when they work more than one); "Route to…" is the
+         admin/lane-member action that moves a task's lane WITHOUT assigning
+         it to anyone (see DispatchTaskService::claimForUser()/routeToLane()). --}}
+    @if ($laneActive && $this->canEdit())
+        <section class="dispatch-card" style="margin-top: 1rem;">
+            <h2 class="dispatch-section-title">Lane</h2>
+            <p style="font-size:0.85rem; margin:0 0 0.75rem;">
+                Current: <strong>{{ $laneLabel ?? 'No department' }}</strong>
+            </p>
+
+            <div style="display:flex; flex-wrap:wrap; gap:1.5rem; align-items:flex-start;">
+                @if (! empty($myLaneOptions))
+                    <div>
+                        <div style="display:flex; align-items:center; gap:0.5rem;">
+                            @if ($task->lane === null && count($myLaneOptions) > 1)
+                                <select wire:model="claimLaneChoice" class="dispatch-select" style="width:auto;">
+                                    <option value="">Pick a lane…</option>
+                                    @foreach ($myLaneOptions as $key => $label)
+                                        <option value="{{ $key }}">{{ $label }}</option>
+                                    @endforeach
+                                </select>
+                            @endif
+                            <button type="button" wire:click="claimForSelf" wire:loading.attr="disabled" wire:target="claimForSelf" class="dispatch-btn is-secondary">
+                                Claim for me
+                            </button>
+                        </div>
+                        @error('claimLaneChoice') <p class="dispatch-error">{{ $message }}</p> @enderror
+                    </div>
+                @endif
+
+                @if ($canRouteLane || ($task->lane === null && ! empty($myLaneOptions)))
+                    <div>
+                        <div style="display:flex; align-items:center; gap:0.5rem;">
+                            <select wire:model="routeLaneChoice" class="dispatch-select" style="width:auto;">
+                                <option value="">Route to…</option>
+                                @foreach (($canRouteLane ? $allLaneOptions : $myLaneOptions) as $key => $label)
+                                    <option value="{{ $key }}">{{ $label }}</option>
+                                @endforeach
+                            </select>
+                            <button type="button" wire:click="routeTask" wire:loading.attr="disabled" wire:target="routeTask" class="dispatch-btn is-secondary">
+                                Route
+                            </button>
+                        </div>
+                        @error('routeLaneChoice') <p class="dispatch-error">{{ $message }}</p> @enderror
+                    </div>
+                @endif
             </div>
         </section>
     @endif

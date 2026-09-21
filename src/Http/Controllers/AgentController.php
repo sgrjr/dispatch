@@ -5,6 +5,7 @@ namespace Sgrjr\Dispatch\Http\Controllers;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Sgrjr\Dispatch\Contracts\LaneResolver;
 use Sgrjr\Dispatch\Http\Middleware\AuthenticateAgentSession;
 use Sgrjr\Dispatch\Models\AgentSession;
 use Sgrjr\Dispatch\Models\Task;
@@ -169,6 +170,10 @@ class AgentController extends Controller
             'origin' => ['nullable', 'string'],
             'conversation' => ['nullable'],
             'topic_account' => ['nullable', 'string'],
+            // TASK-997 part A — a FILTER only (narrows candidates); the agent
+            // claim path never SETS a lane (see DispatchTaskService::claim()'s
+            // doc comment) — that's claimForUser(), used by the UI instead.
+            'lane' => ['nullable', 'string'],
         ]);
 
         try {
@@ -179,6 +184,7 @@ class AgentController extends Controller
                 'origin' => $v['origin'] ?? null,
                 'conversation' => $v['conversation'] ?? null,
                 'topic_account' => $v['topic_account'] ?? null,
+                'lane' => $v['lane'] ?? null,
             ]), null, $v['code'] ?? null, ! $request->boolean('no_focus'));
         } catch (\InvalidArgumentException $e) {
             abort(422, $e->getMessage());
@@ -228,6 +234,8 @@ class AgentController extends Controller
             'topic' => ['nullable', 'string'],
             'origin' => ['nullable', 'string'],
             'conversation' => ['nullable'],
+            // TASK-997 part A.
+            'lane' => ['nullable', 'string'],
         ]);
 
         $attributes = array_filter([
@@ -266,6 +274,16 @@ class AgentController extends Controller
         }
         if (array_key_exists('conversation', $v) && $v['conversation'] !== null && $v['conversation'] !== '') {
             $attributes['conversation_id'] = (int) $v['conversation'];
+        }
+
+        // TASK-997 part A — validated against the bound LaneResolver before
+        // the task is minted, same posture as topic/origin/due_at: a bad
+        // value costs a 422, not an orphan task.
+        if (! empty($v['lane'])) {
+            if (! app(LaneResolver::class)->isLane($v['lane'])) {
+                abort(422, "`{$v['lane']}` is not a valid lane.");
+            }
+            $attributes['lane'] = $v['lane'];
         }
 
         $labels = $v['labels'] ?? [];
@@ -491,11 +509,12 @@ class AgentController extends Controller
     }
 
     /**
-     * TASK-995 — merge the four anchor query params (`topic`, `origin`,
-     * `conversation`, `topic_account`) onto a base filters array shared by
-     * next/queue. The values travel RAW (a `"<type>[:<id>]"` wire string for
-     * topic/origin) — DispatchTaskService re-parses them with Anchor::parse,
-     * so there's one parser either side of the wire.
+     * TASK-995 (+ TASK-997 part A) — merge the anchor + lane query params
+     * (`topic`, `origin`, `conversation`, `topic_account`, `lane`) onto a base
+     * filters array shared by next/queue. The values travel RAW (a
+     * `"<type>[:<id>]"` wire string for topic/origin, a lane key or `none`
+     * for `lane`) — DispatchTaskService re-parses/applies them, so there's
+     * one interpreter either side of the wire.
      *
      * @param  array<string,mixed>  $base
      * @return array<string,mixed>
@@ -507,6 +526,7 @@ class AgentController extends Controller
             'origin' => $request->query('origin'),
             'conversation' => $request->query('conversation'),
             'topic_account' => $request->query('topic_account'),
+            'lane' => $request->query('lane'),
         ]);
     }
 

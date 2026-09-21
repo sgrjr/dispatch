@@ -23,6 +23,7 @@ class DispatchNext extends Command
         {--origin= : Filter to tasks whose origin matches "<type>[:<id>]"}
         {--conversation= : Filter to tasks in this conversation id}
         {--topic-account= : Filter to tasks whose topic_account_key equals this value}
+        {--lane= : Filter to tasks in this lane ("<department>" matches its sub-lanes too; "<department>:<role>" matches exactly; "none" = the no-department lane)}
         {--no-focus : Ignore any active Focus steering for this call}
         {--remote : Act on the configured remote agent API (the default while an agent session token is active)}
         {--local : Act on the local DB even while an agent session token is active (overrides sticky-remote)}
@@ -44,6 +45,7 @@ class DispatchNext extends Command
                 'origin' => $this->option('origin'),
                 'conversation' => $this->option('conversation'),
                 'topic_account' => $this->option('topic-account'),
+                'lane' => $this->option('lane'),
             ]));
 
             if ($r === null) {
@@ -66,6 +68,7 @@ class DispatchNext extends Command
             'origin' => $this->option('origin'),
             'conversation' => $this->option('conversation'),
             'topic_account' => $this->option('topic-account'),
+            'lane' => $this->option('lane'),
         ]);
 
         try {

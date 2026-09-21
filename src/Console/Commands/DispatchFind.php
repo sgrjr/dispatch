@@ -37,6 +37,7 @@ class DispatchFind extends Command
         {--origin= : Filter to tasks whose origin matches "<type>[:<id>]"}
         {--conversation= : Filter to tasks in this conversation id}
         {--topic-account= : Filter to tasks whose topic_account_key equals this value}
+        {--lane= : Filter to tasks in this lane ("<department>" matches its sub-lanes too; "<department>:<role>" matches exactly; "none" = the no-department lane)}
         {--limit= : Cap the number of matches returned (default: 50)}
         {--remote : Act on the configured remote agent API (the default while an agent session token is active)}
         {--local : Act on the local DB even while an agent session token is active (overrides sticky-remote)}
@@ -77,6 +78,7 @@ class DispatchFind extends Command
                 'origin' => $this->option('origin'),
                 'conversation' => $this->option('conversation'),
                 'topic_account' => $this->option('topic-account'),
+                'lane' => $this->option('lane'),
             ]));
 
             if ($r === null) {
@@ -93,6 +95,7 @@ class DispatchFind extends Command
             'origin' => $this->option('origin'),
             'conversation' => $this->option('conversation'),
             'topic_account' => $this->option('topic-account'),
+            'lane' => $this->option('lane'),
         ]);
 
         try {

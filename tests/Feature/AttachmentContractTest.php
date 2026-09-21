@@ -57,6 +57,8 @@ test('GOLDEN SHAPE: the summary adds exactly attachment_count; nothing else move
         'submitter', 'assignee', 'assignee_group',
         // TASK-995 anchor fields.
         'topic_type', 'topic_id', 'topic_account_key', 'origin_type', 'origin_id', 'conversation_id',
+        // TASK-997 part A.
+        'lane',
         'created_at', 'updated_at',
     ]);
 });
@@ -73,9 +75,13 @@ test('GOLDEN SHAPE: the full view adds exactly attachments[] + a per-comment att
         'submitter', 'assignee', 'assignee_group',
         // TASK-995 anchor fields.
         'topic_type', 'topic_id', 'topic_account_key', 'origin_type', 'origin_id', 'conversation_id',
+        // TASK-997 part A.
+        'lane',
         'created_at', 'updated_at',
         // TASK-995 full-only resolver adds.
         'topic_label', 'topic_url', 'origin_label', 'origin_url',
+        // TASK-997 part A full-only resolver add.
+        'lane_label',
         'description', 'context', 'attachments', 'comments',
     ]);
 

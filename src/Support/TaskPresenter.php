@@ -2,6 +2,7 @@
 
 namespace Sgrjr\Dispatch\Support;
 
+use Sgrjr\Dispatch\Contracts\LaneResolver;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskAttachment;
 use Sgrjr\Dispatch\Models\TaskComment;
@@ -64,6 +65,9 @@ class TaskPresenter
             'origin_type' => $task->origin_type,
             'origin_id' => $task->origin_id,
             'conversation_id' => $task->conversation_id,
+            // TASK-997 part A — flat on BOTH shapes, like the anchor fields.
+            // Null = the no-department lane (R15), not "unknown".
+            'lane' => $task->lane,
             'created_at' => optional($task->created_at)->toIso8601String(),
             'updated_at' => optional($task->updated_at)->toIso8601String(),
         ];
@@ -76,6 +80,10 @@ class TaskPresenter
             $data['topic_url'] = $task->topic?->url();
             $data['origin_label'] = $task->origin?->label();
             $data['origin_url'] = $task->origin?->url();
+            // TASK-997 part A — resolver call (label), full shape only, same
+            // posture as topic_label/origin_label above. Null when unrouted or
+            // when the bound resolver doesn't recognize the stored key.
+            $data['lane_label'] = $task->lane !== null ? app(LaneResolver::class)->label($task->lane) : null;
             $data['description'] = $task->description;
             $data['context'] = $task->context;
             // Task-level attachment metadata (W8-6): existence SIGNALS only — there
@@ -150,6 +158,8 @@ class TaskPresenter
                 'origin_type' => 'string|null — message | custnote | exception | contact_form | plan_request | task | an out-of-band channel (email, phone, in_person)',
                 'origin_id' => 'string|null — absent for an out-of-band channel origin',
                 'conversation_id' => 'int|null — the home conversation/arc',
+                // TASK-997 part A.
+                'lane' => 'string|null — "<department>" or "<department>:<role>"; null = the NO-DEPARTMENT lane (routing only, never visibility). Validated against the bound LaneResolver on every write; inert (always rejects a non-null value) until a host binds one.',
                 'created_at' => 'iso8601',
                 'updated_at' => 'iso8601',
             ],
@@ -160,6 +170,8 @@ class TaskPresenter
                 'topic_url' => 'string|null — link to the topic\'s own page, when the resolver has one',
                 'origin_label' => 'string|null — human label for the origin anchor, resolved via OriginResolver; null when no origin is set',
                 'origin_url' => 'string|null — link to the origin, when the resolver has one',
+                // TASK-997 part A — resolver call, full shape only.
+                'lane_label' => 'string|null — human label for `lane`, resolved via LaneResolver; null when unrouted or the resolver doesn\'t recognize the key',
                 // W15-2: the one-word description sent agents past a complete
                 // machine-filed diagnosis — a sweep DECLINED a live bug whose
                 // context already named its fix commit. For an exception-filed
@@ -212,6 +224,14 @@ class TaskPresenter
                     'origin_type' => 'string|null (alternative to the `origin` shorthand)',
                     'origin_id' => 'string|null (alternative to the `origin` shorthand)',
                     'conversation_id' => 'int|null — set the home conversation; null clears it; absent leaves it untouched',
+                    // TASK-997 part A — add: set silently at creation (no
+                    // timeline event), same posture as due_at/topic on add.
+                    // update: tri-state like due_at (absent = untouched,
+                    // null/"" clears to the no-department lane); a real
+                    // change records a `lane_change` timeline event. Either
+                    // way, a non-null value must pass LaneResolver::isLane()
+                    // or the WHOLE batch fails naming the operation.
+                    'lane' => 'string|null — "<department>" or "<department>:<role>"; tri-state on update like due_at',
                 ],
                 // Sizing a manifest by op-count alone is not enough — a single
                 // oversized comment body used to blow a column ceiling and take
@@ -287,6 +307,7 @@ class TaskPresenter
                 TaskComment::EVENT_DESCRIPTION_EDITED,
                 TaskComment::EVENT_MERGED,
                 TaskComment::EVENT_CLAIMED,
+                TaskComment::EVENT_LANE_CHANGE,
             ],
         ];
     }

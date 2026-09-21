@@ -2,16 +2,19 @@
 
 namespace Sgrjr\Dispatch\Livewire;
 
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
 use Livewire\Component;
 use Sgrjr\Dispatch\Contracts\DispatchGate;
 use Sgrjr\Dispatch\Contracts\DispatchNotifier;
+use Sgrjr\Dispatch\Contracts\LaneResolver;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
 use Sgrjr\Dispatch\Support\AssignableUsers;
 use Sgrjr\Dispatch\Support\Groups;
+use Sgrjr\Dispatch\Support\NullLaneResolver;
 
 /**
  * Full-page task detail: badges, attachment gallery, staff meta editor, and
@@ -57,6 +60,17 @@ class TaskShow extends Component
 
     // W13-2 "watch on behalf of": the picked user id from the CC select.
     public ?int $ccUserId = null;
+
+    /**
+     * TASK-997 part A — the lane picked in the "Claim" action's picker, shown
+     * only when the task is unrouted AND the current user works more than one
+     * (most-specific) lane. Left blank, the service auto-joins the single
+     * candidate lane or throws a "pick a lane" error listing the choices.
+     */
+    public string $claimLaneChoice = '';
+
+    /** TASK-997 part A — the lane picked in the "Route to…" picker (canRoute() users, or a lane member claiming an unrouted task for their department). */
+    public string $routeLaneChoice = '';
 
     protected $listeners = ['commentAdded' => '$refresh'];
 
@@ -403,6 +417,66 @@ class TaskShow extends Component
     }
 
     /**
+     * TASK-997 part A, R15 — claim this task for the current user. Gated the
+     * same as the meta editor (`update` — staff only): claiming is a routing
+     * action, not a new visibility surface. See
+     * DispatchTaskService::claimForUser() for the auto-join-a-lane semantics;
+     * a "pick a lane" or "not one of your lanes" rejection surfaces as a
+     * field error on the picker rather than a hard failure.
+     */
+    public function claimForSelf(): void
+    {
+        Gate::authorize('update', $this->task);
+
+        try {
+            $this->task = app(DispatchTaskService::class)->claimForUser(
+                $this->task,
+                Auth::user(),
+                $this->claimLaneChoice !== '' ? $this->claimLaneChoice : null,
+            );
+        } catch (\InvalidArgumentException $e) {
+            $this->addError('claimLaneChoice', $e->getMessage());
+
+            return;
+        }
+
+        $this->claimLaneChoice = '';
+        $this->task->refresh()->load(['labels', 'submitter', 'assignee', 'attachments']);
+        $this->dispatch('task-saved');
+    }
+
+    /**
+     * TASK-997 part A, R15 — route this task into `$routeLaneChoice`. An
+     * admin (LaneResolver::canRoute()) may route any task into any lane; a
+     * lane member may only pull an UNROUTED task into one of their own
+     * lanes — see DispatchTaskService::routeToLane() for the full rule.
+     * Unauthorized/invalid attempts surface as a field error, not a hard
+     * failure, matching claimForSelf()'s posture.
+     */
+    public function routeTask(): void
+    {
+        Gate::authorize('update', $this->task);
+
+        $this->validate(['routeLaneChoice' => 'required|string']);
+
+        try {
+            $this->task = app(DispatchTaskService::class)->routeToLane(
+                $this->task,
+                $this->routeLaneChoice,
+                Auth::user(),
+            );
+        } catch (\InvalidArgumentException|AuthorizationException $e) {
+            $this->addError('routeLaneChoice', $e->getMessage());
+
+            return;
+        }
+
+        $this->routeLaneChoice = '';
+        $this->task->refresh()->load(['labels', 'submitter', 'assignee', 'attachments']);
+        $this->dispatch('task-saved');
+    }
+
+    /**
      * Mark this task a duplicate and fold it into another (F5). The target is
      * resolved by code through the SAME visibility scope used everywhere else
      * in the package (DispatchGate::scopeVisible), so staff can never merge
@@ -456,6 +530,31 @@ class TaskShow extends Component
             ? AssignableUsers::options()
             : collect();
 
+        // TASK-997 part A — lane display + routing actions. `$laneActive`
+        // mirrors the same "is a real LaneResolver bound?" check TaskBoard
+        // uses for swimlanes: with the inert NullLaneResolver, every task is
+        // permanently unrouted and every list/picker below is empty, so the
+        // whole panel stays hidden rather than showing permanently-useless
+        // controls on a host that hasn't adopted lanes.
+        $laneResolver = app(LaneResolver::class);
+        $laneActive = ! ($laneResolver instanceof NullLaneResolver);
+        $user = Auth::user();
+        $myLaneOptions = [];
+        $canRouteLane = false;
+        $allLaneOptions = [];
+
+        if ($laneActive && $this->canEdit() && $user !== null) {
+            $myLaneOptions = collect($laneResolver->lanesFor($user))
+                ->mapWithKeys(fn ($l) => [$l => $laneResolver->label($l) ?? $l])
+                ->all();
+            $canRouteLane = $laneResolver->canRoute($user);
+            if ($canRouteLane) {
+                $allLaneOptions = collect($laneResolver->lanes())
+                    ->mapWithKeys(fn ($l) => [$l => $laneResolver->label($l) ?? $l])
+                    ->all();
+            }
+        }
+
         return view('dispatch::livewire.task-show', [
             'watchPrefs' => Auth::id() ? $this->task->watchPreferencesFor((int) Auth::id()) : null,
             'assigneeOptions' => $assigneeOptions,
@@ -467,6 +566,12 @@ class TaskShow extends Component
             'statusLabels' => $taskClass::statusLabels(),
             'typeLabels' => $taskClass::typeLabels(),
             'priorityLabels' => $taskClass::priorityLabels(),
+            // TASK-997 part A.
+            'laneActive' => $laneActive,
+            'laneLabel' => $this->task->lane !== null ? ($laneResolver->label($this->task->lane) ?? $this->task->lane) : null,
+            'myLaneOptions' => $myLaneOptions,
+            'canRouteLane' => $canRouteLane,
+            'allLaneOptions' => $allLaneOptions,
         ])->layout('dispatch::components.layout');
     }
 }

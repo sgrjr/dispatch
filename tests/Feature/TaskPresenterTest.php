@@ -28,6 +28,8 @@ test('the summary shape carries exactly the documented keys', function () {
         'assignee_group',
         // TASK-995 anchor fields.
         'topic_type', 'topic_id', 'topic_account_key', 'origin_type', 'origin_id', 'conversation_id',
+        // TASK-997 part A.
+        'lane',
         'created_at', 'updated_at',
     ]);
 

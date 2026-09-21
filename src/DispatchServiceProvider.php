@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Sgrjr\Dispatch\Contracts\DispatchGate;
 use Sgrjr\Dispatch\Contracts\DispatchNotifier;
+use Sgrjr\Dispatch\Contracts\LaneResolver;
 use Sgrjr\Dispatch\Contracts\OriginResolver;
 use Sgrjr\Dispatch\Contracts\SubmitterResolver;
 use Sgrjr\Dispatch\Contracts\TenantResolver;
@@ -37,6 +38,10 @@ class DispatchServiceProvider extends ServiceProvider
         // these existed has no `contracts.topic`/`contracts.origin` key.
         $this->app->singleton(TopicResolver::class, fn ($app) => $app->make(config('dispatch.contracts.topic', \Sgrjr\Dispatch\Support\NullTopicResolver::class)));
         $this->app->singleton(OriginResolver::class, fn ($app) => $app->make(config('dispatch.contracts.origin', \Sgrjr\Dispatch\Support\NullOriginResolver::class)));
+        // TASK-997 part A — same shallow-mergeConfigFrom fallback: a host that
+        // published config/dispatch.php before this existed has no
+        // `contracts.lanes` key.
+        $this->app->singleton(LaneResolver::class, fn ($app) => $app->make(config('dispatch.contracts.lanes', \Sgrjr\Dispatch\Support\NullLaneResolver::class)));
 
         // Backs the DispatchTask facade (programmatic reporting).
         $this->app->singleton(DispatchManager::class);

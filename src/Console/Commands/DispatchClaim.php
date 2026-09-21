@@ -28,6 +28,7 @@ class DispatchClaim extends Command
         {--origin= : Restrict to tasks whose origin matches "<type>[:<id>]" (ignored when a code is given)}
         {--conversation= : Restrict to tasks in this conversation id (ignored when a code is given)}
         {--topic-account= : Restrict to tasks whose topic_account_key equals this value (ignored when a code is given)}
+        {--lane= : Restrict to tasks in this lane (ignored when a code is given). This narrows CANDIDATES only — claiming never sets a lane; see dispatch:schema}
         {--assignee= : User id to assign the claimed task to}
         {--no-focus : Ignore any active Focus steering for this claim}
         {--json : Emit machine-readable JSON instead of human text}
@@ -45,6 +46,7 @@ class DispatchClaim extends Command
             'origin' => $this->option('origin'),
             'conversation' => $this->option('conversation'),
             'topic_account' => $this->option('topic-account'),
+            'lane' => $this->option('lane'),
         ]);
 
         $code = $this->argument('code');
@@ -130,6 +132,7 @@ class DispatchClaim extends Command
             'origin' => $filters['origin'] ?? null,
             'conversation' => $filters['conversation'] ?? null,
             'topic_account' => $filters['topic_account'] ?? null,
+            'lane' => $filters['lane'] ?? null,
         ]);
 
         $response = $this->agentPost('claim', $payload);

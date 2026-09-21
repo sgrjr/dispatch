@@ -25,6 +25,7 @@ class DispatchQueue extends Command
         {--origin= : Filter to tasks whose origin matches "<type>[:<id>]"}
         {--conversation= : Filter to tasks in this conversation id}
         {--topic-account= : Filter to tasks whose topic_account_key equals this value}
+        {--lane= : Filter to tasks in this lane ("<department>" matches its sub-lanes too; "<department>:<role>" matches exactly; "none" = the no-department lane)}
         {--limit= : Cap the number of tasks returned, top of the priority order (default: all). For the single-task case use dispatch:next.}
         {--count : Emit counts by status (total + by_status) instead of the task list. With no --status it censuses the actionable board (open/in_progress/triage/verifying; parked backburner and terminal done/declined excluded), zero-filled — an empty bucket (e.g. verifying) still prints as 0.}
         {--remote : Act on the configured remote agent API (the default while an agent session token is active)}
@@ -58,6 +59,7 @@ class DispatchQueue extends Command
                 'origin' => $this->option('origin'),
                 'conversation' => $this->option('conversation'),
                 'topic_account' => $this->option('topic-account'),
+                'lane' => $this->option('lane'),
             ]));
 
             if ($r === null) {
@@ -115,6 +117,7 @@ class DispatchQueue extends Command
             'origin' => $this->option('origin'),
             'conversation' => $this->option('conversation'),
             'topic_account' => $this->option('topic-account'),
+            'lane' => $this->option('lane'),
         ]);
 
         try {
