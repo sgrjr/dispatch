@@ -495,6 +495,88 @@ test('passing a task that blocks another moves the dependency too — a PLAIN bl
         ->and($fresh->comments()->where('event_type', TaskComment::EVENT_ANSWERED)->count())->toBe(0);
 });
 
+// --- R28: the OTHER edge — a task passed away with its OWN question still out ---
+
+/** Records every taskCommented() the service makes, so a test can see who was told. */
+function spyOnComments(): object
+{
+    $spy = new class implements \Sgrjr\Dispatch\Contracts\DispatchNotifier
+    {
+        public array $commented = [];
+
+        public function taskCreated(Task $task): void {}
+
+        public function taskStatusChanged(Task $task, string $from, string $to, ?Authenticatable $actor): void {}
+
+        public function taskCommented(Task $task, TaskComment $comment): void
+        {
+            $this->commented[] = [$task->code, $comment->event_type];
+        }
+
+        public function taskAssigned(Task $task, ?int $from, ?int $to, ?Authenticatable $actor): void {}
+    };
+    app()->instance(\Sgrjr\Dispatch\Contracts\DispatchNotifier::class, $spy);
+
+    return $spy;
+}
+
+test('R28: passing a task away with its own question open hands the question on — the new holder waits for it and gets the answer', function () {
+    bindHandoffLaneResolver(lanesByUser: [300 => ['ops'], 301 => ['support'], 302 => ['ops:triage']]);
+    $svc = app(DispatchTaskService::class);
+    $asker = dispatchMakeUser(300);
+    $askee = dispatchMakeUser(301);
+    $next = dispatchMakeUser(302);
+
+    $task = $svc->create(['title' => 'x', 'lane' => 'ops', 'status' => 'open', 'assignee_user_id' => $asker->id]);
+    $svc->handoff($task, $askee, $asker, ['ask' => true]);
+    $question = $task->fresh()->blockedBy->firstOrFail();
+
+    // The asker hands the WORK on before the answer comes back.
+    $continuation = $svc->handoff($task, $next, $asker, ['lane' => 'ops:triage']);
+
+    // The question travelled with the work: the new holder is waiting on it.
+    expect(Task::blocked()->pluck('id')->all())->toContain($continuation->id)
+        ->and($continuation->fresh()->blockedBy->pluck('code')->all())->toContain($question->code);
+
+    $spy = spyOnComments();
+    $question->recordEvent(TaskComment::EVENT_COMMENT, $askee->id, [], 'Yes — October.');
+    $question->status = 'done';
+    $question->save();
+    $svc->notifyDependentsOfClosure($question, $askee->id);
+
+    $answeredOnContinuation = $continuation->fresh()->comments()->where('event_type', TaskComment::EVENT_ANSWERED)->first();
+    expect($answeredOnContinuation?->meta['answer'])->toBe('Yes — October.')
+        // The ball already moved: the new holder KEEPS it — no reassignment to the asker.
+        ->and($continuation->fresh()->assignee_user_id)->toBe(302)
+        ->and(Task::unblocked()->pluck('id')->all())->toContain($continuation->id)
+        // …and the person who asked is told too, on the task they asked from.
+        ->and($spy->commented)->toContain([$task->code, TaskComment::EVENT_ANSWERED])
+        ->and($spy->commented)->toContain([$continuation->code, TaskComment::EVENT_ANSWERED]);
+});
+
+test('R28: the ball is never "returned" onto a closed task', function () {
+    bindHandoffLaneResolver(lanesByUser: [305 => ['ops'], 306 => ['support'], 307 => ['ops:triage']]);
+    $svc = app(DispatchTaskService::class);
+    $asker = dispatchMakeUser(305);
+
+    $task = $svc->create(['title' => 'x', 'lane' => 'ops', 'status' => 'open', 'assignee_user_id' => $asker->id]);
+    $svc->handoff($task, dispatchMakeUser(306), $asker, ['ask' => true]);
+    $question = $task->fresh()->blockedBy->firstOrFail();
+    $svc->handoff($task, dispatchMakeUser(307), $asker, ['lane' => 'ops:triage']); // closes $task
+
+    // Someone reassigns the closed task in the meantime; an answer must not touch it.
+    $task->refresh();
+    $task->assignee_user_id = 999;
+    $task->saveQuietly();
+
+    $question->status = 'done';
+    $question->save();
+    $svc->notifyDependentsOfClosure($question);
+
+    expect($task->fresh()->status)->toBe('done')
+        ->and($task->fresh()->assignee_user_id)->toBe(999);
+});
+
 test('a keep-open pass leaves the dependency on the passer, who is still working it', function () {
     bindHandoffLaneResolver(lanesByUser: [285 => ['ops'], 286 => ['support'], 287 => ['ops:triage']]);
     $svc = app(DispatchTaskService::class);

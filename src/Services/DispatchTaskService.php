@@ -1026,6 +1026,9 @@ class DispatchTaskService
                 // dependents, and a dependent left pointing only at it would read
                 // as unblocked — which is how a passed ask used to lose its answer.
                 $this->moveDependentsOnto($task, $new);
+                // R28 — and the other edge: the passer's OWN open questions go
+                // with the work, so the new holder waits for (and gets) the answer.
+                $this->moveOpenQuestionsOnto($task, $new);
 
                 $from = $task->status;
                 $task->status = 'done';
@@ -1307,10 +1310,99 @@ class DispatchTaskService
         foreach ($task->blocks as $dependent) {
             if ($this->answersAskOf($task, $dependent)) {
                 $this->returnTheBall($dependent, $task, $actorUserId);
+            } elseif ($this->answersInheritedAskOf($task, $dependent)) {
+                // R28 — the question travelled here with the work (a pass while it
+                // was open). The ball is already with this task's holder: the
+                // answer is delivered, nobody is reassigned.
+                $this->deliverAnswer($dependent, $task, $actorUserId);
             } else {
                 $this->notifyGenericDependency($dependent, $task, $actorUserId);
             }
         }
+    }
+
+    /**
+     * R28 — a closing pass hands on the passer's OPEN questions: every ACTIVE
+     * blocker of $from also blocks $to (same kind, same `created_by_user_id` —
+     * the asker), so the new holder waits for the answer and receives it
+     * ({@see answersInheritedAskOf()}). A blocker already resolved is left
+     * behind; it gates nothing.
+     *
+     * Cycle-checked through linkBlockedBy(): unlike moveDependentsOnto(), the
+     * continuation by now BLOCKS things (the dependents just moved onto it), so
+     * a path back is possible in principle. A link that would close a cycle is
+     * skipped rather than failing the pass.
+     */
+    protected function moveOpenQuestionsOnto(Task $from, Task $to): void
+    {
+        $open = $from->blockedBy()->whereNotIn('status', $from::inactiveStatuses())->get();
+
+        foreach ($open as $blocker) {
+            try {
+                $this->linkBlockedBy($to, $blocker, $blocker->pivot->created_by_user_id, $blocker->pivot->kind ?? TaskLink::KIND_BLOCKS);
+            } catch (\InvalidArgumentException) {
+                // would close a cycle — the pass still stands without this link
+            }
+        }
+    }
+
+    /**
+     * R28 — is $closed the answer to a question asked from somewhere in
+     * $dependent's own LINEAGE: the task it continues (a pass), that task's
+     * predecessor, and so on? Walks $dependent's `origin = task:<code>` chain
+     * through continuations only — an ASK is not lineage (it blocks the task
+     * it came from; a continuation does not) — asking {@see answersAskOf()} at
+     * each step. Capped and cycle-guarded.
+     */
+    protected function answersInheritedAskOf(Task $closed, Task $dependent): bool
+    {
+        /** @var class-string<Task> $taskModel */
+        $taskModel = config('dispatch.models.task');
+
+        $seen = [$dependent->id => true];
+        $node = $dependent;
+
+        for ($hop = 0; $hop < 25; $hop++) {
+            if ($node->origin_type !== 'task' || blank($node->origin_id)) {
+                return false;
+            }
+            $parent = $taskModel::withTrashed()->where('code', $node->origin_id)->first();
+            if ($parent === null || isset($seen[$parent->id])) {
+                return false;
+            }
+            // An ask of its parent is a question, not the work continuing.
+            if (TaskLink::query()->where('task_id', $parent->id)->where('blocked_by_task_id', $node->id)->exists()) {
+                return false;
+            }
+            if ($this->answersAskOf($closed, $parent)) {
+                return true;
+            }
+            $seen[$parent->id] = true;
+            $node = $parent;
+        }
+
+        return false;
+    }
+
+    /**
+     * Record the closed ask's answer on $dependent and tell whoever the
+     * notifier tells — WITHOUT moving the ball. Used where the ball must not
+     * move: a task that inherited the question (its holder already has the
+     * ball), and a CLOSED asker's task (R28 — the ball is never returned onto
+     * a closed task; the asker is still told).
+     */
+    protected function deliverAnswer(Task $dependent, Task $closedAsk, ?int $actorUserId): void
+    {
+        $answer = $this->summarizeAnswer($closedAsk);
+
+        $comment = $dependent->recordEvent(
+            TaskComment::EVENT_ANSWERED,
+            $actorUserId,
+            array_filter(['from' => $closedAsk->code, 'answer' => $answer], fn ($v) => $v !== null),
+            $answer ? "Answered by {$closedAsk->code}: {$answer}" : "Answered by {$closedAsk->code}.",
+        );
+
+        app(DispatchNotifier::class)->taskCommented($dependent, $comment);
     }
 
     /**
@@ -1323,6 +1415,15 @@ class DispatchTaskService
      */
     protected function returnTheBall(Task $dependent, Task $closedAsk, ?int $actorUserId): void
     {
+        // R28 — the asker passed their task on before the answer came back: it is
+        // closed, and the work (with this question) lives on the continuation. The
+        // ball is never returned onto a closed task; the asker is still told.
+        if ($dependent->isInactive()) {
+            $this->deliverAnswer($dependent, $closedAsk, $actorUserId);
+
+            return;
+        }
+
         $pivot = TaskLink::query()
             ->where('task_id', $dependent->id)
             ->where('blocked_by_task_id', $closedAsk->id)
