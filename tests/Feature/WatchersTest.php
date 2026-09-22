@@ -67,7 +67,7 @@ test('staff can CC a teammate — immediately watching, memorialized, and notifi
     $teammate = dispatchMakeUser(2);
     $this->actingAs($staff);
 
-    $task = app(DispatchTaskService::class)->create(['title' => 'Entered by staff B']);
+    $task = app(DispatchTaskService::class)->create(['title' => 'Entered by staff B', 'priority' => 'blocker']);
 
     // Fake AFTER create — the creation receipt to the submitter isn't under test.
     \Illuminate\Support\Facades\Notification::fake();

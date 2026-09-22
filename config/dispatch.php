@@ -273,6 +273,12 @@ return [
         // Protects the DB/board from an error storm.
         'throttle_seconds' => 60,
 
+        // The priority an exception files at (DispatchManager::fromException).
+        // null = the ordinary default. Set it to a priority in
+        // `notifications.email_priorities` to make a live break announce
+        // itself instead of waiting to be noticed on the board.
+        'exception_priority' => null,
+
         // Attach request context (url/method/route/user/input) to the task.
         'capture_request' => true,
 
@@ -303,6 +309,16 @@ return [
     'notifications' => [
         'enabled' => env('DISPATCH_NOTIFICATIONS', true),
         'channels' => ['mail'],
+
+        // PRIORITY IS THE VOLUME KNOB. A task at one of these priorities is
+        // loud enough to email STAFF about (and its subject carries an alarm);
+        // anything quieter is left to whatever in-app indicator the host has,
+        // so an inbox stays worth reading.
+        //
+        // ⛔ This never silences a SUBMITTER's receipt — "your request was
+        // received", and what happened to it since, always sends. See
+        // MailNotifier::send().
+        'email_priorities' => ['blocker', 'high'],
     ],
 
     /*

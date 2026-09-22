@@ -50,7 +50,7 @@ test('assigning a task to a team stores the singular group value, memorializes, 
 
     config(['dispatch.groups' => ['it' => ['alice@staff.test', 'bob@staff.test']]]);
 
-    $task = app(DispatchTaskService::class)->create(['title' => 'Team-owned work']);
+    $task = app(DispatchTaskService::class)->create(['title' => 'Team-owned work', 'priority' => 'blocker']);
 
     Notification::fake();
 
@@ -123,7 +123,7 @@ test('a status change on a team-assigned task notifies the members (W13-4)', fun
 
     config(['dispatch.groups' => ['it' => ['member@staff.test']]]);
 
-    $task = app(DispatchTaskService::class)->create(['title' => 'Team status ping', 'assignee_group' => 'it']);
+    $task = app(DispatchTaskService::class)->create(['title' => 'Team status ping', 'assignee_group' => 'it', 'priority' => 'blocker']);
     $task->submitter_user_id = null;
     $task->save();
 

@@ -86,9 +86,13 @@ test('MailNotifier fans a status change out to submitter + watchers, excluding t
     $watcher = dispatchMakeUser(2);
     $actor = dispatchMakeUser(3);
 
+    // Loud on purpose: what is under test is the RECIPIENT SET, and since
+    // the priority ruling (2026-09-22) a quiet task emails no staff at all —
+    // the volume rule has its own tests below.
     $task = app(DispatchTaskService::class)->create([
         'title' => 'Fan out',
         'submitter_user_id' => $submitter->id,
+        'priority' => 'blocker',
     ]);
     $task->watch($watcher->id);
 
@@ -105,7 +109,7 @@ test('a status_change watcher is notified only on transitions into their chosen 
     $narrowed = dispatchMakeUser(2);
     $actor = dispatchMakeUser(3);
 
-    $task = app(DispatchTaskService::class)->create(['title' => 'Pref fan-out']);
+    $task = app(DispatchTaskService::class)->create(['title' => 'Pref fan-out', 'priority' => 'blocker']);
     $task->submitter_user_id = null;
     $task->save();
 
@@ -165,3 +169,154 @@ test('the notifier binding falls back to the shipped default when the host confi
 
     expect(app(DispatchNotifier::class))->toBeInstanceOf(MailNotifier::class);
 });
+
+/*
+ * ── PRIORITY IS THE VOLUME KNOB (owner ruling, 2026-09-22) ──────────────────
+ *
+ * `notifications.email_priorities` decides which tasks are loud enough to
+ * email STAFF about. ⛔ A SUBMITTER's receipt is never gated and never alarmed
+ * — that is the invariant a "make it quieter" change would silently take out.
+ */
+
+test('a quiet task emails no staff — but the submitter still gets their receipt', function () {
+    Notification::fake();
+
+    $submitter = dispatchMakeUser(1);
+    $watcher = dispatchMakeUser(2);
+    $actor = dispatchMakeUser(3);
+
+    $task = app(DispatchTaskService::class)->create([
+        'title' => 'Ordinary work',
+        'submitter_user_id' => $submitter->id,
+        'priority' => 'medium',
+    ]);
+    $task->watch($watcher->id);
+
+    (new MailNotifier())->taskStatusChanged($task->fresh(), 'open', 'in_progress', $actor);
+
+    Notification::assertSentTo([$submitter], TaskUpdate::class);
+    Notification::assertNotSentTo([$watcher], TaskUpdate::class);
+});
+
+test('the alarm says WHY: a blocker is blocking, a high is urgent, a receipt is neither', function () {
+    Notification::fake();
+
+    $submitter = dispatchMakeUser(1);
+    $watcher = dispatchMakeUser(2);
+
+    $task = app(DispatchTaskService::class)->create([
+        'title' => 'The press is down',
+        'submitter_user_id' => $submitter->id,
+        'priority' => 'blocker',
+    ]);
+    $task->watch($watcher->id);
+
+    (new MailNotifier())->taskStatusChanged($task->fresh(), 'open', 'in_progress', null);
+
+    $subjectFor = fn ($user) => Notification::sent($user, TaskUpdate::class)
+        ->map(fn (TaskUpdate $n) => $n->toMail($user)->subject)
+        ->first();
+
+    expect($subjectFor($watcher))->toBe("🚨 Blocking — [{$task->code}] The press is down")
+        ->and($subjectFor($submitter))->toBe("[{$task->code}] The press is down");
+
+    // `high` is urgent without the blocking claim.
+    Notification::fake();
+    $task->update(['priority' => 'high']);
+    (new MailNotifier())->taskStatusChanged($task->fresh(), 'open', 'in_progress', null);
+
+    expect($subjectFor($watcher))->toBe("🚨 Urgent — [{$task->code}] The press is down");
+});
+
+test('a loud task nobody holds reaches the lane that has to act — and a quiet one does not', function () {
+    $dev = dispatchMakeUser(1);
+    $elsewhere = dispatchMakeUser(2);
+
+    bindNotifierLaneResolver([$dev->id => ['ops'], $elsewhere->id => ['support']]);
+
+    // The shape of a captured exception: no submitter, no assignee, a lane.
+    $loud = app(DispatchTaskService::class)->create(['title' => 'Undefined index', 'lane' => 'ops', 'priority' => 'blocker']);
+    $loud->submitter_user_id = null;
+    $loud->save();
+
+    Notification::fake();
+    (new MailNotifier())->taskCreated($loud->fresh());
+
+    Notification::assertSentTo([$dev], TaskUpdate::class);
+    Notification::assertNotSentTo([$elsewhere], TaskUpdate::class);
+
+    $quiet = app(DispatchTaskService::class)->create(['title' => 'Tidy up', 'lane' => 'ops', 'priority' => 'medium']);
+    $quiet->submitter_user_id = null;
+    $quiet->save();
+
+    Notification::fake();
+    (new MailNotifier())->taskCreated($quiet->fresh());
+
+    Notification::assertNotSentTo([$dev], TaskUpdate::class);
+});
+
+test('a loud task that already has a holder does not also shout at the whole lane', function () {
+    $dev = dispatchMakeUser(1);
+    $holder = dispatchMakeUser(2);
+
+    bindNotifierLaneResolver([$dev->id => ['ops'], $holder->id => ['ops']]);
+
+    $task = app(DispatchTaskService::class)->create([
+        'title' => 'Already someone\'s',
+        'lane' => 'ops',
+        'priority' => 'blocker',
+        'assignee_user_id' => $holder->id,
+    ]);
+    $task->submitter_user_id = null;
+    $task->save();
+
+    Notification::fake();
+    (new MailNotifier())->taskCreated($task->fresh());
+
+    // taskAssigned is what announces it to the holder — once.
+    Notification::assertNotSentTo([$dev, $holder], TaskUpdate::class);
+});
+
+/** A lane resolver whose memberIds() actually answers — the shipped Null one returns []. */
+function bindNotifierLaneResolver(array $lanesByUser): void
+{
+    app()->singleton(\Sgrjr\Dispatch\Contracts\LaneResolver::class, fn () => new class($lanesByUser) implements \Sgrjr\Dispatch\Contracts\LaneResolver
+    {
+        public function __construct(private array $lanesByUser) {}
+
+        public function isLane(string $lane): bool
+        {
+            return in_array($lane, ['ops', 'support'], true);
+        }
+
+        public function label(string $lane): ?string
+        {
+            return ucfirst($lane);
+        }
+
+        public function lanes(): array
+        {
+            return ['ops', 'support'];
+        }
+
+        public function lanesFor(Authenticatable $user): array
+        {
+            return $this->lanesByUser[$user->getAuthIdentifier()] ?? [];
+        }
+
+        public function lanesManagedBy(Authenticatable $user): array
+        {
+            return [];
+        }
+
+        public function memberIds(string $lane): array
+        {
+            return array_keys(array_filter($this->lanesByUser, fn ($lanes) => in_array($lane, $lanes, true)));
+        }
+
+        public function canRoute(Authenticatable $user): bool
+        {
+            return true;
+        }
+    });
+}

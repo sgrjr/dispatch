@@ -57,6 +57,11 @@ class DispatchManager
     public function fromException(Throwable $e, array $options = []): ?Task
     {
         $options['type'] ??= 'bug';
+        // A break is loud if the host says breaks are loud
+        // (`dispatch.reporter.exception_priority`). Null leaves it at the
+        // ordinary default, so this changes nothing for a host that has not
+        // opted in. `??=` — an explicit priority from the caller still wins.
+        $options['priority'] ??= config('dispatch.reporter.exception_priority');
         // Where the task came FROM (TASK-995): an exception, unless the caller
         // says otherwise. No id — the signature already identifies the error.
         $options['origin'] ??= 'exception';

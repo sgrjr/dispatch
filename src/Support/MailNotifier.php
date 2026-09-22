@@ -4,6 +4,7 @@ namespace Sgrjr\Dispatch\Support;
 
 use Illuminate\Contracts\Auth\Authenticatable;
 use Sgrjr\Dispatch\Contracts\DispatchNotifier;
+use Sgrjr\Dispatch\Contracts\LaneResolver;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Notifications\TaskUpdate;
@@ -13,6 +14,17 @@ use Sgrjr\Dispatch\Notifications\TaskUpdate;
  * relations (submitter/watchers/assignee), dedupes by auth identifier, and
  * excludes the acting user (nobody needs an email about their own action) —
  * except taskCreated, where the submitter IS the recipient.
+ *
+ * ── PRIORITY IS THE VOLUME KNOB (owner ruling, 2026-09-22) ──────────────────
+ * Every recipient of every event used to get an email, which is how an inbox
+ * stops being read. A task's PRIORITY now decides whether its alerts leave the
+ * app at all: `dispatch.notifications.email_priorities` (blocker + high by
+ * default) sends mail, and everything quieter is left to the in-app bell.
+ *
+ * ⛔ A RECEIPT IS NOT AN ALERT. The submitter's own copy — "your request was
+ * received", and what happened to it since — always sends, whatever the
+ * priority, and never carries the alarm: it is a reply to the person who
+ * asked, not an interruption aimed at staff. Only alerts are gated.
  *
  * Gated by `dispatch.notifications.enabled`. Per the DispatchNotifier
  * contract this NEVER throws: every method wraps its body in try/catch so
@@ -28,15 +40,65 @@ class MailNotifier implements DispatchNotifier
         }
 
         try {
-            $submitter = $task->submitter;
+            // The submitter's receipt: always sent, never alarmed. Null for
+            // work the SYSTEM filed — which is precisely the case alertLane()
+            // below exists for, so this must not return out of the method.
+            if ($submitter = $task->submitter) {
+                $this->send($submitter, $task, 'Your request was received.');
+            }
+        } catch (\Throwable) {
+            // never throw — see class docblock
+        }
 
-            if (! $submitter) {
+        $this->alertLane($task);
+    }
+
+    /**
+     * A LOUD task that lands on a department and nobody's hands yet: tell the
+     * people who work that lane.
+     *
+     * Without this, the loudest work in the system reaches no inbox at all.
+     * The recipient list for a task the system files (a captured exception, an
+     * incident) is otherwise empty — no submitter, no assignee, no watchers —
+     * so "urgent" would ring an in-app bell and wait to be found, which is the
+     * whole problem priority is meant to solve.
+     *
+     * Skipped once a task HAS an assignee: taskAssigned announces it to them,
+     * and being told twice about the same arrival is how people learn to
+     * filter a sender.
+     */
+    protected function alertLane(Task $task): void
+    {
+        if (! $this->enabled() || ! $this->isLoud($task)) {
+            return;
+        }
+
+        try {
+            if ($task->lane === null || $task->assignee_user_id !== null) {
                 return;
             }
 
-            $this->send($submitter, $task, 'Your request was received.');
+            $ids = app(LaneResolver::class)->memberIds((string) $task->lane);
+
+            if ($ids === []) {
+                return;
+            }
+
+            /** @var class-string $userModel */
+            $userModel = config('dispatch.models.user');
+            $label = app(LaneResolver::class)->label((string) $task->lane) ?? $task->lane;
+
+            // The submitter already has their receipt; nobody needs both.
+            $recipients = $this->dedupe(
+                $userModel::whereIn((new $userModel)->getKeyName(), $ids)->get()->all(),
+                $task->submitter_user_id,
+            );
+
+            foreach ($recipients as $recipient) {
+                $this->send($recipient, $task, "New work for {$label}, and nobody has it yet.");
+            }
         } catch (\Throwable) {
-            // never throw — see class docblock
+            // never throw
         }
     }
 
@@ -240,10 +302,45 @@ class MailNotifier implements DispatchNotifier
         return $recipients;
     }
 
+    /**
+     * The ONE gate every email passes through.
+     *
+     * A recipient is either the SUBMITTER — who gets their receipt whatever the
+     * priority — or a staff ALERT, which only leaves the app when the task is
+     * loud enough to be worth an interruption. The in-app bell is unaffected
+     * either way: it is written by the host's notifier, not here.
+     */
     protected function send(mixed $user, Task $task, string $summary, ?TaskComment $comment = null): void
     {
-        if ($user && method_exists($user, 'notify')) {
-            $user->notify(new TaskUpdate($task, $summary, $comment));
+        if (! $user || ! method_exists($user, 'notify')) {
+            return;
         }
+
+        $isReceipt = $this->isSubmitter($user, $task);
+
+        if (! $isReceipt && ! $this->isLoud($task)) {
+            return;
+        }
+
+        $user->notify(new TaskUpdate($task, $summary, $comment, alarm: ! $isReceipt));
+    }
+
+    /** Is this recipient the person who filed the task (their copy is a receipt)? */
+    protected function isSubmitter(mixed $user, Task $task): bool
+    {
+        return $task->submitter_user_id !== null
+            && (string) $user->getAuthIdentifier() === (string) $task->submitter_user_id;
+    }
+
+    /**
+     * Is this task loud enough to email about? `blocker` and `high` by default
+     * — the two priorities that mean "someone should look now"; `medium` and
+     * `low` ring the bell and wait to be found.
+     */
+    protected function isLoud(Task $task): bool
+    {
+        $loud = (array) config('dispatch.notifications.email_priorities', ['blocker', 'high']);
+
+        return in_array((string) $task->priority, $loud, true);
     }
 }

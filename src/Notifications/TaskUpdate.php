@@ -29,12 +29,37 @@ class TaskUpdate extends Notification implements ShouldQueue
      *         summary). Falls back to $comment->body when omitted.
      * @param  TaskComment|null  $comment  The comment that triggered this
      *         notification, if any (e.g. a non-internal reply).
+     * @param  bool  $alarm  This is a staff ALERT about a loud task, not the
+     *         submitter's receipt: say so in the subject line, where it is read
+     *         before the message is opened. See MailNotifier::send().
      */
     public function __construct(
         public Task $task,
         public ?string $message = null,
         public ?TaskComment $comment = null,
+        public bool $alarm = false,
     ) {}
+
+    /**
+     * How a loud task announces itself, by priority (owner ruling 2026-09-22).
+     * `blocker` says WHY it is urgent — it is holding up other work; `high` is
+     * the plain statement of urgency. Both carry the alarm, because both are
+     * the reason the mail was sent at all.
+     *
+     * ⛔ Never applied to a submitter's receipt.
+     *
+     * @var array<string, array{word: string, line: string}>
+     */
+    protected const ALARMS = [
+        'blocker' => [
+            'word' => 'Blocking',
+            'line' => '**Urgent — this is blocking other work.**',
+        ],
+        'high' => [
+            'word' => 'Urgent',
+            'line' => '**Urgent.**',
+        ],
+    ];
 
     /**
      * @return array<int, string>
@@ -52,10 +77,23 @@ class TaskUpdate extends Notification implements ShouldQueue
         $name = $notifiable->name ?? null;
         $body = $this->message ?? $this->comment?->body;
 
+        $alarm = $this->alarm ? (self::ALARMS[(string) $this->task->priority] ?? null) : null;
+
+        // The alarm in the SUBJECT is the whole signal — it is what gets read
+        // in a list of forty unread messages, before anything is opened.
+        $subject = $alarm
+            ? "\u{1F6A8} {$alarm['word']} — [{$this->task->code}] {$this->task->title}"
+            : "[{$this->task->code}] {$this->task->title}";
+
         $mail = (new MailMessage())
-            ->subject("[{$this->task->code}] {$this->task->title}")
-            ->greeting($name ? "Hi {$name}," : 'Hello,')
-            ->line("There's an update on your request: **{$this->task->title}** ({$this->task->code}).")
+            ->subject($subject)
+            ->greeting($name ? "Hi {$name}," : 'Hello,');
+
+        if ($alarm) {
+            $mail->line($alarm['line']);
+        }
+
+        $mail->line("There's an update on your request: **{$this->task->title}** ({$this->task->code}).")
             ->line("Current status: **{$statusLabel}**");
 
         if (! empty($body)) {
