@@ -1011,7 +1011,7 @@ class DispatchTaskService
         $actorId = $actor?->getAuthIdentifier();
 
         return DB::transaction(function () use ($task, $to, $actor, $actorId, $note, $opts, $lane) {
-            $new = $this->mintHandoffTask($task, $to, $actor, $lane, $note, 'Passed from');
+            $new = $this->mintHandoffTask($task, $to, $actor, $lane, $note, 'Passed from', continuation: true);
 
             $task->recordEvent(
                 TaskComment::EVENT_HANDED_OFF,
@@ -1055,7 +1055,7 @@ class DispatchTaskService
         $actorId = $actor?->getAuthIdentifier();
 
         return DB::transaction(function () use ($task, $to, $actor, $actorId, $note, $opts, $lane) {
-            $askTask = $this->mintHandoffTask($task, $to, $actor, $lane, $note, 'Requested via');
+            $askTask = $this->mintHandoffTask($task, $to, $actor, $lane, $note, 'Requested via', continuation: false);
 
             if (array_key_exists('due', $opts) && $opts['due'] !== null) {
                 $askTask->due_at = DueDate::resolve($opts['due']);
@@ -1081,7 +1081,7 @@ class DispatchTaskService
 
     /**
      * Shared mint step for both a pass-continuation and an ask task: same
-     * title/type/priority/visibility/is_public/submitter/conversation as
+     * title/type/priority/visibility/is_public/submitter/conversation/topic as
      * $task (this IS that work, continuing or being asked-about), status
      * `open` (already vetted, actionable — not a fresh `triage` report),
      * `origin` = `task:<$task->code>`, assigned to $to. The create-time
@@ -1089,9 +1089,18 @@ class DispatchTaskService
      * notification that actually matters here (taskAssigned, the EXISTING
      * seam, no new channel) instead of $task's submitter being told
      * "received" a second time for a task they didn't submit.
+     *
+     * The TOPIC always carries: both kinds are about the same account/plan/
+     * title, and dropping it takes the work out of every "tasks about this"
+     * view and the topic_account_key rollup the moment it crosses a lane.
+     * LABELS carry only on a continuation (`$continuation`), which IS the
+     * same work under a new holder. An ask is a new task — a question about
+     * that work — and labels such as `source:widget` or `kind:investigate`
+     * describe the original, not the question.
      */
-    protected function mintHandoffTask(Task $task, Authenticatable $to, ?Authenticatable $actor, ?string $lane, ?string $note, string $verb): Task
+    protected function mintHandoffTask(Task $task, Authenticatable $to, ?Authenticatable $actor, ?string $lane, ?string $note, string $verb, bool $continuation): Task
     {
+
         $attributes = [
             'title' => $task->title,
             'type' => $task->type,
@@ -1111,8 +1120,14 @@ class DispatchTaskService
         if ($lane !== null) {
             $attributes['lane'] = $lane;
         }
+        if ($task->topic_type !== null) {
+            $attributes['topic_type'] = $task->topic_type;
+            $attributes['topic_id'] = $task->topic_id;
+        }
 
-        $new = $this->quietly(fn () => $this->create($attributes, [], $actor));
+        $labels = $continuation ? $task->labels()->pluck('name')->all() : [];
+
+        $new = $this->quietly(fn () => $this->create($attributes, $labels, $actor));
 
         app(DispatchNotifier::class)->taskAssigned($new, null, (int) $to->getAuthIdentifier(), $actor);
 

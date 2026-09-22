@@ -253,6 +253,28 @@ test('handoff PASS across lanes mints exactly ONE new task in the recipient\'s l
     expect($event->meta['continued_as'])->toBe($result->code);
 });
 
+test('handoff PASS across lanes carries the topic and the labels — the continuation IS that work', function () {
+    bindHandoffLaneResolver(lanesByUser: [222 => ['ops'], 223 => ['support']]);
+    $from = dispatchMakeUser(222);
+    $to = dispatchMakeUser(223);
+    $task = app(DispatchTaskService::class)->create([
+        'title' => 'about an account',
+        'lane' => 'ops',
+        'topic_type' => 'account',
+        'topic_id' => 'ACCT-1',
+    ], ['arc:customer-plan-requests', 'request:cancel']);
+
+    $result = app(DispatchTaskService::class)->handoff($task, $to, $from);
+
+    // Without these the work silently leaves every "tasks about this account"
+    // view and every arc filter the moment it crosses a department line.
+    expect($result->code)->not->toBe($task->code)
+        ->and($result->topic_type)->toBe('account')
+        ->and($result->topic_id)->toBe('ACCT-1')
+        ->and($result->labels->pluck('name')->sort()->values()->all())
+        ->toBe(['arc:customer-plan-requests', 'request:cancel']);
+});
+
 test('handoff PASS --keep-open (opts) leaves the original task open', function () {
     bindHandoffLaneResolver(lanesByUser: [225 => ['ops'], 226 => ['support']]);
     $from = dispatchMakeUser(225);
@@ -323,6 +345,25 @@ test('handoff ASK always mints a linked task, even within the SAME lane, and blo
 
     $event = $task->fresh()->comments()->where('event_type', TaskComment::EVENT_ASKED)->firstOrFail();
     expect($event->meta['blocked_by'])->toBe($askTask->code);
+});
+
+test('handoff ASK carries the topic but not the labels — a question ABOUT the work is not the work', function () {
+    bindHandoffLaneResolver(lanesByUser: [252 => ['ops'], 253 => ['support']]);
+    $asker = dispatchMakeUser(252);
+    $recipient = dispatchMakeUser(253);
+    $task = app(DispatchTaskService::class)->create([
+        'title' => 'about an account',
+        'lane' => 'ops',
+        'topic_type' => 'account',
+        'topic_id' => 'ACCT-2',
+    ], ['source:widget', 'kind:investigate']);
+
+    app(DispatchTaskService::class)->handoff($task, $recipient, $asker, ['ask' => true]);
+
+    $askTask = Task::query()->where('origin_type', 'task')->where('origin_id', $task->code)->firstOrFail();
+    expect($askTask->topic_type)->toBe('account')
+        ->and($askTask->topic_id)->toBe('ACCT-2')
+        ->and($askTask->labels)->toBeEmpty();
 });
 
 test('handoff ASK never closes the asker\'s task', function () {
