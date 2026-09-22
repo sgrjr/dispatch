@@ -1021,6 +1021,11 @@ class DispatchTaskService
             );
 
             if (empty($opts['keep_open'])) {
+                // BEFORE the close: once $task is terminal it stops gating its
+                // dependents, and a dependent left pointing only at it would read
+                // as unblocked — which is how a passed ask used to lose its answer.
+                $this->moveDependentsOnto($task, $new);
+
                 $from = $task->status;
                 $task->status = 'done';
                 $task->save();
@@ -1037,6 +1042,63 @@ class DispatchTaskService
 
             return $new;
         });
+    }
+
+    /**
+     * TASK-1069 — a closing pass hands the work on, it does not finish it, so
+     * whatever was waiting on $from is now waiting on $to: every task $from
+     * BLOCKS gains the same link to $to (same kind, same `created_by_user_id`
+     * — for an ask that is the ASKER, who is who the ball returns to).
+     *
+     * The old link rows stay, for history: $from is about to go terminal, and a
+     * terminal blocker no longer gates ({@see Task::scopeBlocked()}), so only the
+     * new link holds the dependent. Closing $from this way must NOT be read as
+     * an answer — createContinuationTask() never calls
+     * notifyDependentsOfClosure() — and the continuation's own close is
+     * recognised as the answer by {@see answersAskOf()}.
+     *
+     * No cycle check: $to was minted a moment ago and blocks nothing and is
+     * blocked by nothing, so no path can lead back from it.
+     */
+    protected function moveDependentsOnto(Task $from, Task $to): void
+    {
+        TaskLink::query()
+            ->where('blocked_by_task_id', $from->id)
+            ->get()
+            ->each(fn (TaskLink $link) => TaskLink::query()->firstOrCreate(
+                ['task_id' => $link->task_id, 'blocked_by_task_id' => $to->id, 'kind' => $link->kind],
+                ['created_by_user_id' => $link->created_by_user_id],
+            ));
+    }
+
+    /**
+     * Is $closed the answer to a question $dependent asked? True when $closed
+     * IS the ask (its origin is $dependent — {@see createAskTask()} always sets
+     * it), or a continuation of that ask, however many passes on: a passed ask
+     * is minted with `origin = task:<the ask>`, so the walk follows origins up
+     * until it reaches $dependent. Capped and cycle-guarded; walks trashed rows
+     * so a soft-deleted middle link still joins the chain.
+     */
+    protected function answersAskOf(Task $closed, Task $dependent): bool
+    {
+        /** @var class-string<Task> $taskModel */
+        $taskModel = config('dispatch.models.task');
+
+        $seen = [];
+        $node = $closed;
+
+        for ($hop = 0; $hop < 25 && $node !== null; $hop++) {
+            if ($node->origin_type !== 'task' || isset($seen[$node->id])) {
+                return false;
+            }
+            if ($node->origin_id === $dependent->code) {
+                return true;
+            }
+            $seen[$node->id] = true;
+            $node = $taskModel::withTrashed()->where('code', $node->origin_id)->first();
+        }
+
+        return false;
     }
 
     /**
@@ -1213,10 +1275,10 @@ class DispatchTaskService
      * Task::isInactive()}); a no-op otherwise, so it's safe to call
      * unconditionally.
      *
-     * For each task $task blocks: if $task's origin points back at that
-     * dependent (`origin_type` = `task`, `origin_id` = the dependent's own
-     * code) — the signature an Ask task carries, since {@see
-     * createAskTask()} always sets it — the ball RETURNS (reassign + the
+     * For each task $task blocks: if $task answers a question that dependent
+     * asked — it IS the ask (its origin points back at the dependent, which
+     * {@see createAskTask()} always sets) or a continuation of one that was
+     * passed on ({@see answersAskOf()}) — the ball RETURNS (reassign + the
      * answer). Otherwise it's a plain `blocked_by` link: just notify + record
      * that the blocker resolved. Both reuse the EXISTING DispatchNotifier
      * seam (taskAssigned / taskCommented) — no new channel.
@@ -1228,9 +1290,7 @@ class DispatchTaskService
         }
 
         foreach ($task->blocks as $dependent) {
-            $isAskReturn = $task->origin_type === 'task' && $task->origin_id === $dependent->code;
-
-            if ($isAskReturn) {
+            if ($this->answersAskOf($task, $dependent)) {
                 $this->returnTheBall($dependent, $task, $actorUserId);
             } else {
                 $this->notifyGenericDependency($dependent, $task, $actorUserId);

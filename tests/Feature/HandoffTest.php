@@ -408,6 +408,107 @@ test('closing an ask task returns the ball to the asker with the answer, and the
         ->and($answered->meta['from'])->toBe($askTask->code);
 });
 
+// --- a pass moves the question with the ball (TASK-1069) --------------------
+//
+// A cross-lane PASS closes the passer. When the passer was an ASK, closing it
+// used to silently unblock the asker with no answer, and the continuation —
+// which blocks nothing — could never answer either. The dependency now
+// follows the ball onto the continuation.
+
+test('passing an ASK on moves the question: the asker stays blocked, and the continuation answers', function () {
+    bindHandoffLaneResolver(lanesByUser: [270 => ['ops'], 271 => ['support'], 272 => ['ops:triage']]);
+    $asker = dispatchMakeUser(270);
+    $askee = dispatchMakeUser(271);
+    $third = dispatchMakeUser(272);
+    $svc = app(DispatchTaskService::class);
+
+    $task = $svc->create(['title' => 'x', 'lane' => 'ops', 'status' => 'open', 'assignee_user_id' => $asker->id]);
+    $svc->handoff($task, $askee, $asker, ['ask' => true, 'note' => 'Is it still shipping?']);
+    $ask = $task->fresh()->blockedBy->firstOrFail();
+
+    // The askee can't answer — production can. They pass the question on.
+    $continuation = $svc->handoff($ask, $third, $askee, ['lane' => 'ops:triage']);
+
+    expect($ask->fresh()->status)->toBe('done')
+        // Still waiting: the question moved, it was not answered.
+        ->and(Task::blocked()->pluck('id')->all())->toContain($task->id)
+        ->and($task->fresh()->blockedBy->pluck('code')->all())->toContain($continuation->code)
+        ->and($task->fresh()->comments()->where('event_type', TaskComment::EVENT_ANSWERED)->count())->toBe(0);
+
+    // Someone else holds the asker's task by the time the answer lands.
+    $task->assignee_user_id = 999;
+    $task->save();
+
+    $continuation->recordEvent(TaskComment::EVENT_COMMENT, $third->id, [], 'Yes — October, as planned.');
+    $continuation->status = 'done';
+    $continuation->save();
+    $svc->notifyDependentsOfClosure($continuation, $third->id);
+
+    $fresh = $task->fresh();
+    $answered = $fresh->comments()->where('event_type', TaskComment::EVENT_ANSWERED)->firstOrFail();
+    expect($fresh->assignee_user_id)->toBe(270) // back to the ASKER, not the askee who passed it
+        ->and($answered->meta['answer'])->toBe('Yes — October, as planned.')
+        ->and($answered->meta['from'])->toBe($continuation->code)
+        ->and(Task::unblocked()->pluck('id')->all())->toContain($fresh->id);
+});
+
+test('a question passed on twice still comes back to the asker', function () {
+    bindHandoffLaneResolver(lanesByUser: [275 => ['ops'], 276 => ['support'], 277 => ['ops:triage'], 278 => ['support']]);
+    $svc = app(DispatchTaskService::class);
+    $asker = dispatchMakeUser(275);
+
+    $task = $svc->create(['title' => 'x', 'lane' => 'ops', 'status' => 'open', 'assignee_user_id' => $asker->id]);
+    $svc->handoff($task, dispatchMakeUser(276), $asker, ['ask' => true]);
+    $hop1 = $svc->handoff($task->fresh()->blockedBy->firstOrFail(), dispatchMakeUser(277), null, ['lane' => 'ops:triage']);
+    $hop2 = $svc->handoff($hop1, dispatchMakeUser(278), null, ['lane' => 'support']);
+
+    expect(Task::blocked()->pluck('id')->all())->toContain($task->id);
+
+    $hop2->status = 'done';
+    $hop2->save();
+    $svc->notifyDependentsOfClosure($hop2);
+
+    expect($task->fresh()->comments()->where('event_type', TaskComment::EVENT_ANSWERED)->count())->toBe(1)
+        ->and($task->fresh()->assignee_user_id)->toBe(275);
+});
+
+test('passing a task that blocks another moves the dependency too — a PLAIN blocker stays a plain blocker', function () {
+    bindHandoffLaneResolver(lanesByUser: [280 => ['ops'], 281 => ['support']]);
+    $svc = app(DispatchTaskService::class);
+    $dependent = $svc->create(['title' => 'waits', 'lane' => 'ops', 'status' => 'open', 'assignee_user_id' => 280]);
+    $blocker = $svc->create(['title' => 'must finish first', 'lane' => 'ops', 'status' => 'open']);
+    $svc->linkBlockedBy($dependent, $blocker);
+
+    $continuation = $svc->handoff($blocker, dispatchMakeUser(281), dispatchMakeUser(280));
+
+    // The work was handed on, not finished: the dependent must still wait.
+    expect(Task::blocked()->pluck('id')->all())->toContain($dependent->id);
+
+    $continuation->status = 'done';
+    $continuation->save();
+    $svc->notifyDependentsOfClosure($continuation);
+
+    $fresh = $dependent->fresh();
+    expect(Task::unblocked()->pluck('id')->all())->toContain($fresh->id)
+        ->and($fresh->assignee_user_id)->toBe(280) // no reassignment: it never held the ball
+        ->and($fresh->comments()->where('event_type', TaskComment::EVENT_DEPENDENCY_RESOLVED)->count())->toBe(1)
+        ->and($fresh->comments()->where('event_type', TaskComment::EVENT_ANSWERED)->count())->toBe(0);
+});
+
+test('a keep-open pass leaves the dependency on the passer, who is still working it', function () {
+    bindHandoffLaneResolver(lanesByUser: [285 => ['ops'], 286 => ['support'], 287 => ['ops:triage']]);
+    $svc = app(DispatchTaskService::class);
+    $asker = dispatchMakeUser(285);
+    $task = $svc->create(['title' => 'x', 'lane' => 'ops', 'status' => 'open', 'assignee_user_id' => $asker->id]);
+    $svc->handoff($task, dispatchMakeUser(286), $asker, ['ask' => true]);
+    $ask = $task->fresh()->blockedBy->firstOrFail();
+
+    $continuation = $svc->handoff($ask, dispatchMakeUser(287), null, ['lane' => 'ops:triage', 'keep_open' => true]);
+
+    expect($task->fresh()->blockedBy->pluck('code')->all())->toBe([$ask->code])
+        ->and($task->fresh()->blockedBy->pluck('code')->all())->not->toContain($continuation->code);
+});
+
 test('closing a task with a PLAIN (non-ask) blocked_by dependent notifies + records EVENT_DEPENDENCY_RESOLVED, with NO reassignment', function () {
     $tasks = app(DispatchTaskService::class);
     $dependent = $tasks->create(['title' => 'dependent', 'assignee_user_id' => 700]);
