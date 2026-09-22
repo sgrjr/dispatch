@@ -18,6 +18,7 @@ use Sgrjr\Dispatch\Models\LabelAlias;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Models\TaskLink;
+use Sgrjr\Dispatch\Models\TaskRead;
 use Sgrjr\Dispatch\Support\AgentMetrics;
 use Sgrjr\Dispatch\Support\Anchor;
 use Sgrjr\Dispatch\Support\DueDate;
@@ -1213,6 +1214,20 @@ class DispatchTaskService
      *
      * @throws \InvalidArgumentException on a self-link or a would-be cycle.
      */
+    /**
+     * TASK-998 — move this person's read cursor on $task to NOW: they are
+     * looking at it. An upsert on (task_id, user_id), so two tabs opening the
+     * same task at once cannot collide, and a repeat look just moves it on.
+     */
+    public function markRead(Task $task, Authenticatable $user): void
+    {
+        TaskRead::query()->upsert(
+            [['task_id' => $task->getKey(), 'user_id' => (int) $user->getAuthIdentifier(), 'read_at' => now()]],
+            ['task_id', 'user_id'],
+            ['read_at'],
+        );
+    }
+
     public function linkBlockedBy(Task $task, Task $blocker, ?int $actorUserId = null, string $kind = TaskLink::KIND_BLOCKS): TaskLink
     {
         if ($task->is($blocker)) {

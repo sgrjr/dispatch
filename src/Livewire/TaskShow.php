@@ -105,6 +105,18 @@ class TaskShow extends Component
         $this->label_ids = $task->labels->pluck('id')->all();
         $this->editDescription = $task->description;
         $this->due_at = $task->due_at?->format('Y-m-d');
+
+        // TASK-998 — opening the task IS looking at it: move this person's read
+        // cursor. ⚠️ Fails soft: a cursor is a courtesy, and between a package
+        // upgrade and its `migrate` the table does not exist yet — the task page
+        // must not break over it.
+        if (Auth::check()) {
+            try {
+                app(DispatchTaskService::class)->markRead($task, Auth::user());
+            } catch (\Throwable) {
+                // nothing to do — the next open moves it
+            }
+        }
     }
 
     public function canEdit(): bool

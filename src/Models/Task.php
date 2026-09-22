@@ -447,6 +447,43 @@ class Task extends Model
         );
     }
 
+    /** TASK-998 — each person's read cursor on this task ({@see TaskRead}). */
+    public function reads(): HasMany
+    {
+        return $this->hasMany(TaskRead::class, 'task_id');
+    }
+
+    /**
+     * TASK-998 — tasks with NEWS for this person: any timeline event (a
+     * comment, a status or assignee change, a hand-off, an answer…) by SOMEONE
+     * ELSE after they last looked. Never looked counts as never caught up.
+     *
+     * "Someone else" includes the system (a null user_id — an answer returned
+     * by returnTheBall, a status the plan-request closer set): news you did not
+     * make is news. Your own events never are.
+     *
+     * One correlated EXISTS, portable SQL: the cursor lookup is a scalar
+     * subquery on dispatch_task_reads' (task_id, user_id) unique index, and
+     * the events are read through dispatch_task_comments' (task_id, created_at)
+     * index.
+     */
+    public function scopeWithNewsFor(Builder $query, int $userId): Builder
+    {
+        $tasks = $this->getTable();
+        $events = (new (config('dispatch.models.task_comment')))->getTable();
+        $reads = (new TaskRead)->getTable();
+
+        return $query->whereExists(fn ($q) => $q
+            ->selectRaw('1')
+            ->from($events.' as news')
+            ->whereColumn('news.task_id', $tasks.'.id')
+            ->where(fn ($who) => $who->whereNull('news.user_id')->orWhere('news.user_id', '!=', $userId))
+            ->whereRaw(
+                "news.created_at > COALESCE((SELECT cursor_row.read_at FROM {$reads} cursor_row WHERE cursor_row.task_id = {$tasks}.id AND cursor_row.user_id = ?), '1970-01-01 00:00:00')",
+                [$userId],
+            ));
+    }
+
     public function submitter(): BelongsTo
     {
         return $this->belongsTo(config('dispatch.models.user'), 'submitter_user_id');
