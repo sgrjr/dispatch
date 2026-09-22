@@ -1392,3 +1392,70 @@ test('dispatch:show does not let a browser stack frame break console formatting'
 
     expect(Artisan::output())->toContain('<anonymous>');
 });
+
+// --- TASK-1068: the census answers the question the filters asked -----------
+
+test('every queue filter narrows the COUNT exactly as it narrows the list (TASK-1068)', function () {
+    $svc = app(DispatchTaskService::class);
+
+    $svc->create(['title' => 'ops break', 'status' => 'open', 'lane' => 'ops', 'origin_type' => 'exception']);
+    $svc->create(['title' => 'ops chore', 'status' => 'open', 'lane' => 'ops', 'conversation_id' => 77]);
+    $svc->create(['title' => 'support ask', 'status' => 'open', 'lane' => 'support', 'topic_type' => 'account', 'topic_id' => 'ACC1', 'topic_account_key' => 'ACC1']);
+    $svc->create(['title' => 'unrouted', 'status' => 'open']);
+
+    // Like-for-like: one explicit status, so the census and the list span the
+    // same board and any difference is the FILTER being ignored.
+    $filters = [
+        ['lane' => 'ops'],
+        ['lane' => 'support'],
+        ['lane' => 'none'],
+        ['origin' => 'exception'],
+        ['topic' => 'account:ACC1'],
+        ['topic_account' => 'ACC1'],
+        ['conversation' => 77],
+        ['lane' => 'ops', 'origin' => 'exception'],
+    ];
+
+    foreach ($filters as $filter) {
+        $listed = $svc->queueQuery($filter, 'open')->count();
+        $counted = $svc->queueCensus($filter, 'open')['total'];
+
+        expect($counted)->toBe($listed, 'census disagreed with the list for '.json_encode($filter));
+    }
+
+    // 🚨 The reported failure: a filter that matches NOTHING must report zero,
+    // not the whole board. Every one of these used to return 4.
+    expect($svc->queueCensus(['lane' => 'marketing:developer'], 'open')['total'])->toBe(0)
+        ->and($svc->queueCensus(['origin' => 'plan_request'], 'open')['total'])->toBe(0)
+        ->and($svc->queueCensus(['conversation' => 999], 'open')['total'])->toBe(0)
+        // …while no filter at all still sees everything.
+        ->and($svc->queueCensus([], 'open')['total'])->toBe(4);
+});
+
+test('dispatch:queue --count --lane counts that lane, not the board (TASK-1068)', function () {
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'ops one', 'status' => 'open', 'lane' => 'ops']);
+    $svc->create(['title' => 'ops two', 'status' => 'triage', 'lane' => 'ops']);
+    $svc->create(['title' => 'elsewhere', 'status' => 'open', 'lane' => 'support']);
+
+    Artisan::call('dispatch:queue', ['--count' => true, '--lane' => 'ops', '--json' => true]);
+    $out = json_decode(Artisan::output(), true);
+
+    expect($out['total'])->toBe(2)
+        ->and($out['by_status'])->toBe(['open' => 1, 'in_progress' => 0, 'triage' => 1, 'verifying' => 0]);
+});
+
+test('the census canonicalizes a label alias, the same way the list does (TASK-1068)', function () {
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'labelled', 'status' => 'open'], ['area:infra']);
+
+    // Renaming the label leaves `area:infra` an ALIAS of the new name. The
+    // list has always followed it; the census used to match on the raw string
+    // and find nothing.
+    app(\Sgrjr\Dispatch\Services\LabelCleanupService::class)
+        ->replace([\Sgrjr\Dispatch\Models\Label::query()->where('name', 'area:infra')->value('id')], 'area:platform');
+
+    expect($svc->queueCensus(['label' => 'area:infra'], 'open')['total'])
+        ->toBe($svc->queueQuery(['label' => 'area:infra'], 'open')->count())
+        ->toBe(1);
+});

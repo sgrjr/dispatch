@@ -77,36 +77,6 @@ class DispatchQueue extends Command
             return self::SUCCESS;
         }
 
-        /** @var class-string<Task> $taskModel */
-        $taskModel = config('dispatch.models.task');
-
-        if ($this->option('count')) {
-            // The no-`--status` census spans the ACTIONABLE board — including
-            // `verifying`, which the actionable LIST default deliberately
-            // excludes (claim only takes open/triage) — and zero-fills every
-            // bucket so an empty state prints as 0 instead of silently
-            // vanishing (W5-2). Parked `backburner` and terminal done/declined
-            // stay out so shelved work and a backfilled archive don't pollute
-            // "backlog size"; --status=backburner still yields that bucket.
-            $census = ($status = $this->option('status')) ? [$status] : ['open', 'in_progress', 'triage', 'verifying'];
-
-            $grouped = $taskModel::query()
-                ->whereIn('status', $census)
-                ->when($this->option('type'), fn ($q, $type) => $q->where('type', $type))
-                ->when($this->option('label'), fn ($q, $label) => $q->whereHas('labels', fn ($lq) => $lq->whereIn('name', (array) $label)))
-                ->selectRaw('status, COUNT(*) as c')
-                ->groupBy('status')
-                ->pluck('c', 'status')
-                ->map(fn ($v) => (int) $v)
-                ->all();
-
-            $byStatus = array_replace(array_fill_keys($census, 0), $grouped);
-
-            $this->renderCount(array_sum($byStatus), $byStatus);
-
-            return self::SUCCESS;
-        }
-
         // Query construction (filters + eager-load + priority ordering) lives in
         // the service; this command keeps only its limit + output logic. The
         // queue is NOT focus-steered — it's a full list, not a single pick.
@@ -119,6 +89,22 @@ class DispatchQueue extends Command
             'topic_account' => $this->option('topic-account'),
             'lane' => $this->option('lane'),
         ]);
+
+        // The census answers for the same board the list would show, under the
+        // same filters — one interpreter, in the service (TASK-1068).
+        if ($this->option('count')) {
+            try {
+                $census = $tasks->queueCensus($filters, $this->option('status'));
+            } catch (\InvalidArgumentException $e) {
+                $this->error($e->getMessage());
+
+                return self::FAILURE;
+            }
+
+            $this->renderCount($census['total'], $census['by_status']);
+
+            return self::SUCCESS;
+        }
 
         try {
             $query = $tasks->queueQuery($filters, $this->option('status'));

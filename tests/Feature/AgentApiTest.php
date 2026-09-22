@@ -310,6 +310,38 @@ test('GET queue?count returns totals by status instead of the task list (W4-4)',
         ->assertJsonPath('by_status.triage', 1);
 });
 
+test('GET queue?count narrows by lane and anchor, like the list does (TASK-1068)', function () {
+    $svc = app(DispatchTaskService::class);
+    $svc->create(['title' => 'ops break', 'status' => 'open', 'lane' => 'ops', 'origin_type' => 'exception']);
+    $svc->create(['title' => 'ops chore', 'status' => 'triage', 'lane' => 'ops']);
+    $svc->create(['title' => 'elsewhere', 'status' => 'open', 'lane' => 'support']);
+    $svc->create(['title' => 'unrouted', 'status' => 'open']);
+
+    $token = agentApiToken();
+
+    // 🚨 Every one of these used to report the whole board (4), which is what
+    // an agent reads before concluding its lane is empty.
+    $this->withToken($token)->getJson('api/dispatch/agent/queue?count=1&lane=ops')
+        ->assertOk()
+        ->assertJsonPath('total', 2);
+
+    $this->withToken($token)->getJson('api/dispatch/agent/queue?count=1&lane=none')
+        ->assertOk()
+        ->assertJsonPath('total', 1);
+
+    $this->withToken($token)->getJson('api/dispatch/agent/queue?count=1&origin=exception')
+        ->assertOk()
+        ->assertJsonPath('total', 1);
+
+    $this->withToken($token)->getJson('api/dispatch/agent/queue?count=1&lane=marketing:developer')
+        ->assertOk()
+        ->assertJsonPath('total', 0);
+
+    $this->withToken($token)->getJson('api/dispatch/agent/queue?count=1')
+        ->assertOk()
+        ->assertJsonPath('total', 4);
+});
+
 test('GET queue?count zero-fills the non-terminal census incl. verifying (W5-2)', function () {
     $svc = app(DispatchTaskService::class);
     $svc->create(['title' => 'o1', 'status' => 'open']);

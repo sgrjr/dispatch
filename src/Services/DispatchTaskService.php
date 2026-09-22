@@ -476,25 +476,83 @@ class DispatchTaskService
         /** @var class-string<Task> $taskModel */
         $taskModel = config('dispatch.models.task');
 
+        return $this->orderForQueue($this->eagerForRead(
+            $this->applyQueueFilters(
+                $taskModel::query()->when(
+                    $status,
+                    fn ($q, $s) => $q->where('status', $s),
+                    fn ($q) => $q->whereIn('status', ['open', 'in_progress', 'triage'])
+                ),
+                $filters,
+            )
+        ));
+    }
+
+    /**
+     * Every queue filter, applied once: type + label (alias-canonicalized) +
+     * the anchors + lane.
+     *
+     * 🚨 THE one interpreter. `--count` used to build its own query with only
+     * type and label, so a census answered for the WHOLE BOARD whatever lane
+     * or anchor you filtered by — on production every one of `--lane=none`,
+     * `--lane=marketing:developer` and `--origin=plan_request` reported the
+     * same 257 while the list for those filters returned 198 / 7 / 0
+     * (TASK-1068). An agent is told to check the count before concluding a
+     * lane is empty, so a census that silently ignores the filter is worse
+     * than no census.
+     *
+     * @param  array<string,mixed>  $filters
+     */
+    protected function applyQueueFilters(Builder $q, array $filters): Builder
+    {
         $type = $filters['type'] ?? null;
         $label = $filters['label'] ?? null;
 
-        return $this->orderForQueue($this->eagerForRead(
-            $this->applyLaneFilter($this->applyAnchorFilters(
-                $taskModel::query()
-                    ->when(
-                        $status,
-                        fn ($q, $s) => $q->where('status', $s),
-                        fn ($q) => $q->whereIn('status', ['open', 'in_progress', 'triage'])
-                    )
-                    ->when($type, fn ($q, $type) => $q->where('type', $type))
-                    ->when($label, fn ($q, $label) => $q->whereHas(
-                        'labels',
-                        fn ($lq) => $lq->whereIn('name', LabelAlias::canonicalize((array) $label))
-                    )),
-                $filters,
-            ), $filters)
-        ));
+        return $this->applyLaneFilter($this->applyAnchorFilters(
+            $q->when($type, fn ($qq, $type) => $qq->where('type', $type))
+                ->when($label, fn ($qq, $label) => $qq->whereHas(
+                    'labels',
+                    fn ($lq) => $lq->whereIn('name', LabelAlias::canonicalize((array) $label))
+                )),
+            $filters,
+        ), $filters);
+    }
+
+    /**
+     * The board's CENSUS — `{total, by_status}` for the same board
+     * {@see queueQuery()} lists, under the same filters (TASK-1068).
+     *
+     * The status default differs from the list's on purpose and always has:
+     * a census spans the ACTIONABLE board INCLUDING `verifying` (which the
+     * list excludes, since claim only takes open/triage), and zero-fills every
+     * bucket so an empty one reports 0 instead of vanishing (W5-2). Parked
+     * `backburner` and terminal done/declined stay out, so shelved work and a
+     * backfilled archive never pollute "backlog size"; an explicit status
+     * yields exactly that bucket.
+     *
+     * @param  array<string,mixed>  $filters  same shape as queueQuery
+     * @return array{total:int, by_status:array<string,int>}
+     */
+    public function queueCensus(array $filters = [], ?string $status = null): array
+    {
+        /** @var class-string<Task> $taskModel */
+        $taskModel = config('dispatch.models.task');
+
+        $census = $status ? [$status] : ['open', 'in_progress', 'triage', 'verifying'];
+
+        $grouped = $this->applyQueueFilters(
+            $taskModel::query()->whereIn('status', $census),
+            $filters,
+        )
+            ->selectRaw('status, COUNT(*) as c')
+            ->groupBy('status')
+            ->pluck('c', 'status')
+            ->map(fn ($v) => (int) $v)
+            ->all();
+
+        $byStatus = array_replace(array_fill_keys($census, 0), $grouped);
+
+        return ['total' => array_sum($byStatus), 'by_status' => $byStatus];
     }
 
     /**

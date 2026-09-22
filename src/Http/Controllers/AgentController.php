@@ -65,53 +65,28 @@ class AgentController extends Controller
 
     public function queue(Request $request): JsonResponse
     {
-        /** @var class-string<Task> $taskModel */
-        $taskModel = config('dispatch.models.task');
-
-        // Shared type/label narrowing; the STATUS default deliberately differs
-        // between the two modes (see the count branch below).
-        $typeLabel = function ($q) use ($request) {
-            return $q
-                ->when($request->query('type'), fn ($qq, $type) => $qq->where('type', $type))
-                ->when($request->query('label'), fn ($qq, $label) => $qq->whereHas(
-                    'labels',
-                    fn ($lq) => $lq->whereIn('name', (array) $label)
-                ));
-        };
-
-        // ?count — return {total, by_status} instead of the task list, so an
-        // agent learns the true backlog size without probing --limit (W4-4).
-        // The no-`status` census spans the ACTIONABLE board — including
-        // `verifying`, which the actionable LIST default deliberately excludes
-        // (claim only takes open/triage) — and zero-fills every bucket so an
-        // empty state reports 0 instead of silently vanishing (W5-2).
-        // Parked `backburner` and terminal done/declined stay out so shelved
-        // work and a backfilled archive don't pollute "backlog size";
-        // ?status=backburner still yields that bucket explicitly.
-        if ($request->boolean('count')) {
-            $census = ($status = $request->query('status'))
-                ? [$status]
-                : ['open', 'in_progress', 'triage', 'verifying'];
-
-            $grouped = $typeLabel($taskModel::query()->whereIn('status', $census))
-                ->selectRaw('status, COUNT(*) as c')
-                ->groupBy('status')
-                ->pluck('c', 'status')
-                ->map(fn ($v) => (int) $v)
-                ->all();
-
-            $byStatus = array_replace(array_fill_keys($census, 0), $grouped);
-
-            return response()->json([
-                'total' => array_sum($byStatus),
-                'by_status' => $byStatus,
-            ]);
-        }
-
         $filters = $this->anchorQueryFilters($request, [
             'type' => $request->query('type'),
             'label' => $request->query('label'),
         ]);
+
+        // ?count — return {total, by_status} instead of the task list, so an
+        // agent learns the true backlog size without probing --limit (W4-4).
+        //
+        // 🚨 It answers for the SAME board the list would return, under the
+        // SAME filters: this branch used to narrow by type/label only, so an
+        // agent checking whether its lane was empty got the whole board's
+        // number (TASK-1068). The census's own status default lives in the
+        // service with it.
+        if ($request->boolean('count')) {
+            try {
+                $census = app(DispatchTaskService::class)->queueCensus($filters, $request->query('status'));
+            } catch (\InvalidArgumentException $e) {
+                abort(422, $e->getMessage());
+            }
+
+            return response()->json($census);
+        }
 
         // ?q= — text search (W9-7). Rides the EXISTING queue scope rather than a
         // new verb, so no session needs re-commissioning to gain it. Note the
