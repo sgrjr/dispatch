@@ -1079,7 +1079,7 @@ class DispatchTaskService
      * until it reaches $dependent. Capped and cycle-guarded; walks trashed rows
      * so a soft-deleted middle link still joins the chain.
      */
-    protected function answersAskOf(Task $closed, Task $dependent): bool
+    public function answersAskOf(Task $closed, Task $dependent): bool
     {
         /** @var class-string<Task> $taskModel */
         $taskModel = config('dispatch.models.task');
