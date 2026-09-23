@@ -171,7 +171,7 @@
                 <dl style="display:grid; grid-template-columns:max-content 1fr; gap:0.3rem 0.8rem; margin:0 0 0.75rem; font-size:0.85rem;">
                     @foreach ($panel['rows'] as $row)
                         <dt style="color: var(--dispatch-text-muted);">{{ $row['label'] }}</dt>
-                        <dd style="margin:0; {{ ! empty($row['emphasis']) ? 'font-family:monospace; font-size:1.1rem; font-weight:700; letter-spacing:0.1em;' : '' }}">{{ $row['value'] }}</dd>
+                        <dd style="margin:0; {{ ! empty($row['emphasis']) ? 'font-family:monospace; font-size:1.1rem; font-weight:700; letter-spacing:0.1em;' : '' }}">@if (! empty($row['url']))<a href="{{ $row['url'] }}" target="_blank" rel="noopener">{{ $row['value'] }}</a>@else{{ $row['value'] }}@endif</dd>
                     @endforeach
                 </dl>
             @endif

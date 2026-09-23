@@ -75,7 +75,11 @@ declares:
 - `locksStatus()`: when true, the Task saving hook refuses every other status
   write (`Exceptions\TaskKindLocked`, a 422 on the API/batch);
 - `panel()`: what the task view shows about the underlying thing;
-- `perform()`: the work. It runs as the kind, so it may close its own task.
+- `perform()`: the work. It runs as the kind, so it may close its own task;
+- `continues()` (TASK-1190): the marker a cross-lane PASS hands to the
+  continuation, so the kind travels with the ball; null = the continuation is
+  a plain task. A kind that travels also lets the pass close the passer; one
+  that doesn't and locks its status (an approval) refuses the pass.
 
 **One action path:** `Services\TaskActions` (`describe` / `offered` /
 `perform`). TaskShow renders the actions and hides what the kind asks; the

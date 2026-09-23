@@ -36,6 +36,11 @@ abstract class BaseTaskKind implements TaskKind
         return null;
     }
 
+    public function continues(Task $from): ?array
+    {
+        return null;
+    }
+
     public function perform(Task $task, string $key, ?Authenticatable $user, array $input): ?string
     {
         throw new \InvalidArgumentException("This task has no `{$key}` action.");

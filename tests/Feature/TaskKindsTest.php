@@ -228,3 +228,77 @@ test('approval: Approve runs through the action path for staff; agents are offer
         ->and($task->fresh()->status)->toBe('done')
         ->and(app(TaskActions::class)->describe($task->fresh(), $staff)['actions'])->toBe([]);
 });
+
+// --- a kind that travels with the ball (TASK-1190) ---------------------------------
+
+function kindsTwoLanes(array $lanesByUser): void
+{
+    app()->instance(\Sgrjr\Dispatch\Contracts\LaneResolver::class, new class($lanesByUser) implements \Sgrjr\Dispatch\Contracts\LaneResolver
+    {
+        public function __construct(private array $lanes) {}
+
+        public function isLane(string $lane): bool
+        {
+            return true;
+        }
+
+        public function label(string $lane): ?string
+        {
+            return $lane;
+        }
+
+        public function lanes(): array
+        {
+            return ['ops', 'support'];
+        }
+
+        public function lanesFor(\Illuminate\Contracts\Auth\Authenticatable $user): array
+        {
+            return $this->lanes[$user->getAuthIdentifier()] ?? [];
+        }
+
+        public function lanesManagedBy(\Illuminate\Contracts\Auth\Authenticatable $user): array
+        {
+            return [];
+        }
+
+        public function memberIds(string $lane): array
+        {
+            return [];
+        }
+
+        public function canRoute(\Illuminate\Contracts\Auth\Authenticatable $user): bool
+        {
+            return false;
+        }
+    });
+}
+
+test('a kind that travels: a cross-lane pass marks the continuation and may close the locked passer', function () {
+    kindsTwoLanes([710 => ['ops'], 711 => ['support']]);
+    $from = dispatchMakeUser(710);
+    $to = dispatchMakeUser(711);
+    $task = TaskKinds::asKind(fn () => app(DispatchTaskService::class)->create([
+        'title' => 'Travels', 'status' => 'open', 'lane' => 'ops', 'assignee_user_id' => 710,
+        'context' => ['checklist' => ['ticks' => 2]],
+    ]));
+
+    $new = app(DispatchTaskService::class)->handoff($task, $to, $from);
+
+    expect($new->code)->not->toBe($task->code)
+        ->and($new->fresh()->context['checklist'])->toBe(['ticks' => 2])
+        ->and($new->fresh()->kind())->toBeInstanceOf(ChecklistKind::class)
+        ->and($task->fresh()->status)->toBe('done');
+});
+
+test('⛔ a kind that does NOT travel and locks its status refuses a closing pass (an approval task)', function () {
+    config(['dispatch.agent.approval_lane' => 'ops']);
+    kindsTwoLanes([712 => ['ops'], 713 => ['support']]);
+    $payload = app(AgentSessionService::class)->request('claude-pass', 'work', ['scopes' => ['next']]);
+    $task = app(ApprovalTasks::class)->openTaskFor('agent_session', $payload['public_id']);
+
+    expect(fn () => app(DispatchTaskService::class)->handoff($task, dispatchMakeUser(713), dispatchMakeUser(712)))
+        ->toThrow(TaskKindLocked::class);
+    expect($task->fresh()->status)->toBe('open')
+        ->and(Task::query()->where('origin_type', 'task')->where('origin_id', $task->code)->count())->toBe(0);
+});

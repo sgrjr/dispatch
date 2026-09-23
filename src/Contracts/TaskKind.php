@@ -53,7 +53,7 @@ interface TaskKind
     /**
      * What the task view shows about the underlying thing, or null:
      *   {title?: string, state?: string, expires_at?: iso8601|null,
-     *    rows: [{label: string, value: string, emphasis?: bool}], note?: string}
+     *    rows: [{label: string, value: string, emphasis?: bool, url?: string}], note?: string}
      *
      * @return array<string, mixed>|null
      */
@@ -70,6 +70,17 @@ interface TaskKind
      * @throws \InvalidArgumentException for a refusal the person should read
      */
     public function perform(Task $task, string $key, ?Authenticatable $user, array $input): ?string;
+
+    /**
+     * Does the kind TRAVEL with the ball (TASK-1190)? On a pass that continues
+     * the work as a new task (a cross-lane pass), return the marker data the
+     * continuation carries, so the new holder has the same actions. Null = the
+     * continuation is a plain task. A kind that travels also lets the pass
+     * close the passer; one that doesn't and locks its status refuses the pass.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function continues(Task $from): ?array;
 
     /**
      * The refusal thrown when something other than this kind writes its locked

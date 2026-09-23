@@ -59,6 +59,12 @@ class ChecklistKind extends BaseTaskKind
         return ['title' => 'Checklist', 'rows' => [['label' => 'Ticks', 'value' => (string) ($task->context['checklist']['ticks'] ?? 0)]]];
     }
 
+    /** The checklist travels with the ball: a continuation carries it (TASK-1190). */
+    public function continues(Task $from): ?array
+    {
+        return $from->context['checklist'] ?? null;
+    }
+
     public function perform(Task $task, string $key, ?Authenticatable $user, array $input): ?string
     {
         $context = $task->context;

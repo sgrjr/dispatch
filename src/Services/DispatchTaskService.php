@@ -1077,7 +1077,13 @@ class DispatchTaskService
         $note = $opts['note'] ?? null;
         $actorId = $actor?->getAuthIdentifier();
 
-        return DB::transaction(function () use ($task, $to, $actor, $actorId, $note, $opts, $lane) {
+        // TASK-1190 — a task KIND that travels with the ball (continues()) hands
+        // its marker to the continuation, and vouches for closing the passer.
+        // One that doesn't travel and locks its status refuses the pass.
+        $kind = $task->kind();
+        $travels = $kind !== null && $kind->continues($task) !== null;
+
+        return DB::transaction(function () use ($task, $to, $actor, $actorId, $note, $opts, $lane, $travels) {
             $new = $this->mintHandoffTask($task, $to, $actor, $lane, $note, 'Passed from', continuation: true);
 
             $task->recordEvent(
@@ -1098,7 +1104,7 @@ class DispatchTaskService
 
                 $from = $task->status;
                 $task->status = 'done';
-                $task->save();
+                $travels ? TaskKinds::asKind(fn () => $task->save()) : $task->save();
 
                 $task->recordEvent(
                     TaskComment::EVENT_STATUS_CHANGE,
@@ -1259,7 +1265,17 @@ class DispatchTaskService
 
         $labels = $continuation ? $task->labels()->pluck('name')->all() : [];
 
-        $new = $this->quietly(fn () => $this->create($attributes, $labels, $actor));
+        // TASK-1190 — a kind that travels with the ball marks the continuation
+        // too (filed as the kind: its marker is system set).
+        $kind = $continuation ? $task->kind() : null;
+        $marker = $kind?->continues($task);
+        if ($marker !== null) {
+            $attributes['context'] = [$kind::key() => $marker];
+        }
+
+        $new = $marker !== null
+            ? TaskKinds::asKind(fn () => $this->quietly(fn () => $this->create($attributes, $labels, $actor)))
+            : $this->quietly(fn () => $this->create($attributes, $labels, $actor));
 
         app(DispatchNotifier::class)->taskAssigned($new, null, (int) $to->getAuthIdentifier(), $actor);
 
