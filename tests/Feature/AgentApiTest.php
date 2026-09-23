@@ -706,7 +706,7 @@ test('POST add with an unparseable due_at 422s and mints no task (W10-1)', funct
     expect($response->json('message'))->toContain('due_at');
 
     // Parsed before the task is minted — a bad date costs a 422, not an orphan.
-    expect(Sgrjr\Dispatch\Models\Task::count())->toBe(0);
+    expect(workTaskCount())->toBe(0);
 });
 
 test('POST done sets the review-by and memorializes it in the editor wording (W10-2)', function () {

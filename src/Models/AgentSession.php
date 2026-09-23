@@ -2,7 +2,12 @@
 
 namespace Sgrjr\Dispatch\Models;
 
+use Carbon\CarbonInterface;
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
+use Sgrjr\Dispatch\Contracts\Approvable;
+use Sgrjr\Dispatch\Services\AgentSessionService;
+use Sgrjr\Dispatch\Services\ApprovalTasks;
 use Sgrjr\Dispatch\Support\Lane;
 
 /**
@@ -15,9 +20,103 @@ use Sgrjr\Dispatch\Support\Lane;
  * not a User — an approved session is treated as staff-equivalent by the agent
  * surface because a human explicitly approved it.
  */
-class AgentSession extends Model
+class AgentSession extends Model implements Approvable
 {
     protected $table = 'dispatch_agent_sessions';
+
+    // ── Approvable (TASK-1021): a request files an "Approval requested" task ──
+
+    public static function approvalKind(): string
+    {
+        return 'agent_session';
+    }
+
+    public static function findForApproval(string $id): ?self
+    {
+        return static::query()->where('public_id', $id)->first();
+    }
+
+    public function approvalId(): string
+    {
+        return (string) $this->public_id;
+    }
+
+    public function approvalLabel(): string
+    {
+        return 'agent session for '.($this->agent_name ?: 'an agent');
+    }
+
+    /**
+     * The task body. It carries the user_code, so the device-code check
+     * survives: the approver confirms the code the agent printed.
+     */
+    public function approvalDetails(): string
+    {
+        $meta = $this->requested_meta ?? [];
+        $lines = [
+            "**{$this->agent_name}** is asking for a session to work the board.",
+            '',
+            "- **Code:** `{$this->user_code}` (confirm it matches what the agent printed)",
+        ];
+        if (filled($this->purpose)) {
+            $lines[] = "- **Purpose:** {$this->purpose}";
+        }
+        $scopes = $meta['scopes'] ?? null;
+        $lines[] = '- **Scopes asked for:** '.(is_array($scopes) && $scopes !== [] ? implode(', ', $scopes) : 'the default grant');
+        if (filled($meta['lane'] ?? null)) {
+            $lines[] = "- **Lane asked for:** {$meta['lane']}";
+        }
+        if ($this->ip) {
+            $lines[] = "- **From:** {$this->ip}";
+        }
+        $lines[] = '';
+        $lines[] = 'Approve or Deny here. It expires on its own if nobody decides.';
+
+        return implode("\n", $lines);
+    }
+
+    public function approvalExpiresAt(): ?CarbonInterface
+    {
+        return $this->expires_at;
+    }
+
+    public function approvalLane(): ?string
+    {
+        return config('dispatch.agent.approval_lane') ?: null;
+    }
+
+    public function approvalIsPending(): bool
+    {
+        return $this->status === self::STATUS_PENDING
+            && ($this->expires_at === null || now()->lt($this->expires_at));
+    }
+
+    /** How a decided request ended, for its approval task. */
+    public function approvalOutcome(): string
+    {
+        return match ($this->status) {
+            self::STATUS_APPROVED, self::STATUS_REVOKED => ApprovalTasks::APPROVED,
+            self::STATUS_DENIED => ApprovalTasks::DENIED,
+            default => ApprovalTasks::EXPIRED,
+        };
+    }
+
+    /** @param array{ttl?:?int, scopes?:?array, lane?:?string} $options */
+    public function approveBy(Authenticatable $user, array $options = []): void
+    {
+        app(AgentSessionService::class)->approve(
+            $this,
+            (int) $user->getAuthIdentifier(),
+            isset($options['ttl']) ? (int) $options['ttl'] ?: null : null,
+            $options['scopes'] ?? null,
+            array_key_exists('lane', $options) ? (string) ($options['lane'] ?? '') : null,
+        );
+    }
+
+    public function denyBy(Authenticatable $user): void
+    {
+        app(AgentSessionService::class)->deny($this, (int) $user->getAuthIdentifier());
+    }
 
     public const STATUS_PENDING = 'pending';
     public const STATUS_APPROVED = 'approved';

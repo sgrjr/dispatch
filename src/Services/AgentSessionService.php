@@ -62,10 +62,16 @@ class AgentSessionService
             'ip' => $ip,
         ]);
 
+        // TASK-1021: the request is a TASK a human acts on, routed to the
+        // approvers' lane and due when the request lapses. It rings like any
+        // new lane work, so nobody has to go looking for /it/agent-sessions.
+        $approvalTask = app(ApprovalTasks::class)->file($session);
+
         return [
             'public_id' => $session->public_id,
             'device_code' => $deviceCode, // returned ONCE
             'user_code' => $session->user_code,
+            'approval_task' => $approvalTask?->code,
             'poll_interval' => (int) config('dispatch.agent.poll_interval', 5),
             'expires_at' => optional($session->expires_at)->toIso8601String(),
         ];
@@ -90,6 +96,12 @@ class AgentSessionService
         $session->save();
 
         $session->approve($userId, $ttl ?? (int) config('dispatch.agent.session_ttl', 10800));
+
+        // One closer (TASK-1021): approving from /it/agent-sessions or from the
+        // approval task both land here, and the task closes as approved.
+        if ($session->status === AgentSession::STATUS_APPROVED) {
+            app(ApprovalTasks::class)->resolve(AgentSession::approvalKind(), $session->approvalId(), ApprovalTasks::APPROVED, $userId);
+        }
 
         return $session;
     }
@@ -202,16 +214,27 @@ class AgentSessionService
         return in_array($scope, self::KNOWN_VERBS, true);
     }
 
-    public function deny(AgentSession $session): AgentSession
+    public function deny(AgentSession $session, ?int $userId = null): AgentSession
     {
         $session->deny();
+
+        if ($session->status === AgentSession::STATUS_DENIED) {
+            app(ApprovalTasks::class)->resolve(AgentSession::approvalKind(), $session->approvalId(), ApprovalTasks::DENIED, $userId);
+        }
 
         return $session;
     }
 
     public function revoke(AgentSession $session): AgentSession
     {
+        $wasPending = $session->status === AgentSession::STATUS_PENDING;
         $session->revoke();
+
+        // Revoking a request nobody approved yet is a refusal as far as its
+        // approval task goes. (An approved session's task is already closed.)
+        if ($wasPending) {
+            app(ApprovalTasks::class)->resolve(AgentSession::approvalKind(), $session->approvalId(), ApprovalTasks::DENIED);
+        }
 
         return $session;
     }
@@ -300,6 +323,10 @@ class AgentSessionService
             ->whereNotNull('expires_at')
             ->where('expires_at', '<', $now)
             ->update(['status' => AgentSession::STATUS_EXPIRED]);
+
+        // The approval tasks' timeout (TASK-1021) rides the same schedule:
+        // requests nobody decided close as EXPIRED, never as a refusal.
+        app(ApprovalTasks::class)->expireDue();
 
         return (int) $count;
     }

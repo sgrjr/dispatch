@@ -146,6 +146,12 @@ class DispatchSessionRequest extends Command
 
         $this->newLine();
         $this->line('Show this code to the approver: <fg=cyan;options=bold>'.($data['user_code'] ?? '?').'</>');
+        // TASK-1021: the request filed an "Approval requested" task. The
+        // approver can Approve/Deny it right there (chat task pane) instead of
+        // visiting the Agent Sessions page.
+        if (! empty($data['approval_task'])) {
+            $this->line('Approval task: <fg=cyan;options=bold>'.$data['approval_task'].'</> (Approve or Deny it in chat; it expires on its own)');
+        }
         $this->line($scopes === []
             ? 'Requested: the full grantable verb set (narrow next time with --scope=… if needed).'
             : 'Requested scopes: '.implode(', ', $scopes));

@@ -467,6 +467,11 @@ return [
         // always exempt, so a human can still hand an agent any task.
         'lane' => env('DISPATCH_AGENT_LANE'),
 
+        // TASK-1021 (approval lane): a session request files an "Approval requested" task in
+        // THIS lane: the people who decide agent access. Null = the
+        // no-department lane (every staff user sees it).
+        'approval_lane' => env('DISPATCH_AGENT_APPROVAL_LANE'),
+
         // Does a laned agent also get the NO-DEPARTMENT lane (R15: that lane is
         // open to any user or department)? True keeps unrouted work reachable —
         // the sane default while a backlog is still mostly unlaned. Set false to
@@ -601,6 +606,24 @@ return [
             // a capped, low-weight term, never a multiplier on the whole run.
             'duration_weight' => 0.15,
             'duration_cap_minutes' => 20,
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Approvals (TASK-1021, PU-2.10)
+    |--------------------------------------------------------------------------
+    |
+    | Things that are BLOCKED until a person says yes or no file an "Approval
+    | requested" task (Sgrjr\Dispatch\Services\ApprovalTasks). Each kind maps
+    | to its Approvable class, so a task can find its approvable again. Only
+    | Approve / Deny / expiry closes such a task: done, batch, board and agent
+    | verbs are refused.
+    |
+    */
+    'approvals' => [
+        'kinds' => [
+            'agent_session' => \Sgrjr\Dispatch\Models\AgentSession::class,
         ],
     ],
 ];

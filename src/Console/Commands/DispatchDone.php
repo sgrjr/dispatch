@@ -195,7 +195,14 @@ class DispatchDone extends Command
         }
 
         $task->status = $status;
-        $task->save();
+        try {
+            $task->save();
+        } catch (\Sgrjr\Dispatch\Exceptions\ApprovalTaskLocked $e) {
+            // TASK-1021: an approval task is decided (Approve/Deny), never done'd.
+            $this->error($e->getMessage());
+
+            return self::FAILURE;
+        }
 
         $task->recordEvent(
             TaskComment::EVENT_STATUS_CHANGE,

@@ -96,7 +96,49 @@ class Task extends Model
         static::saving(function (self $task) {
             $task->restampTopicAccountKeyIfDirty();
             $task->guardOriginImmutability();
+            $task->guardApprovalLock();
         });
+    }
+
+    /**
+     * An approval task (TASK-1021) is decided, never "done'd". Its status, and
+     * its `context.approval` marker, change only through the approval service
+     * (Approve / Deny / expiry). This hook is the one choke point: every status
+     * write in the package (done, the agent API, batch, board drag and bulk,
+     * list bulk, TaskShow, claim, closing passes) is a model save, so all of
+     * them land here. Nothing may FILE a task carrying the marker except the
+     * service either.
+     */
+    protected function guardApprovalLock(): void
+    {
+        if (\Sgrjr\Dispatch\Services\ApprovalTasks::resolving()) {
+            return;
+        }
+
+        $marker = \Sgrjr\Dispatch\Services\ApprovalTasks::MARKER;
+        $now = is_array($this->context) ? ($this->context[$marker] ?? null) : null;
+
+        if (! $this->exists) {
+            if ($now !== null) {
+                throw \Sgrjr\Dispatch\Exceptions\ApprovalTaskLocked::filing();
+            }
+
+            return;
+        }
+
+        $original = $this->getOriginal('context');
+        $was = is_array($original) ? ($original[$marker] ?? null) : null;
+        if ($was === null) {
+            if ($now !== null) {
+                throw \Sgrjr\Dispatch\Exceptions\ApprovalTaskLocked::filing();
+            }
+
+            return;
+        }
+
+        if ($this->isDirty('status') || $now != $was) {
+            throw \Sgrjr\Dispatch\Exceptions\ApprovalTaskLocked::forTask($this->code);
+        }
     }
 
     /**

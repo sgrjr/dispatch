@@ -332,7 +332,7 @@ test('a batch op rejects a malformed topic shorthand up front, before any write'
         ['op' => 'add', 'title' => 'bad topic', 'topic' => 'Bad-Type:1'],
     ]))->toThrow(InvalidArgumentException::class);
 
-    expect(Task::count())->toBe(0);
+    expect(workTaskCount())->toBe(0);
 });
 
 // --- Query scopes ----------------------------------------------------------
@@ -433,7 +433,7 @@ test('agent add 422s on a malformed topic and mints no task', function () {
         'topic' => 'Bad-Type:1',
     ])->assertStatus(422);
 
-    expect(Task::count())->toBe(0);
+    expect(workTaskCount())->toBe(0);
 });
 
 test('agent queue filters by topic', function () {

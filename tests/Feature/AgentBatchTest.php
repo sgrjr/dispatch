@@ -68,7 +68,7 @@ test('a session scoped without `batch` is forbidden (403)', function () {
         'operations' => [['op' => 'add', 'title' => 'nope']],
     ])->assertStatus(403);
 
-    expect(Task::count())->toBe(0);
+    expect(workTaskCount())->toBe(0);
 });
 
 test('POST batch dry_run reports without persisting', function () {
@@ -82,7 +82,7 @@ test('POST batch dry_run reports without persisting', function () {
         ->assertJsonPath('dry_run', true)
         ->assertJsonPath('summary.tasks_created', 1);
 
-    expect(Task::count())->toBe(0);
+    expect(workTaskCount())->toBe(0);
 });
 
 test('POST batch over the op cap is rejected (422) and writes nothing', function () {
@@ -99,7 +99,7 @@ test('POST batch over the op cap is rejected (422) and writes nothing', function
     $this->withToken($token)->postJson('api/dispatch/agent/batch', ['operations' => $ops])
         ->assertStatus(422);
 
-    expect(Task::count())->toBe(0);
+    expect(workTaskCount())->toBe(0);
 });
 
 test('POST batch with a malformed op 422s with the offending index and rolls back', function () {
@@ -112,7 +112,7 @@ test('POST batch with a malformed op 422s with the offending index and rolls bac
         ],
     ])->assertStatus(422);
 
-    expect(Task::count())->toBe(0);
+    expect(workTaskCount())->toBe(0);
 });
 
 test('POST batch requires a valid bearer', function () {
@@ -159,7 +159,7 @@ test('dispatch:batch --remote posts the manifest operations to the agent API', f
             && $request->data()['operations'][0]['ref'] === 'x1';
     });
 
-    expect(Task::count())->toBe(0); // never touches the local DB
+    expect(workTaskCount())->toBe(0); // never touches the local DB
 
     @unlink($path);
     @unlink($tokenPath);
@@ -210,7 +210,7 @@ test('POST batch with an unparseable due_at 422s naming the operation and writes
     expect($response->json('message'))->toContain('Operation 1')
         ->and($response->json('message'))->toContain('due_at');
 
-    expect(Task::count())->toBe(0);
+    expect(workTaskCount())->toBe(0);
 });
 
 test('dispatch:batch --remote sends due_at through in the operations (W10-1)', function () {
@@ -253,7 +253,7 @@ test('dispatch:batch --remote sends due_at through in the operations (W10-1)', f
             && $ops[1]['due_at'] === null;
     });
 
-    expect(Task::count())->toBe(0); // never touches the local DB
+    expect(workTaskCount())->toBe(0); // never touches the local DB
 
     @unlink($path);
     @unlink($tokenPath);
@@ -289,7 +289,7 @@ test('a manifest over the payload cap is refused with a message naming the size 
     }
 
     // Nothing was written — the guard runs before any op is applied.
-    expect(Task::count())->toBe(0);
+    expect(workTaskCount())->toBe(0);
 });
 
 test('the payload cap is checked before the op-count cap and before any write (W9-1b)', function () {
@@ -302,7 +302,7 @@ test('the payload cap is checked before the op-count cap and before any write (W
 
     // Even a --dry-run must fail on size: dry-run is a rollback-to-observe
     // transaction, so it genuinely executes the writes it discards.
-    expect(Task::count())->toBe(0);
+    expect(workTaskCount())->toBe(0);
 });
 
 test('max_payload_bytes=0 disables the whole-manifest guard (W9-1b)', function () {

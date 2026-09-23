@@ -439,7 +439,13 @@ class AgentController extends Controller
 
         $from = $task->status;
         $task->status = $to;
-        $task->save();
+        try {
+            $task->save();
+        } catch (\Sgrjr\Dispatch\Exceptions\ApprovalTaskLocked $e) {
+            // TASK-1021: an agent can never close an approval task, its own
+            // included. Only a staff human's Approve/Deny can.
+            abort(422, $e->getMessage());
+        }
 
         $task->recordEvent(
             TaskComment::EVENT_STATUS_CHANGE,

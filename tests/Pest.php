@@ -67,3 +67,15 @@ function dispatchMakeUser(int $id, array $attributes = []): FixtureUser
         'email' => "user{$id}@example.test",
     ], $attributes));
 }
+
+/**
+ * How many WORK tasks exist: every task except "Approval requested" ones.
+ * Since TASK-1021 a session request files an approval task, so a test that
+ * obtains an agent token and then asserts "wrote nothing" must not count it.
+ */
+function workTaskCount(): int
+{
+    return \Sgrjr\Dispatch\Models\Task::query()->get()
+        ->reject(fn ($task) => \Sgrjr\Dispatch\Services\ApprovalTasks::isApproval($task))
+        ->count();
+}
