@@ -138,7 +138,8 @@ rows reduced to that single question, plus more that had bundled a deploy clause
 an otherwise-answerable check. A deploy only justifies `verifying` when it carries a
 task-specific verification a human must actually perform (a backfill to eyeball, a
 flag to flip) — and then that, not the deploy, is the check you name.
-| `--status=declined` | Won't-do: obsolete, wrong, or solved elsewhere — say why in a note. |
+| `--status=resolved --note="…"` | **Dealt with, but not as written**: partly done, done a different way, or the need went away (a duplicate you folded in, a request the customer withdrew). The note (what actually happened) is REQUIRED; it's refused without one. ⛔ Never close handled-another-way work as `done`: `done` means the prescribed work was completed, nothing left. |
+| `--status=declined` | Won't-do, by decision: obsolete, wrong, or solved elsewhere. Say why in a note. |
 | `--status=backburner` | Real but consciously parked: not actionable now or anytime soon (someday-item out of triage), OR code-done but blocked on an external event — a launch date, an ops cutover window. Not rejection (`declined`) and not a pending human check (`verifying`) — say what unblocks it in a note. **Never self-park a commissioned task unless the commission says so.** |
 
 Your `verifying` hand-off pile: `dispatch:queue --status=verifying` (it sits

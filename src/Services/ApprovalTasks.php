@@ -205,7 +205,7 @@ final class ApprovalTasks
 
         $taskModel::query()
             ->whereNotNull('context->'.self::MARKER.'->kind')
-            ->whereNotIn('status', ['done', 'declined'])
+            ->whereNotIn('status', Task::closedStatuses())
             ->whereNotNull('due_at')
             ->where('due_at', '<', now())
             ->get()
@@ -230,7 +230,7 @@ final class ApprovalTasks
         return $taskModel::query()
             ->where('context->'.self::MARKER.'->kind', $kind)
             ->where('context->'.self::MARKER.'->id', $id)
-            ->whereNotIn('status', ['done', 'declined'])
+            ->whereNotIn('status', Task::closedStatuses())
             ->latest('id')
             ->first();
     }

@@ -27,7 +27,7 @@ class DispatchQueue extends Command
         {--topic-account= : Filter to tasks whose topic_account_key equals this value}
         {--lane= : Filter to tasks in this lane ("<department>" matches its sub-lanes too; "<department>:<role>" matches exactly; "none" = the no-department lane)}
         {--limit= : Cap the number of tasks returned, top of the priority order (default: all). For the single-task case use dispatch:next.}
-        {--count : Emit counts by status (total + by_status) instead of the task list. With no --status it censuses the actionable board (open/in_progress/triage/verifying; parked backburner and terminal done/declined excluded), zero-filled — an empty bucket (e.g. verifying) still prints as 0.}
+        {--count : Emit counts by status (total + by_status) instead of the task list. With no --status it censuses the actionable board (open/in_progress/triage/verifying; parked backburner and closed done/resolved/declined excluded), zero-filled — an empty bucket (e.g. verifying) still prints as 0.}
         {--remote : Act on the configured remote agent API (the default while an agent session token is active)}
         {--local : Act on the local DB even while an agent session token is active (overrides sticky-remote)}
         {--json : Emit machine-readable JSON instead of a human table}';

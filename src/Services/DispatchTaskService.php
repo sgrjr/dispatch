@@ -109,12 +109,20 @@ class DispatchTaskService
                 : Task::VISIBILITY_STAFF;
         }
 
+        // TASK-1193 — the note a task filed straight into a note-required
+        // status (`resolved`) carries; transient, never a column.
+        $statusNote = isset($attributes['status_note']) ? (string) $attributes['status_note'] : null;
+        unset($attributes['status_note']);
+
         /** @var class-string<Task> $taskModel */
         $taskModel = config('dispatch.models.task');
 
         $task = $taskModel::createWithCode(
             $attributes,
-            fn ($model) => $this->tenants->stamp($model, $actor),
+            function ($model) use ($actor, $statusNote) {
+                $model->withStatusNote($statusNote);
+                $this->tenants->stamp($model, $actor);
+            },
         );
 
         $this->attachLabels($task, $labelNames);
@@ -153,7 +161,7 @@ class DispatchTaskService
             // recurring on a parked task is evidence the parking was premature,
             // so the occurrence lands on it (no auto-unpark — a human sees the
             // fresh event and unparks deliberately) instead of forking a dupe.
-            ->whereNotIn('status', ['done', 'declined'])
+            ->whereNotIn('status', Task::closedStatuses())
             ->orderByDesc('id')
             ->first();
 
@@ -1536,6 +1544,16 @@ class DispatchTaskService
      */
     protected function summarizeAnswer(Task $closedAsk): ?string
     {
+        // TASK-1193 — a close that carried a note (always, for `resolved`)
+        // says in its own words what happened: that IS the answer.
+        $statusNote = $closedAsk->statusNote ?? $closedAsk->comments()
+            ->where('event_type', TaskComment::EVENT_STATUS_CHANGE)
+            ->orderByDesc('id')
+            ->first()?->meta['note'] ?? null;
+        if (is_string($statusNote) && trim($statusNote) !== '') {
+            return $statusNote;
+        }
+
         $lastComment = $closedAsk->comments()
             ->where('event_type', TaskComment::EVENT_COMMENT)
             ->orderByDesc('id')

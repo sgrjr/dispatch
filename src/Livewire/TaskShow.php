@@ -32,6 +32,9 @@ class TaskShow extends Component
 
     // Editable fields (staff only — see canEdit()).
     public string $status = '';
+
+    /** TASK-1193 — what actually happened; required to move the task to `resolved`. */
+    public string $statusNote = '';
     public string $type = '';
     public string $priority = '';
     /**
@@ -155,8 +158,16 @@ class TaskShow extends Component
         $assigneeChanged = false;
 
         if ($this->task->status !== $this->status) {
+            // TASK-1193 — refused BEFORE any mutation, so nothing half-saves.
+            if ($taskClass::requiresStatusNote($this->status) && trim($this->statusNote) === '') {
+                $this->addError('statusNote', 'Say what actually happened: Resolved means dealt with, but not as written.');
+
+                return;
+            }
+
             $changes[] = ['status', $this->task->status, $this->status];
             $this->task->status = $this->status;
+            $this->task->withStatusNote($this->statusNote);
             $statusChanged = true;
         }
         if ($this->task->type !== $this->type) {
@@ -267,10 +278,11 @@ class TaskShow extends Component
             $this->task->recordEvent(
                 $eventType,
                 Auth::id(),
-                ['changes' => $changes],
-                implode(' ', $messages),
+                $statusChanged ? $this->task->statusChangeMeta(['changes' => $changes]) : ['changes' => $changes],
+                $statusChanged ? $this->task->statusChangeBody(implode(' ', $messages)) : implode(' ', $messages),
             );
         }
+        $this->statusNote = '';
 
         // N3: notifier routing replaces the old ad-hoc submitter-only email.
         // Each hook independently fans out to submitter/assignee/watchers per

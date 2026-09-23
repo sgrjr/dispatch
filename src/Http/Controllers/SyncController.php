@@ -110,7 +110,9 @@ class SyncController extends Controller
             'comments_added' => 0,
         ];
 
-        DB::transaction(function () use ($doc, &$summary) {
+        // A pushed snapshot replays history: a `resolved` task's note is already
+        // in the source's timeline (TASK-1193), so the note guard is off.
+        Task::replayingHistory(fn () => DB::transaction(function () use ($doc, &$summary) {
             /** @var class-string<Label> $labelModel */
             $labelModel = config('dispatch.models.label');
             /** @var class-string<Task> $taskModel */
@@ -237,7 +239,7 @@ class SyncController extends Controller
                     }
                 }
             }
-        });
+        }));
 
         return response()->json([
             'status' => 'applied',

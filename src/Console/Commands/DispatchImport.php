@@ -255,13 +255,15 @@ class DispatchImport extends Command
         if ($dryRun) {
             DB::beginTransaction();
             try {
-                $apply();
+                Task::replayingHistory($apply);
             } finally {
                 DB::rollBack();
             }
             $this->warn('Dry run — no changes persisted.');
         } else {
-            DB::transaction($apply);
+            // A snapshot replays history: a `resolved` task's note is already
+            // in the source's timeline (TASK-1193), so the note guard is off.
+            DB::transaction(fn () => Task::replayingHistory($apply));
         }
 
         $this->info('Import complete.');

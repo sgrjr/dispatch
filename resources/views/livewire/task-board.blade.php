@@ -235,6 +235,10 @@
         @endif
     </section>
 
+    @if ($statusNotice)
+        <div class="dispatch-badge is-warning" role="status" style="margin-bottom:0.9rem; display:block; width:fit-content; text-transform:none; letter-spacing:0;">{{ $statusNotice }}</div>
+    @endif
+
     {{--
         Board body. Swimlanes (W8-5) render one grid per elevated lane, each
         headed by the lane name ('—' = no elevated label, sorted last); off,
@@ -271,7 +275,7 @@
                         @foreach ($cards as $task)
                             @php
                                 $isStale = $stalenessEnabled
-                                    && ! in_array($task->status, ['backburner', 'done', 'declined'], true)
+                                    && ! $task->isInactive()
                                     && $task->updated_at
                                     && $task->updated_at->lt(now()->subDays($staleThresholdDays));
                                 $elevatedLabels = \Sgrjr\Dispatch\Support\LabelFacets::split($task->labels)['elevated'];

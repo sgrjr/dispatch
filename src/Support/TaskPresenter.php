@@ -203,6 +203,8 @@ class TaskPresenter
             // and the recommended way to record HOW it resolved, so the board can
             // measure pre-resolved briefs (built vs. already-implemented/obsolete).
             'done' => [
+                'status' => 'the target status (default done). The three CLOSED statuses each mean one thing: done = the prescribed work was completed, nothing left; resolved = dealt with, but NOT as written (partly, differently, or the need went away), note REQUIRED; declined = not done, by decision (reason recommended). All three close the task alike (dependents unblock, an ask returns the ball).',
+                'note' => 'string — what actually happened, recorded as the body of the status event (meta.note). REQUIRED for status=resolved (a 422 otherwise); optional for any other status. CLI: --note / --note-file.',
                 'commit' => 'sha stored at context.result.commit',
                 'result' => 'object stored at context.result (a new close replaces it; metrics accumulate)',
                 'resolution' => 'recommended result key on close: result.resolution = built | already-implemented | obsolete (free-form allowed) — records HOW the task resolved, so the board can measure pre-resolved briefs',
@@ -232,6 +234,7 @@ class TaskPresenter
                     'commit' => 'string|null (stored under context.result.commit)',
                     'result' => 'object|null (stored under context.result)',
                     'comments' => '[{body:string, internal:bool}]',
+                    'note' => 'string|null — what actually happened; REQUIRED (this, or a comment in the same op) when status=resolved. Recorded as the body of the status event; on add it also lands as a comment.',
                     // TASK-995 — the shorthand "<type>:<id>" string OR the
                     // explicit *_type/*_id pair; tri-state like due_at (absent =
                     // untouched, null = clear). `topic_account_key` is never

@@ -257,6 +257,15 @@ class DispatchBatchService
                 }
             }
 
+            // TASK-1193 — `resolved` = dealt with, but not as written: the op
+            // must say what happened, in a `note` or a comment of its own.
+            if (array_key_exists('note', $op) && $op['note'] !== null && ! is_string($op['note'])) {
+                throw new \InvalidArgumentException("Operation {$i}: `note` must be a string.");
+            }
+            if (Task::requiresStatusNote($op['status'] ?? null) && $this->statusNoteFor($op) === null) {
+                throw new \InvalidArgumentException("Operation {$i}: status `{$op['status']}` needs a note saying what actually happened (a `note`, or a comment in the same op). `{$op['status']}` = dealt with, but not as written; use `done` when the prescribed work was completed, `declined` when it was not done by decision.");
+            }
+
             $op['op'] = $kind;
             $out[] = $op;
         }
@@ -574,6 +583,18 @@ class DispatchBatchService
             $attributes['lane'] = (string) $op['lane'];
         }
 
+        // TASK-1193 — filing straight into `resolved` carries its note (the
+        // saving hook refuses it otherwise). An explicit `note` also lands on
+        // the timeline as a comment; a comment-borne note is already there.
+        $statusNote = $this->statusNoteFor($op);
+        if ($statusNote !== null) {
+            $attributes['status_note'] = $statusNote;
+        }
+        $comments = $op['comments'] ?? [];
+        if (is_string($op['note'] ?? null) && trim($op['note']) !== '') {
+            $comments[] = ['body' => trim($op['note'])];
+        }
+
         $task = $key !== null
             ? $this->tasks->firstOrCreateByKey($key, $attributes, $labels)
             : $this->tasks->create($attributes, $labels);
@@ -584,7 +605,7 @@ class DispatchBatchService
         }
 
         $summary['tasks_created']++;
-        $summary['comments_added'] += $this->appendComments($task, $op['comments'] ?? [], $actorUserId, $actorMeta);
+        $summary['comments_added'] += $this->appendComments($task, $comments, $actorUserId, $actorMeta);
         $this->recordResultIfAny($task, $op);
 
         // TASK-997 part B — `blocked_by` on `add`: additive, resolved AFTER
@@ -691,6 +712,7 @@ class DispatchBatchService
         $statusChanged = $to !== null && $to !== $from;
         if ($statusChanged) {
             $task->status = $to;
+            $task->withStatusNote($this->statusNoteFor($op));
         }
 
         $task->save();
@@ -699,8 +721,8 @@ class DispatchBatchService
             $task->recordEvent(
                 TaskComment::EVENT_STATUS_CHANGE,
                 $actorUserId,
-                $actorMeta + ['from' => $from, 'to' => $to],
-                "Status changed from {$from} to {$to}.",
+                $task->statusChangeMeta($actorMeta + ['from' => $from, 'to' => $to]),
+                $task->statusChangeBody("Status changed from {$from} to {$to}."),
             );
             $summary['statuses_changed']++;
 
@@ -752,6 +774,29 @@ class DispatchBatchService
             'code' => $task->code,
             'status' => $task->status,
         ], fn ($v) => $v !== null);
+    }
+
+    /**
+     * TASK-1193 — the note explaining an op's status: its `note`, else its
+     * comments (the manifest's existing way to say something), else null.
+     *
+     * @param  array<string,mixed>  $op
+     */
+    protected function statusNoteFor(array $op): ?string
+    {
+        if (is_string($op['note'] ?? null) && trim($op['note']) !== '') {
+            return trim($op['note']);
+        }
+
+        $bodies = [];
+        foreach ((array) ($op['comments'] ?? []) as $c) {
+            $body = is_array($c) && is_scalar($c['body'] ?? null) ? trim((string) $c['body']) : '';
+            if ($body !== '') {
+                $bodies[] = $body;
+            }
+        }
+
+        return $bodies === [] ? null : implode("\n\n", $bodies);
     }
 
     /**

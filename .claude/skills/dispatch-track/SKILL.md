@@ -224,11 +224,18 @@ parse against that instead of guessing field names from examples.
    change; always pass a commit SHA when you have one. Record how it resolved
    with a `result.resolution` key (`built | already-implemented | obsolete`,
    free-form allowed) so the board can tell built work from what was already in
-   the tree. `--status=declined`,
-   `--status=verifying`, or `--status=backburner` (parked/not-now — out of the
-   queue without rejecting, distinct from declined) are valid alternatives to
-   `done` when that's the actual outcome. (To leave a comment, use
-   `dispatch:note` — `done` has no note flag.)
+   the tree. **Pick the closed status by what actually happened** — each means
+   exactly one thing:
+   - `done` = the prescribed work was completed, nothing left;
+   - `resolved` = dealt with, but **not as written** (partly, differently, or
+     the need went away). `--note="<what actually happened>"` is REQUIRED
+     (refused without one);
+   - `declined` = not done, by decision.
+   ⛔ Never close "handled another way" work as `done`. `--status=verifying`, or
+   `--status=backburner` (parked/not-now — out of the queue without rejecting,
+   distinct from declined) are the non-closing alternatives. (`--note` rides
+   any status as the body of the status event; for a free-standing comment,
+   use `dispatch:note`.)
 
    **If you close `verifying`, name the exact check** — in `--result` or a
    preceding note. A bare `verifying` with no stated ask is noise: it reads

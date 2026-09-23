@@ -21,7 +21,7 @@ class Task extends Model
 
     public const TYPES = ['bug', 'feature', 'chore', 'debt', 'verify'];
     public const PRIORITIES = ['blocker', 'high', 'medium', 'low'];
-    public const STATUSES = ['triage', 'open', 'in_progress', 'verifying', 'backburner', 'done', 'declined'];
+    public const STATUSES = ['triage', 'open', 'in_progress', 'verifying', 'backburner', 'done', 'resolved', 'declined'];
 
     /**
      * Which STAFF see the task (W13-5). 'participants' = GATE A only
@@ -97,7 +97,95 @@ class Task extends Model
             $task->restampTopicAccountKeyIfDirty();
             $task->guardOriginImmutability();
             $task->guardApprovalLock();
+            $task->guardStatusNote();
         });
+    }
+
+    /**
+     * TASK-1193 — the note that EXPLAINS this save's status change. Transient
+     * (never a column): a write path sets it with {@see withStatusNote()}
+     * before `save()`, the saving hook refuses a move into a note-required
+     * status ({@see noteRequiredStatuses()}) without one, and the path writes
+     * it into the status-change event ({@see statusChangeBody()} /
+     * {@see statusChangeMeta()}). A declared property, so Eloquent never
+     * treats it as an attribute.
+     */
+    public ?string $statusNote = null;
+
+    /** Depth of {@see replayingHistory()} — the import/sync bypass of the note guard. */
+    protected static int $replayingHistory = 0;
+
+    public function withStatusNote(?string $note): static
+    {
+        $note = $note === null ? null : trim($note);
+        $this->statusNote = $note === '' ? null : $note;
+
+        return $this;
+    }
+
+    /**
+     * Run $fn with the note guard off. ONLY for replaying a snapshot of another
+     * board (dispatch:import, the sync endpoint): the note already lives in the
+     * source's timeline, and a mirror must be able to hold a resolved task.
+     *
+     * @template T
+     *
+     * @param  callable():T  $fn
+     * @return T
+     */
+    public static function replayingHistory(callable $fn): mixed
+    {
+        static::$replayingHistory++;
+        try {
+            return $fn();
+        } finally {
+            static::$replayingHistory--;
+        }
+    }
+
+    /**
+     * `resolved` = dealt with, but NOT as written (TASK-1193). What actually
+     * happened is the whole point of the status, so entering it without a
+     * note is refused here, the one choke point every status write (the CLI,
+     * the agent API, batch, the board, TaskShow, the host's verbs) passes
+     * through. Filing a task straight into it is a status write too.
+     */
+    protected function guardStatusNote(): void
+    {
+        if (static::$replayingHistory > 0) {
+            return;
+        }
+
+        if (! in_array($this->status, static::noteRequiredStatuses(), true)) {
+            return;
+        }
+
+        if ($this->exists && ! $this->isDirty('status')) {
+            return;
+        }
+
+        if ($this->statusNote === null || trim($this->statusNote) === '') {
+            throw \Sgrjr\Dispatch\Exceptions\StatusNoteRequired::forStatus($this->status, $this->code);
+        }
+    }
+
+    /**
+     * The status-change event's body: the same sentence every surface writes,
+     * then the note, when this change carried one (TASK-1193: "the note lands
+     * on the timeline as the status event's body").
+     */
+    public function statusChangeBody(string $sentence): string
+    {
+        return $this->statusNote !== null ? $sentence."\n\n".$this->statusNote : $sentence;
+    }
+
+    /**
+     * @param  array<string,mixed>  $meta
+     * @return array<string,mixed> $meta plus `note`, when this change carried one
+     */
+    public function statusChangeMeta(array $meta): array
+    {
+        return $this->statusNote !== null ? $meta + ['note' => $this->statusNote] : $meta;
     }
 
     /**
@@ -788,17 +876,55 @@ class Task extends Model
     }
 
     /**
-     * Statuses excluded from "nag" signals (stale, overdue) — the same trio
-     * the stale checks hardcode (TaskList::isStale(), the board's inline
-     * stale @php). Not config-driven on purpose: names absent from a custom
-     * status vocab simply never match, so overdue degrades to purely
-     * date-based — the same graceful degradation stale already exhibits.
+     * TASK-1193 — the CLOSED statuses, the one answer to "is it finished?"
+     * (a capture revives nothing closed, an approval/plan request is no longer
+     * pending, a closed column sorts by recency). Each means exactly one thing:
+     *   - done     = the prescribed work was completed, nothing left;
+     *   - resolved = dealt with, but not as written (a note says what happened);
+     *   - declined = not done, by decision.
+     * ⛔ Never hard-code a list of these again: call this (or isClosed()).
+     * `backburner` is PARKED, not closed — see {@see inactiveStatuses()}.
+     *
+     * @return array<int,string>
+     */
+    public static function closedStatuses(): array
+    {
+        return ['done', 'resolved', 'declined'];
+    }
+
+    public function isClosed(): bool
+    {
+        return in_array($this->status, static::closedStatuses(), true);
+    }
+
+    /**
+     * Statuses that may only be ENTERED with a note saying what happened
+     * ({@see guardStatusNote()}).
+     *
+     * @return array<int,string>
+     */
+    public static function noteRequiredStatuses(): array
+    {
+        return ['resolved'];
+    }
+
+    public static function requiresStatusNote(?string $status): bool
+    {
+        return in_array($status, static::noteRequiredStatuses(), true);
+    }
+
+    /**
+     * Statuses excluded from "nag" signals (stale, overdue) and that no longer
+     * gate a dependent: parked `backburner` plus every closed status. Not
+     * config-driven on purpose: names absent from a custom status vocab
+     * simply never match, so overdue degrades to purely date-based — the same
+     * graceful degradation stale already exhibits.
      *
      * @return array<int,string>
      */
     public static function inactiveStatuses(): array
     {
-        return ['backburner', 'done', 'declined'];
+        return ['backburner', ...static::closedStatuses()];
     }
 
     public function isInactive(): bool

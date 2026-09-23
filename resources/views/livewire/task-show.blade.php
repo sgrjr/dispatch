@@ -286,9 +286,14 @@
             <div class="dispatch-meta-grid">
                 <div>
                     <label class="dispatch-label">Status</label>
-                    <select wire:model="status" class="dispatch-select">
+                    <select wire:model.live="status" class="dispatch-select">
                         @foreach ($statusLabels as $code => $label) <option value="{{ $code }}">{{ $label }}</option> @endforeach
                     </select>
+                    {{-- TASK-1193: resolved = dealt with, but not as written; say what happened. --}}
+                    @if ($status !== $task->status && \Sgrjr\Dispatch\Models\Task::requiresStatusNote($status))
+                        <textarea wire:model="statusNote" rows="3" class="dispatch-textarea" style="margin-top:0.5rem;" placeholder="Required: what actually happened (done partly, differently, or the need went away)"></textarea>
+                    @endif
+                    @error('statusNote') <p class="dispatch-error">{{ $message }}</p> @enderror
                 </div>
                 <div>
                     <label class="dispatch-label">Type</label>

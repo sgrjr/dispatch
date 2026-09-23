@@ -394,6 +394,7 @@ class AgentController extends Controller
         $v = $request->validate([
             'code' => ['required', 'string'],
             'status' => ['nullable', 'string'],
+            'note' => ['nullable', 'string'],
             'commit' => ['nullable', 'string'],
             'result' => ['nullable', 'array'],
             'labels' => ['nullable', 'array'],
@@ -411,6 +412,14 @@ class AgentController extends Controller
         $to = $v['status'] ?? 'done';
 
         abort_unless(in_array($to, $taskModel::statuses(), true), 422);
+
+        // TASK-1193 — `resolved` (dealt with, not as written) needs a note
+        // saying what happened. Refused before any write; the saving hook
+        // below enforces it again for every other path.
+        $note = isset($v['note']) && trim($v['note']) !== '' ? trim($v['note']) : null;
+        if ($note === null && $taskModel::requiresStatusNote($to)) {
+            abort(422, \Sgrjr\Dispatch\Exceptions\StatusNoteRequired::forStatus($to, $task->code)->getMessage());
+        }
 
         // Tri-state due date at close — the review-by an agent sets when handing
         // work back (verifying/in_review). Key ABSENT leaves it untouched; a
@@ -439,9 +448,10 @@ class AgentController extends Controller
 
         $from = $task->status;
         $task->status = $to;
+        $task->withStatusNote($note);
         try {
             $task->save();
-        } catch (\Sgrjr\Dispatch\Exceptions\ApprovalTaskLocked $e) {
+        } catch (\Sgrjr\Dispatch\Exceptions\ApprovalTaskLocked|\Sgrjr\Dispatch\Exceptions\StatusNoteRequired $e) {
             // TASK-1021: an agent can never close an approval task, its own
             // included. Only a staff human's Approve/Deny can.
             abort(422, $e->getMessage());
@@ -450,8 +460,8 @@ class AgentController extends Controller
         $task->recordEvent(
             TaskComment::EVENT_STATUS_CHANGE,
             null,
-            $this->agentMeta($s, ['from' => $from, 'to' => $to]),
-            "Status changed from {$from} to {$to}.",
+            $task->statusChangeMeta($this->agentMeta($s, ['from' => $from, 'to' => $to])),
+            $task->statusChangeBody("Status changed from {$from} to {$to}."),
         );
 
         // TASK-997 part B — "closing a blocker notifies the next holder."

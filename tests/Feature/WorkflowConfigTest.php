@@ -46,8 +46,9 @@ test('Task::statusSql() ranks statuses() in configured order', function () {
     expect($sql)->toContain("WHEN 'triage' THEN 0");
     expect($sql)->toContain("WHEN 'backburner' THEN 4");
     expect($sql)->toContain("WHEN 'done' THEN 5");
-    expect($sql)->toContain("WHEN 'declined' THEN 6");
-    expect($sql)->toEndWith('ELSE 7 END');
+    expect($sql)->toContain("WHEN 'resolved' THEN 6");
+    expect($sql)->toContain("WHEN 'declined' THEN 7");
+    expect($sql)->toEndWith('ELSE 8 END');
 });
 
 test('statusLabels() auto-humanizes when no status_labels map is configured', function () {

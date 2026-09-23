@@ -53,6 +53,39 @@ Quick diagnosis:
   directly (missing verb, unset secret, still-cached config) instead of leaving
   you to infer it from a `403`/`401`/`503`.
 
+## Unreleased — the `resolved` status: the canon of "finished" (TASK-1193)
+
+**No migration (status is a plain string). One config edit on hosts with a
+published `config/dispatch.php`.**
+
+Three CLOSED statuses, each meaning exactly one thing:
+
+| status | meaning | note |
+|---|---|---|
+| `done` | the prescribed work was completed, nothing left | optional |
+| `resolved` *(new)* | dealt with, but **not as written**: partly, differently, or the need went away | **required** |
+| `declined` | not done, by decision | recommended |
+
+- **Hosts with a published config must add `'resolved'`** to
+  `dispatch.workflow.statuses`, between `done` and `declined`. Without it the
+  board column, the dropdowns and `--status=resolved` validation won't offer it.
+- **The note is enforced server-side, on every write path**, by the Task saving
+  hook (`StatusNoteRequired`, an `InvalidArgumentException`, so the agent API
+  and batch answer 422): `dispatch:done --status=resolved --note=…|--note-file=…`,
+  the agent API `done` takes `note`, and a batch op carries a `note` or a comment.
+  TaskShow shows a note field when Resolved is picked. A board drag and the bulk
+  actions REFUSE resolved (each task needs its own note). The note is the body
+  of the status event (and its `meta.note`). A write path of your own sets it
+  with `$task->withStatusNote($note)` before `save()`, and writes
+  `$task->statusChangeBody(…)` / `statusChangeMeta(…)` into its event.
+  `Task::replayingHistory(fn)` is the import/sync bypass, and nothing else.
+- **One closed predicate:** `Task::closedStatuses()` / `$task->isClosed()`.
+  `Task::inactiveStatuses()` = `backburner` + the closed set (a parked task is
+  inactive, not closed). ⛔ Replace any hard-coded `['done', 'declined']` in host
+  code with it. A guard test keeps the package free of them.
+- All three close alike: dependents unblock, an ask returns the ball (a
+  resolved ask's note IS the answer), a capture never revives one.
+
 ## Unreleased — anchor fields (topic / origin / conversation)
 
 **One migration, two new contract seams, no breaking change.**

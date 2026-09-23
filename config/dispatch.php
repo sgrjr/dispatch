@@ -112,11 +112,17 @@ return [
     | (unprocessed inbox) and `declined` (rejected) — and enterable from any
     | status: triage -> backburner parks a someday item, verifying -> backburner
     | parks code-done work awaiting its launch date.
+    |
+    | The three CLOSED statuses (TASK-1193, Task::closedStatuses()) each mean
+    | exactly one thing: `done` = the prescribed work was completed; `resolved`
+    | = dealt with, but not as written (a note saying what happened is
+    | REQUIRED, enforced on every write path); `declined` = not done, by
+    | decision. A custom vocab that drops `resolved` simply never offers it.
     */
     'workflow' => [
         'types' => ['bug', 'feature', 'chore', 'debt', 'verify'],
         'priorities' => ['blocker', 'high', 'medium', 'low'],
-        'statuses' => ['triage', 'open', 'in_progress', 'verifying', 'backburner', 'done', 'declined'],
+        'statuses' => ['triage', 'open', 'in_progress', 'verifying', 'backburner', 'done', 'resolved', 'declined'],
 
         'type_labels' => [],
         'priority_labels' => [],

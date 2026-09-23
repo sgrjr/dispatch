@@ -367,6 +367,14 @@ class TaskList extends Component
             return;
         }
 
+        // TASK-1193 — `resolved` needs its own note per task (what actually
+        // happened), which a bulk action has nowhere to take.
+        if ($this->bulkAction === 'status' && Task::requiresStatusNote($this->bulkStatusValue)) {
+            session()->flash('dispatch-status', 'Resolved needs a note saying what actually happened for EACH task: open each one and set it there.');
+
+            return;
+        }
+
         /** @var class-string<Task> $taskClass */
         $taskClass = config('dispatch.models.task');
         $gate = app(DispatchGate::class);
@@ -510,7 +518,7 @@ class TaskList extends Component
             return false;
         }
 
-        if (in_array($task->status, ['backburner', 'done', 'declined'], true) || $task->updated_at === null) {
+        if ($task->isInactive() || $task->updated_at === null) {
             return false;
         }
 
@@ -551,7 +559,7 @@ class TaskList extends Component
                 }
                 if ($wantStale) {
                     $q->orWhere(function (Builder $sq) use ($thresholdDays) {
-                        $sq->whereNotIn('status', ['backburner', 'done', 'declined'])
+                        $sq->whereNotIn('status', Task::inactiveStatuses())
                             ->where('updated_at', '<', now()->subDays($thresholdDays));
                     });
                 }

@@ -101,6 +101,13 @@ class TaskBoard extends Component
 
     public string $bulkStatus = '';
 
+    /**
+     * TASK-1193 — why the last drag or bulk move was refused (a note-required
+     * status like `resolved` can't be entered without one, and a drag has
+     * nowhere to type it). Rendered above the board; cleared on the next move.
+     */
+    public ?string $statusNotice = null;
+
     public function mount(): void
     {
         // Non-staff have no board — redirect them to their own submissions
@@ -132,6 +139,13 @@ class TaskBoard extends Component
         $taskClass = config('dispatch.models.task');
 
         if (! in_array($toStatus, $taskClass::statuses(), true)) {
+            return;
+        }
+
+        $this->statusNotice = null;
+        if ($taskClass::requiresStatusNote($toStatus)) {
+            $this->statusNotice = 'Resolved needs a note saying what actually happened: open the task and set it there.';
+
             return;
         }
 
@@ -304,6 +318,13 @@ class TaskBoard extends Component
         $taskClass = config('dispatch.models.task');
 
         if ($this->bulkStatus === '' || ! in_array($this->bulkStatus, $taskClass::statuses(), true)) {
+            return;
+        }
+
+        $this->statusNotice = null;
+        if ($taskClass::requiresStatusNote($this->bulkStatus)) {
+            $this->statusNotice = 'Resolved needs a note saying what actually happened for EACH task: open each one and set it there.';
+
             return;
         }
 

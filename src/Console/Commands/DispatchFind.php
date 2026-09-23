@@ -30,7 +30,7 @@ class DispatchFind extends Command
 
     protected $signature = 'dispatch:find
         {term : Text to search for in the title, code, and description}
-        {--status= : Restrict to a single status (default: ALL statuses — including done/declined/backburner)}
+        {--status= : Restrict to a single status (default: ALL statuses — including done/resolved/declined/backburner)}
         {--type= : Filter to a single type}
         {--label=* : Filter to tasks carrying any of these labels}
         {--topic= : Filter to tasks whose topic matches "<type>[:<id>]" (id omitted matches any id of that type)}

@@ -25,7 +25,9 @@ class DispatchDone extends Command
 
     protected $signature = 'dispatch:done
         {code : The task code, e.g. TASK-042}
-        {--status=done : Target status — ANY configured workflow status, not just terminal (done | declined | verifying, backburner to park it out of the queue without declining, or e.g. open to greenlight a triaged task)}
+        {--status=done : Target status — ANY configured workflow status, not just terminal (done = the prescribed work was completed | resolved = dealt with, but not as written, needs --note | declined = not done, by decision | verifying, backburner to park it out of the queue without declining, or e.g. open to greenlight a triaged task)}
+        {--note= : What actually happened, recorded as the body of the status event. REQUIRED for --status=resolved; optional for any other status}
+        {--note-file= : Read the --note from a file (or `-` for stdin) — the escape hatch for a multi-line note}
         {--due= : Set (or clear) the review-by date at close — pairs naturally with --status=verifying. Parseable date/time string, e.g. "2026-08-01" or "+3 days"; empty string clears it}
         {--commit= : SHA of the code change}
         {--label=* : Label name(s) to ATTACH on close; auto-created if missing, never replaces existing labels. Repeatable — so "park these and tag them" is one verb, not a batch manifest.}
@@ -105,6 +107,27 @@ class DispatchDone extends Command
             return self::FAILURE;
         }
 
+        // TASK-1193 — the note. Checked HERE, before any request or write, so a
+        // `resolved` without one costs nothing but the error; the server (the
+        // Task saving hook / the agent endpoint) refuses it again regardless.
+        [$note, $err] = $this->resolveInlineOrFile(
+            $this->option('note'),
+            $this->option('note-file'),
+            '--note',
+            '--note-file',
+        );
+        if ($err !== null) {
+            $this->error($err);
+
+            return self::FAILURE;
+        }
+        $note = $note !== null && trim($note) !== '' ? trim($note) : null;
+        if ($note === null && Task::requiresStatusNote($status)) {
+            $this->error("--status={$status} needs a --note (or --note-file) saying what actually happened: `{$status}` = dealt with, but not as written. Use --status=done when the prescribed work was completed, --status=declined when it was not done, by decision.");
+
+            return self::FAILURE;
+        }
+
         $result = null;
         if ($resultRaw !== null) {
             $decoded = json_decode($resultRaw, true);
@@ -138,6 +161,7 @@ class DispatchDone extends Command
             $r = $this->agentPost('done', array_filter([
                 'code' => $this->argument('code'),
                 'status' => $status,
+                'note' => $note,
                 'commit' => $commit,
                 'result' => $result,
                 'labels' => $labels ?: null,
@@ -195,10 +219,12 @@ class DispatchDone extends Command
         }
 
         $task->status = $status;
+        $task->withStatusNote($note);
         try {
             $task->save();
-        } catch (\Sgrjr\Dispatch\Exceptions\ApprovalTaskLocked $e) {
+        } catch (\Sgrjr\Dispatch\Exceptions\ApprovalTaskLocked|\Sgrjr\Dispatch\Exceptions\StatusNoteRequired $e) {
             // TASK-1021: an approval task is decided (Approve/Deny), never done'd.
+            // TASK-1193: `resolved` needs its note.
             $this->error($e->getMessage());
 
             return self::FAILURE;
@@ -207,8 +233,8 @@ class DispatchDone extends Command
         $task->recordEvent(
             TaskComment::EVENT_STATUS_CHANGE,
             Auth::id(),
-            ['from' => $previous, 'to' => $status],
-            "Status changed from `{$previous}` to `{$status}`."
+            $task->statusChangeMeta(['from' => $previous, 'to' => $status]),
+            $task->statusChangeBody("Status changed from `{$previous}` to `{$status}`.")
         );
 
         // TASK-997 part B — "closing a blocker notifies the next holder."

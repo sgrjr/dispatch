@@ -118,6 +118,10 @@ class MailNotifier implements DispatchNotifier
             $recipients = $this->dedupe($pool, $actor?->getAuthIdentifier());
 
             $summary = "Status changed from `{$from}` to `{$to}`.";
+            // TASK-1193 — a close that carried a note says what happened.
+            if ($task->statusNote !== null) {
+                $summary .= ' '.strtok($task->statusNote, "\n");
+            }
 
             foreach ($recipients as $recipient) {
                 $this->send($recipient, $task, $summary);

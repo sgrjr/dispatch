@@ -312,9 +312,11 @@ dispatch:show   <code> [--no-internal] [--json]
 dispatch:note   <code> <body> [--public] [--author=]
                 → append a comment; internal by default, --public makes it customer-visible
 
-dispatch:done   <code> [--status=done|declined|verifying|backburner] [--ref=] [--note=] [--author=]
-                [--due=]
-                → close out a task with an optional commit/PR ref and closing note;
+dispatch:done   <code> [--status=done|resolved|declined|verifying|backburner] [--note=|--note-file=] [--due=]
+                → close out a task with an optional commit/PR ref and closing note.
+                  done = the prescribed work was completed; resolved = dealt with,
+                  but not as written (--note REQUIRED: what actually happened);
+                  declined = not done, by decision. All three are closed;
                   --status=backburner parks it (triaged, consciously not actionable
                   now — or code-done but blocked on an external date) without
                   declining; unpark later with --status=open (or triage/verifying)
