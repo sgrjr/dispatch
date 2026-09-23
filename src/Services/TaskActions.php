@@ -26,7 +26,11 @@ final class TaskActions
      * What a surface needs to render a kind's controls, or null for a plain
      * task (or one whose kind is no longer registered): the defaults apply.
      *
-     * @return array{key: string, actions: array<int, array<string, mixed>>, hides: array<int, string>, locks_status: bool, panel: array<string, mixed>|null}|null
+     * `lock_reason` says, in the kind's own words, why the status can't be
+     * moved here (null when it isn't locked), so a surface that hides the status
+     * control can say why instead of silently dropping it.
+     *
+     * @return array{key: string, actions: array<int, array<string, mixed>>, hides: array<int, string>, locks_status: bool, lock_reason: string|null, panel: array<string, mixed>|null}|null
      */
     public function describe(Task $task, ?Authenticatable $viewer, bool $asAgent = false): ?array
     {
@@ -39,7 +43,8 @@ final class TaskActions
             'key' => $kind::key(),
             'actions' => array_map(fn (TaskAction $a) => $a->toArray(), $this->offered($task, $viewer, $asAgent)),
             'hides' => array_values($kind->hides($task)),
-            'locks_status' => $kind->locksStatus($task),
+            'locks_status' => $locks = $kind->locksStatus($task),
+            'lock_reason' => $locks && ! $task->isClosed() ? $kind->lockedException($task, false)->getMessage() : null,
             'panel' => $kind->panel($task, $asAgent ? null : $viewer),
         ];
     }

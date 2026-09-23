@@ -221,7 +221,7 @@
         </section>
     @endif
 
-    @if ($this->canEdit() && ! empty($task->context))
+    @if ($this->canEdit() && $task->hasDiagnostics())
         @php($ctx = $task->context)
         @php($consoleErrors = $ctx['console_errors'] ?? [])
         <section class="dispatch-card" style="margin-top: 1rem;">
@@ -349,6 +349,12 @@
         <section class="dispatch-card" style="margin-top: 1rem;">
             <h2 class="dispatch-section-title">Task properties</h2>
             <div class="dispatch-meta-grid">
+                @if (in_array('status', $hiddenControls, true) && ! empty($kindView['lock_reason']))
+                <div>
+                    <label class="dispatch-label">Status</label>
+                    <p style="font-size:0.8rem; margin:0.3rem 0 0;" data-dispatch-lock>🔒 {{ $kindView['lock_reason'] }}</p>
+                </div>
+                @endif
                 @unless (in_array('status', $hiddenControls, true))
                 <div>
                     <label class="dispatch-label">Status</label>

@@ -356,3 +356,25 @@ test('a record-gated task links to its record\'s tool while it is open, locks it
         ->and($event->meta['note'])->toBe('Added the plan; starts November.')
         ->and(app(TaskActions::class)->describe($task->fresh(), $staff)['actions'])->toBe([]);
 });
+
+// --- a gated task says why its status is locked; a kind marker is not diagnostics ---------
+
+test('describe() carries the lock reason, TaskShow shows it, and a kind marker is never "diagnostic context"', function () {
+    config(['dispatch.task_kinds.ticket' => \Sgrjr\Dispatch\Tests\Fixtures\TicketGatedKind::class]);
+    \Sgrjr\Dispatch\Tests\Fixtures\TicketGatedKind::$tickets = [65 => true];
+    $task = TaskKinds::asKind(fn () => app(DispatchTaskService::class)->create([
+        'title' => 'Gated', 'status' => 'open', 'context' => ['ticket' => ['id' => 65]],
+    ]));
+    $staff = dispatchMakeUser(740);
+
+    expect(app(TaskActions::class)->describe($task, $staff)['lock_reason'])->toContain('closes with its record')
+        ->and($task->hasDiagnostics())->toBeFalse();
+
+    $this->actingAs($staff);
+    Livewire::test(TaskShow::class, ['task' => $task])
+        ->assertSee('data-dispatch-lock', false)
+        ->assertDontSee('Diagnostics');
+
+    $crash = app(DispatchTaskService::class)->create(['title' => 'Boom', 'context' => ['exception' => ['class' => 'RuntimeException']]]);
+    expect($crash->hasDiagnostics())->toBeTrue();
+});

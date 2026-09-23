@@ -226,6 +226,27 @@ class Task extends Model
         }
     }
 
+    /**
+     * The context keys that make it DIAGNOSTIC evidence: an exception (and its
+     * trace) or a browser capture (console errors, the user agent). A task
+     * kind's marker (a plan request's details) is context too, but not a
+     * diagnosis, so "this task carries diagnostic context" must not fire on it.
+     */
+    public const DIAGNOSTIC_CONTEXT_KEYS = ['exception', 'trace', 'console_errors', 'user_agent'];
+
+    public function hasDiagnostics(): bool
+    {
+        $context = is_array($this->context) ? $this->context : [];
+
+        foreach (self::DIAGNOSTIC_CONTEXT_KEYS as $key) {
+            if (! empty($context[$key])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /** TASK-1188 — this task's registered kind, or null (the default controls). */
     public function kind(): ?\Sgrjr\Dispatch\Contracts\TaskKind
     {
