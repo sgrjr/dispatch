@@ -458,7 +458,7 @@ return [
         'poll_interval' => (int) env('DISPATCH_AGENT_POLL_INTERVAL', 5),
         'request_throttle' => env('DISPATCH_AGENT_REQUEST_THROTTLE', '10,1'),
         'verb_throttle' => env('DISPATCH_AGENT_VERB_THROTTLE', '120,1'),
-        'verbs' => ['next', 'queue', 'show', 'add', 'note', 'done', 'claim', 'batch', 'handoff'],
+        'verbs' => ['next', 'queue', 'show', 'add', 'note', 'done', 'claim', 'batch', 'handoff', 'perform'],
 
         // TASK-999 (R24) — the lane an agent session SERVES by default: which
         // work `next`/`claim` will offer it. Null (the default) = unrestricted,
@@ -631,5 +631,26 @@ return [
         'kinds' => [
             'agent_session' => \Sgrjr\Dispatch\Models\AgentSession::class,
         ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Task kinds (TASK-1188)
+    |--------------------------------------------------------------------------
+    |
+    | A task KIND defines its own controls: actions (Approve / Deny…), which
+    | default controls it hides, whether its status is LOCKED to its own
+    | actions, a panel, and which actions an agent may run. Each entry maps a
+    | key to a class implementing Sgrjr\Dispatch\Contracts\TaskKind (extend
+    | Sgrjr\Dispatch\Kinds\BaseTaskKind). A task is of kind <key> when its
+    | `context.<key>` is an array: a SYSTEM-set marker only the kind's own
+    | service may write. ONE action path (Sgrjr\Dispatch\Services\TaskActions)
+    | serves TaskShow, the agent API (`show` lists them, `perform` runs them)
+    | and a host's own screens. Removing an entry degrades its tasks to the
+    | default controls.
+    |
+    */
+    'task_kinds' => [
+        'approval' => \Sgrjr\Dispatch\Kinds\ApprovalKind::class,
     ],
 ];

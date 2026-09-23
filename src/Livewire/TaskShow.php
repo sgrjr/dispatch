@@ -35,6 +35,14 @@ class TaskShow extends Component
 
     /** TASK-1193 — what actually happened; required to move the task to `resolved`. */
     public string $statusNote = '';
+
+    /**
+     * TASK-1188 — a task kind's action inputs, keyed by action key → input
+     * key (e.g. an approval's session length).
+     *
+     * @var array<string, array<string, string>>
+     */
+    public array $actionInput = [];
     public string $type = '';
     public string $priority = '';
     /**
@@ -238,7 +246,16 @@ class TaskShow extends Component
             $this->task->due_at = $newDueAt;
         }
 
-        $this->task->save();
+        try {
+            $this->task->save();
+        } catch (\Sgrjr\Dispatch\Exceptions\TaskKindLocked $e) {
+            // TASK-1188: this task's kind locks its status to its own actions.
+            $this->task = $this->task->fresh()->load(['labels', 'submitter', 'assignee', 'attachments']);
+            $this->status = $this->task->status;
+            $this->addError('status', $e->getMessage());
+
+            return;
+        }
 
         $oldLabelIds = $this->task->labels->pluck('id')->sort()->values()->all();
         $newLabelIds = collect($this->label_ids)->sort()->values()->all();
@@ -612,6 +629,34 @@ class TaskShow extends Component
         $this->redirect(route('dispatch.show', $merged), navigate: false);
     }
 
+    /**
+     * TASK-1188 — run one of this task's KIND actions (Approve, Deny…) through
+     * the ONE action path, as the signed-in person. The kind decides whether it
+     * is offered to them; a refusal lands on the actions panel.
+     */
+    public function performAction(string $key): void
+    {
+        Gate::authorize('view', $this->task);
+
+        try {
+            $message = app(\Sgrjr\Dispatch\Services\TaskActions::class)->perform(
+                $this->task,
+                $key,
+                Auth::user(),
+                $this->actionInput[$key] ?? [],
+            );
+        } catch (\InvalidArgumentException $e) {
+            $this->addError('kindAction', $e->getMessage());
+
+            return;
+        }
+
+        $this->task = $this->task->fresh()->load(['labels', 'submitter', 'assignee', 'attachments']);
+        $this->status = $this->task->status;
+        $this->actionInput = [];
+        session()->flash('dispatch-kind-status', $message ?: 'Done.');
+    }
+
     public function render()
     {
         /** @var class-string<Task> $taskClass */
@@ -647,7 +692,13 @@ class TaskShow extends Component
             }
         }
 
+        // TASK-1188 — the task's KIND: its actions for this person, the default
+        // controls it hides, and its panel. Null = the default controls only.
+        $kindView = app(\Sgrjr\Dispatch\Services\TaskActions::class)->describe($this->task, Auth::user());
+
         return view('dispatch::livewire.task-show', [
+            'kindView' => $kindView,
+            'hiddenControls' => $kindView['hides'] ?? [],
             'watchPrefs' => Auth::id() ? $this->task->watchPreferencesFor((int) Auth::id()) : null,
             'assigneeOptions' => $assigneeOptions,
             'groupOptions' => $this->canEdit() ? Groups::names() : [],

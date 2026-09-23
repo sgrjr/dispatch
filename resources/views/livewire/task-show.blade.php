@@ -156,6 +156,67 @@
     </section>
 
     {{-- Client diagnostics captured with the report (staff-facing). --}}
+    {{-- TASK-1188: the task's KIND: its panel and its own actions (Approve,
+         Deny...), run through the one action path. The defaults it hides are
+         gated below on $hiddenControls. --}}
+    @if ($kindView)
+        <section class="dispatch-card" style="margin-top: 1rem;" data-dispatch-kind="{{ $kindView['key'] }}">
+            @php $panel = $kindView['panel'] ?? null; @endphp
+            <h2 class="dispatch-section-title">{{ $panel['title'] ?? str_replace('_', ' ', $kindView['key']) }}
+                @if (! empty($panel['state']))
+                    <span class="dispatch-badge is-info" style="margin-left:0.4rem;">{{ $panel['state'] }}</span>
+                @endif
+            </h2>
+            @if (! empty($panel['rows']))
+                <dl style="display:grid; grid-template-columns:max-content 1fr; gap:0.3rem 0.8rem; margin:0 0 0.75rem; font-size:0.85rem;">
+                    @foreach ($panel['rows'] as $row)
+                        <dt style="color: var(--dispatch-text-muted);">{{ $row['label'] }}</dt>
+                        <dd style="margin:0; {{ ! empty($row['emphasis']) ? 'font-family:monospace; font-size:1.1rem; font-weight:700; letter-spacing:0.1em;' : '' }}">{{ $row['value'] }}</dd>
+                    @endforeach
+                </dl>
+            @endif
+            @if (! empty($panel['note']))
+                <p style="font-size:0.8rem; margin:0 0 0.75rem;">{{ $panel['note'] }}</p>
+            @endif
+            @if (session('dispatch-kind-status'))
+                <div class="dispatch-badge is-success" style="margin-bottom:0.6rem; display:block; width:fit-content; text-transform:none; letter-spacing:0;">{{ session('dispatch-kind-status') }}</div>
+            @endif
+            @if (! empty($kindView['actions']))
+                <div style="display:flex; flex-wrap:wrap; gap:0.5rem; align-items:flex-end;">
+                    @foreach ($kindView['actions'] as $action)
+                        <div style="display:flex; flex-wrap:wrap; gap:0.35rem; align-items:flex-end;" wire:key="kind-action-{{ $action['key'] }}">
+                            @foreach ($action['inputs'] as $input)
+                                <label style="display:flex; flex-direction:column; font-size:0.75rem; gap:0.15rem;">
+                                    {{ $input['label'] ?? $input['key'] }}
+                                    @if (($input['type'] ?? 'text') === 'select')
+                                        <select wire:model="actionInput.{{ $action['key'] }}.{{ $input['key'] }}" class="dispatch-select" style="width:auto;">
+                                            @foreach ($input['options'] ?? [] as $opt)
+                                                <option value="{{ $opt['value'] }}">{{ $opt['label'] }}</option>
+                                            @endforeach
+                                        </select>
+                                    @elseif (($input['type'] ?? 'text') === 'textarea')
+                                        <textarea wire:model="actionInput.{{ $action['key'] }}.{{ $input['key'] }}" rows="2" class="dispatch-textarea" placeholder="{{ $input['placeholder'] ?? '' }}"></textarea>
+                                    @else
+                                        <input type="text" wire:model="actionInput.{{ $action['key'] }}.{{ $input['key'] }}" class="dispatch-input" placeholder="{{ $input['placeholder'] ?? '' }}">
+                                    @endif
+                                </label>
+                            @endforeach
+                            <button
+                                type="button"
+                                wire:click="performAction('{{ $action['key'] }}')"
+                                @if ($action['confirm']) wire:confirm="{{ $action['confirm'] }}" @endif
+                                wire:loading.attr="disabled"
+                                class="dispatch-btn {{ $action['style'] === 'primary' ? '' : 'is-secondary' }}"
+                                @if ($action['style'] === 'danger') style="color: var(--dispatch-danger);" @endif
+                            >{{ $action['label'] }}</button>
+                        </div>
+                    @endforeach
+                </div>
+            @endif
+            @error('kindAction') <p class="dispatch-error">{{ $message }}</p> @enderror
+        </section>
+    @endif
+
     @if ($this->canEdit() && ! empty($task->context))
         @php($ctx = $task->context)
         @php($consoleErrors = $ctx['console_errors'] ?? [])
@@ -284,6 +345,7 @@
         <section class="dispatch-card" style="margin-top: 1rem;">
             <h2 class="dispatch-section-title">Task properties</h2>
             <div class="dispatch-meta-grid">
+                @unless (in_array('status', $hiddenControls, true))
                 <div>
                     <label class="dispatch-label">Status</label>
                     <select wire:model.live="status" class="dispatch-select">
@@ -294,7 +356,9 @@
                         <textarea wire:model="statusNote" rows="3" class="dispatch-textarea" style="margin-top:0.5rem;" placeholder="Required: what actually happened (done partly, differently, or the need went away)"></textarea>
                     @endif
                     @error('statusNote') <p class="dispatch-error">{{ $message }}</p> @enderror
+                    @error('status') <p class="dispatch-error">{{ $message }}</p> @enderror
                 </div>
+                @endunless
                 <div>
                     <label class="dispatch-label">Type</label>
                     <select wire:model="type" class="dispatch-select">
@@ -307,6 +371,7 @@
                         @foreach ($priorityLabels as $code => $label) <option value="{{ $code }}">{{ $label }}</option> @endforeach
                     </select>
                 </div>
+                @unless (in_array('assignee', $hiddenControls, true))
                 <div>
                     <label class="dispatch-label">Assignee</label>
                     <select wire:model="assignee_choice" class="dispatch-select">
@@ -324,6 +389,7 @@
                     </select>
                     @error('assignee_choice') <p class="dispatch-error">{{ $message }}</p> @enderror
                 </div>
+                @endunless
                 <div>
                     <label class="dispatch-label">Due date</label>
                     <input type="date" wire:model="due_at" class="dispatch-input">
@@ -385,7 +451,7 @@
             </p>
 
             <div style="display:flex; flex-wrap:wrap; gap:1.5rem; align-items:flex-start;">
-                @if (! empty($myLaneOptions))
+                @if (! empty($myLaneOptions) && ! in_array('claim', $hiddenControls, true))
                     <div>
                         <div style="display:flex; align-items:center; gap:0.5rem;">
                             @if ($task->lane === null && count($myLaneOptions) > 1)
@@ -433,8 +499,8 @@
          host that hasn't adopted lanes at all. Also shows blocked-by/blocks
          as plain links — real dependencies, always visible when they exist,
          regardless of lanes. --}}
-    @if ($this->canEdit())
-        <section class="dispatch-card" style="margin-top: 1rem;">
+    @if ($this->canEdit() && ! (in_array('pass', $hiddenControls, true) && in_array('ask', $hiddenControls, true)))
+        <section class="dispatch-card" style="margin-top: 1rem;" data-dispatch-control="handoff">
             <h2 class="dispatch-section-title">Hand off</h2>
 
             @if ($blockedByTasks->isNotEmpty() || $blocksTasks->isNotEmpty())
@@ -477,10 +543,12 @@
                     </select>
                 @endif
 
+                @unless (in_array('ask', $hiddenControls, true) || in_array('pass', $hiddenControls, true))
                 <label style="display:flex; align-items:center; gap:0.35rem; font-size:0.8rem;">
                     <input type="checkbox" wire:model="handoffAsk">
                     Ask (blocks this task instead of closing it)
                 </label>
+                @endunless
 
                 <button type="button" wire:click="handoffTask" wire:loading.attr="disabled" wire:target="handoffTask" class="dispatch-btn is-secondary">
                     {{ $handoffAsk ? 'Ask' : 'Hand off' }}

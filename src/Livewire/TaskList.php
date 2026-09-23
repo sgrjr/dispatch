@@ -428,7 +428,11 @@ class TaskList extends Component
         $from = $task->status;
         $to = $this->bulkStatusValue;
         $task->status = $to;
-        $task->save();
+        try {
+            $task->save();
+        } catch (\Sgrjr\Dispatch\Exceptions\TaskKindLocked) {
+            return false; // TASK-1188: a kind that locks its status is skipped
+        }
 
         $task->recordEvent(
             TaskComment::EVENT_STATUS_CHANGE,
@@ -452,7 +456,11 @@ class TaskList extends Component
 
         $from = $task->status;
         $task->status = 'declined';
-        $task->save();
+        try {
+            $task->save();
+        } catch (\Sgrjr\Dispatch\Exceptions\TaskKindLocked) {
+            return false; // TASK-1188: a kind that locks its status is skipped
+        }
 
         $task->recordEvent(
             TaskComment::EVENT_STATUS_CHANGE,

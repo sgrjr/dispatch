@@ -166,6 +166,12 @@ Park/unpark works the same way: `--status=backburner` shelves,
 `--status=open|triage|verifying` revives — the timeline's status-change events
 say where it came from.
 
+**Task kinds (TASK-1188).** Some tasks define their own controls: `dispatch:show <CODE> --json`
+carries a `kind` block (null for a plain task). `kind.locks_status: true` means done/batch/claim
+are REFUSED (a 422, by design); the task moves only by its own actions. `kind.actions` lists the
+ones YOU may run: `php artisan dispatch:perform <CODE> <action> [--input=key=value]`. A person's
+action (an approval's Approve / Deny) is never offered to an agent, and forcing it is a 403.
+
 ## Batch memorialize — one hit instead of forty (optional)
 
 For a long offline run, assemble ONE manifest of add/update ops and apply it in

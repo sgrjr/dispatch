@@ -265,6 +265,8 @@ class DispatchServiceProvider extends ServiceProvider
             \Sgrjr\Dispatch\Console\Commands\DispatchClaim::class,
             // TASK-997 part B — the ball (hand-off).
             \Sgrjr\Dispatch\Console\Commands\DispatchHandoff::class,
+            // TASK-1188 — a task kind's actions.
+            \Sgrjr\Dispatch\Console\Commands\DispatchPerform::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchBatch::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchSchema::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchSessionRequest::class,

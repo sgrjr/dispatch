@@ -222,7 +222,7 @@ class DispatchDone extends Command
         $task->withStatusNote($note);
         try {
             $task->save();
-        } catch (\Sgrjr\Dispatch\Exceptions\ApprovalTaskLocked|\Sgrjr\Dispatch\Exceptions\StatusNoteRequired $e) {
+        } catch (\Sgrjr\Dispatch\Exceptions\TaskKindLocked|\Sgrjr\Dispatch\Exceptions\StatusNoteRequired $e) {
             // TASK-1021: an approval task is decided (Approve/Deny), never done'd.
             // TASK-1193: `resolved` needs its note.
             $this->error($e->getMessage());

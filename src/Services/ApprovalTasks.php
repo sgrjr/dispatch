@@ -12,8 +12,9 @@ use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
 
 /**
- * "Approval requested": the one task kind with behavior (PU-2.10, TASK-1021,
- * R18/R19).
+ * "Approval requested" (PU-2.10, TASK-1021, R18/R19): the service behind the
+ * first task KIND, {@see \Sgrjr\Dispatch\Kinds\ApprovalKind} (TASK-1188), whose
+ * Approve / Deny actions call approve()/deny() below.
  *
  * An Approvable (an agent-session request first) files ONE task here:
  *   - title "Approval requested: <label>", priority high, open;
@@ -48,13 +49,10 @@ final class ApprovalTasks
 
     public const EXPIRED = 'expired';
 
-    /** Depth counter, not a bool: resolve() may nest (a closer inside a closer). */
-    private static int $resolving = 0;
-
-    /** Is this service the one writing right now? The Task lock lets only this through. */
+    /** Is this service (or any kind's own service) writing right now? The Task lock lets only that through. */
     public static function resolving(): bool
     {
-        return self::$resolving > 0;
+        return TaskKinds::writing();
     }
 
     /** Is this task an approval task? */
@@ -261,14 +259,9 @@ final class ApprovalTasks
         return method_exists($item, 'approvalOutcome') ? $item->approvalOutcome() : self::EXPIRED;
     }
 
-    /** Run a write as the approval service: the only writer the Task lock lets through. */
+    /** Run a write as the approval kind's own service: the only writer the Task lock lets through (TASK-1188). */
     private function asResolver(callable $write): mixed
     {
-        self::$resolving++;
-        try {
-            return $write();
-        } finally {
-            self::$resolving--;
-        }
+        return TaskKinds::asKind($write);
     }
 }

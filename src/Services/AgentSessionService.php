@@ -36,7 +36,7 @@ class AgentSessionService
      * `agent.verbs` array missing it; this UNION is what still lets it be
      * explicitly requested (see UPGRADING.md).
      */
-    public const KNOWN_VERBS = ['next', 'queue', 'show', 'add', 'note', 'done', 'claim', 'batch', 'handoff'];
+    public const KNOWN_VERBS = ['next', 'queue', 'show', 'add', 'note', 'done', 'claim', 'batch', 'handoff', 'perform'];
 
     /**
      * Register a pending session and return the one-time bootstrap payload.

@@ -138,7 +138,58 @@ class AgentController extends Controller
         abort_if($task === null, 404);
 
         return response()->json([
-            'task' => TaskPresenter::toArray($task, true),
+            // TASK-1188 — a task KIND's controls, as an agent sees them: the
+            // actions it may `perform` (agentAllowed only), the defaults the kind
+            // hides, whether its status is locked, and its panel. Null = a plain
+            // task with the default controls.
+            'task' => TaskPresenter::toArray($task, true) + [
+                'kind' => app(\Sgrjr\Dispatch\Services\TaskActions::class)->describe($task, null, true),
+            ],
+        ]);
+    }
+
+    /**
+     * TASK-1188 — run a task kind's action, through the ONE action path
+     * (TaskActions). An agent runs only an `agentAllowed` action: a person's
+     * action (an approval's Approve / Deny) is a 403, whoever's task it is.
+     */
+    public function perform(Request $request): JsonResponse
+    {
+        $s = $this->session($request);
+
+        $v = $request->validate([
+            'code' => ['required', 'string'],
+            'action' => ['required', 'string'],
+            'input' => ['nullable', 'array'],
+        ]);
+
+        /** @var class-string<Task> $taskModel */
+        $taskModel = config('dispatch.models.task');
+        $task = $taskModel::query()->where('code', $v['code'])->first();
+        abort_if($task === null, 404);
+
+        try {
+            $message = app(\Sgrjr\Dispatch\Services\TaskActions::class)->perform(
+                $task,
+                $v['action'],
+                null,
+                $v['input'] ?? [],
+                true,
+                $this->agentMeta($s),
+            );
+        } catch (\Sgrjr\Dispatch\Exceptions\TaskActionRefused $e) {
+            abort($e->httpStatus, $e->getMessage());
+        } catch (\InvalidArgumentException $e) {
+            abort(422, $e->getMessage());
+        }
+
+        $task = $task->fresh()->load('labels', 'submitter', 'assignee', 'comments.user', 'attachments', 'comments.attachments', 'blockedBy', 'blocks');
+
+        return response()->json([
+            'message' => $message,
+            'task' => TaskPresenter::toArray($task, true) + [
+                'kind' => app(\Sgrjr\Dispatch\Services\TaskActions::class)->describe($task, null, true),
+            ],
         ]);
     }
 
@@ -451,7 +502,7 @@ class AgentController extends Controller
         $task->withStatusNote($note);
         try {
             $task->save();
-        } catch (\Sgrjr\Dispatch\Exceptions\ApprovalTaskLocked|\Sgrjr\Dispatch\Exceptions\StatusNoteRequired $e) {
+        } catch (\Sgrjr\Dispatch\Exceptions\TaskKindLocked|\Sgrjr\Dispatch\Exceptions\StatusNoteRequired $e) {
             // TASK-1021: an agent can never close an approval task, its own
             // included. Only a staff human's Approve/Deny can.
             abort(422, $e->getMessage());

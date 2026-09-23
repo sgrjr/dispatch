@@ -38,6 +38,10 @@ class TaskComment extends Model
     // Recorded on a dependent task when one of its blockers reaches a
     // terminal status, for a plain (non-ask) `blocked_by` link.
     public const EVENT_DEPENDENCY_RESOLVED = 'dependency_resolved';
+    // TASK-1188 — a task kind's action was run (TaskActions::perform): who
+    // pressed what, with which inputs. Internal: the kind's own events (e.g.
+    // an approval's status change) are what the timeline reads by.
+    public const EVENT_ACTION = 'kind_action';
 
     protected $table = 'dispatch_task_comments';
 

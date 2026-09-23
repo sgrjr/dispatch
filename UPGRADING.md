@@ -53,6 +53,40 @@ Quick diagnosis:
   directly (missing verb, unset secret, still-cached config) instead of leaving
   you to infer it from a `403`/`401`/`503`.
 
+## Unreleased — task kinds: a task defines its own controls (TASK-1188)
+
+**No migration. Two config edits on hosts with a published `config/dispatch.php`.**
+
+- **Add `'perform'` to `agent.verbs`** (a new agent verb: `POST agent/perform`,
+  `dispatch:perform <code> <action> [--input=k=v]`). Until then no session is
+  granted it by default.
+- **Add the `task_kinds` block** (`'approval' => \Sgrjr\Dispatch\Kinds\ApprovalKind::class`).
+  Without it, approval tasks lose their lock and their Approve / Deny actions
+  and degrade to the default controls.
+
+A **task kind** (`Contracts\TaskKind`, extend `Kinds\BaseTaskKind`) is
+registered as `[key => class]`. A task IS of kind `<key>` when `context.<key>`
+is an array: a SYSTEM-set marker that only the kind's own service may file,
+edit or remove (wrap its writes in `Services\TaskKinds::asKind()`). The kind
+declares:
+- `actions(task, viewer)`: `Support\TaskAction` objects (key, label, style,
+  inputs, confirm, agentAllowed);
+- `hides()`: default controls to hide (status / assignee / claim / pass / ask);
+- `locksStatus()`: when true, the Task saving hook refuses every other status
+  write (`Exceptions\TaskKindLocked`, a 422 on the API/batch);
+- `panel()`: what the task view shows about the underlying thing;
+- `perform()`: the work. It runs as the kind, so it may close its own task.
+
+**One action path:** `Services\TaskActions` (`describe` / `offered` /
+`perform`). TaskShow renders the actions and hides what the kind asks; the
+agent API's `show` carries a `kind` block; `perform` runs an action, **403** for
+a non-agentAllowed one. A host's own screens call the same service.
+
+The approval task (TASK-1021) is the first kind: `ApprovalKind`, marker
+`context.approval`, every default hidden, status locked, Approve / Deny for
+staff only. `Approvable` gains `approvalPanelRows()` and `approvalInputs()`.
+`ApprovalTaskLocked` now extends `TaskKindLocked`: catch the parent.
+
 ## Unreleased — the `resolved` status: the canon of "finished" (TASK-1193)
 
 **No migration (status is a plain string). One config edit on hosts with a

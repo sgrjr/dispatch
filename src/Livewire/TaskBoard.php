@@ -164,6 +164,14 @@ class TaskBoard extends Component
 
         $fromStatus = $task->status;
 
+        // TASK-1188: a kind that locks its status (an approval) moves only by
+        // its own actions. Refuse BEFORE any sibling is repositioned.
+        if ($fromStatus !== $toStatus && ($kind = $task->kind()) !== null && $kind->locksStatus($task)) {
+            $this->statusNotice = $kind->lockedException($task, false)->getMessage();
+
+            return;
+        }
+
         $siblingsQuery = $taskClass::query()->where('status', $toStatus);
         if ($fromStatus === $toStatus) {
             $siblingsQuery->whereKeyNot($task->getKey());
@@ -375,7 +383,14 @@ class TaskBoard extends Component
 
             $fromStatus = $task->status;
             $task->status = $toStatus;
-            $task->save();
+            try {
+                $task->save();
+            } catch (\Sgrjr\Dispatch\Exceptions\TaskKindLocked $e) {
+                // TASK-1188: skipped, like an unauthorized task, and said why.
+                $this->statusNotice = $e->getMessage();
+
+                continue;
+            }
 
             $task->recordEvent(
                 TaskComment::EVENT_STATUS_CHANGE,

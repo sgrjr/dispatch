@@ -198,10 +198,20 @@ class TaskPresenter
                 'context' => 'object|null — arbitrary per-task data. For an EXCEPTION-filed task it carries the whole incident: exception{class,message,file,line}, trace[], route/method/url, times_seen/first_seen/last_seen, plus result{commit,resolution,metrics} from any agent that worked it. An exception task with an empty description is NOT evidence-free — read context before declining it. Also carries source{file,line,imported_at} import provenance',
                 'attachments' => '[{filename, mime, size_bytes, is_image:bool}] — metadata SIGNALS only: no fetch URL, binaries do not travel the agent API',
                 'comments' => '[{id:int, event_type:string, is_internal:bool, author:string|int|null, body:string, meta:object|null, attachment_count:int, created_at:iso8601}]',
+                // TASK-1188 — on `show` (agent API + dispatch:show --json) only.
+                'kind' => 'object|null — the task KIND (a task that defines its own controls), null for a plain task: {key, actions: [{key, label, style, inputs: [{key, label, type, required?, options?}], confirm, agent_allowed}] (ONLY the ones you may `perform`), hides: string[] (default controls this kind hides: status|assignee|claim|pass|ask), locks_status: bool (true = done/batch/claim/drag are REFUSED; only its actions move it), panel: {title, state?, rows: [{label, value, emphasis?}]}|null}',
             ],
             // Close conventions (§17C / done verb): what a completed task stores
             // and the recommended way to record HOW it resolved, so the board can
             // measure pre-resolved briefs (built vs. already-implemented/obsolete).
+            // TASK-1188 — POST agent/perform · dispatch:perform <code> <action> [--input=k=v]…
+            'perform' => [
+                'code' => 'string',
+                'action' => 'string — a key from the task\'s kind.actions',
+                'input' => 'object|null — the action\'s inputs by key; `required` ones must be present (422 otherwise); undeclared keys are dropped',
+                'response' => '{message: string|null, task: <full shape + kind>}',
+                'refusals' => '403 = not offered to an agent (a person\'s action, e.g. an approval\'s Approve / Deny); 422 = a missing input or the kind refused; 404 = no such task',
+            ],
             'done' => [
                 'status' => 'the target status (default done). The three CLOSED statuses each mean one thing: done = the prescribed work was completed, nothing left; resolved = dealt with, but NOT as written (partly, differently, or the need went away), note REQUIRED; declined = not done, by decision (reason recommended). All three close the task alike (dependents unblock, an ask returns the ball).',
                 'note' => 'string — what actually happened, recorded as the body of the status event (meta.note). REQUIRED for status=resolved (a 422 otherwise); optional for any other status. CLI: --note / --note-file.',
@@ -341,6 +351,8 @@ class TaskPresenter
                 TaskComment::EVENT_MERGED,
                 TaskComment::EVENT_CLAIMED,
                 TaskComment::EVENT_LANE_CHANGE,
+                // TASK-1188 — a task kind's action was run (internal).
+                TaskComment::EVENT_ACTION,
                 // TASK-997 part B (the ball / hand-off).
                 TaskComment::EVENT_HANDED_OFF,
                 TaskComment::EVENT_ASKED,

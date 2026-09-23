@@ -47,6 +47,23 @@ interface Approvable
     public function approvalIsPending(): bool;
 
     /**
+     * TASK-1188 — what the approval task's panel shows about the request:
+     * [{label, value, emphasis?: bool}]. The emphasized row is the thing the
+     * approver must CHECK (an agent session's code).
+     *
+     * @return array<int, array{label: string, value: string, emphasis?: bool}>
+     */
+    public function approvalPanelRows(): array;
+
+    /**
+     * TASK-1188 — the choices Approve offers (they arrive in approveBy()'s
+     * $options): TaskAction input specs, e.g. an agent session's length.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function approvalInputs(): array;
+
+    /**
      * Grant it. `$options` carries kind-specific choices the approver made
      * (for an agent session: ttl, scopes, lane). The implementation MUST close
      * the approval task through ApprovalTasks::resolve(): one closer, whether

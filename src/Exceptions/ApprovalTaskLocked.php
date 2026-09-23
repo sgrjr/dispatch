@@ -9,9 +9,9 @@ namespace Sgrjr\Dispatch\Exceptions;
  *
  * An InvalidArgumentException on purpose: every agent endpoint and the batch
  * service already turn that into a 422, so the refusal reaches an agent as a
- * clear message, never a 500.
+ * clear message, never a 500. The approval kind's own TaskKindLocked (TASK-1188).
  */
-class ApprovalTaskLocked extends \InvalidArgumentException
+class ApprovalTaskLocked extends TaskKindLocked
 {
     public static function forTask(?string $code): self
     {

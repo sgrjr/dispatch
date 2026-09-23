@@ -64,7 +64,10 @@ class DispatchShow extends Command
         $comments = $task->comments;
 
         if ($this->option('json')) {
-            $this->line(json_encode(TaskPresenter::toArray($task, true), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            // TASK-1188 — the same `kind` block the agent API's show carries.
+            $this->line(json_encode(TaskPresenter::toArray($task, true) + [
+                'kind' => app(\Sgrjr\Dispatch\Services\TaskActions::class)->describe($task, null, true),
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             return self::SUCCESS;
         }

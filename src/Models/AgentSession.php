@@ -91,6 +91,39 @@ class AgentSession extends Model implements Approvable
             && ($this->expires_at === null || now()->lt($this->expires_at));
     }
 
+    public function approvalPanelRows(): array
+    {
+        $meta = $this->requested_meta ?? [];
+        $scopes = $meta['scopes'] ?? null;
+        $rows = [
+            ['label' => 'Agent', 'value' => (string) ($this->agent_name ?: 'an agent')],
+            ['label' => 'Confirm the code the agent printed', 'value' => (string) $this->user_code, 'emphasis' => true],
+        ];
+        if (filled($this->purpose)) {
+            $rows[] = ['label' => 'Purpose', 'value' => (string) $this->purpose];
+        }
+        $rows[] = ['label' => 'Scopes', 'value' => is_array($scopes) && $scopes !== [] ? implode(', ', $scopes) : 'the default grant'];
+        $rows[] = ['label' => 'Lane', 'value' => (string) (($meta['lane'] ?? null) ?: config('dispatch.agent.lane') ?: 'none')];
+
+        return $rows;
+    }
+
+    public function approvalInputs(): array
+    {
+        return [[
+            'key' => 'ttl',
+            'label' => 'for',
+            'type' => 'select',
+            'required' => false,
+            'options' => [
+                ['value' => '', 'label' => 'the default length'],
+                ['value' => '3600', 'label' => '1 hour'],
+                ['value' => '10800', 'label' => '3 hours'],
+                ['value' => '28800', 'label' => '8 hours'],
+            ],
+        ]];
+    }
+
     /** How a decided request ended, for its approval task. */
     public function approvalOutcome(): string
     {

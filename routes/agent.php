@@ -53,6 +53,9 @@ Route::middleware(['dispatch.agent', 'throttle:dispatch-agent-verb'])->group(fun
     Route::post('add', [AgentController::class, 'add'])->middleware('dispatch.agent.scope:add')->name('add');
     Route::post('note', [AgentController::class, 'note'])->middleware('dispatch.agent.scope:note')->name('note');
     Route::post('done', [AgentController::class, 'done'])->middleware('dispatch.agent.scope:done')->name('done');
+    // TASK-1188 — run a task kind's action (agentAllowed ones only). A host
+    // must add `perform` to its published `agent.verbs` (see UPGRADING.md).
+    Route::post('perform', [AgentController::class, 'perform'])->middleware('dispatch.agent.scope:perform')->name('perform');
 
     // Batch memorialize (§20) — apply a whole manifest of add/update ops in ONE
     // transactional hit instead of a verb call per task. Additive + server-bounded

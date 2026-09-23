@@ -96,7 +96,7 @@ class Task extends Model
         static::saving(function (self $task) {
             $task->restampTopicAccountKeyIfDirty();
             $task->guardOriginImmutability();
-            $task->guardApprovalLock();
+            $task->guardKindLock();
             $task->guardStatusNote();
         });
     }
@@ -189,44 +189,47 @@ class Task extends Model
     }
 
     /**
-     * An approval task (TASK-1021) is decided, never "done'd". Its status, and
-     * its `context.approval` marker, change only through the approval service
-     * (Approve / Deny / expiry). This hook is the one choke point: every status
-     * write in the package (done, the agent API, batch, board drag and bulk,
-     * list bulk, TaskShow, claim, closing passes) is a model save, so all of
-     * them land here. Nothing may FILE a task carrying the marker except the
-     * service either.
+     * TASK-1188 — a task KIND's marker is system set, and a kind may LOCK its
+     * status to its own actions (an approval task, TASK-1021, is decided, never
+     * "done'd"). Only the kind's own service, inside TaskKinds::asKind(), may
+     * file, change or remove a registered kind's `context.<key>` marker, or
+     * move a status the kind locks. This hook is the one choke point: every
+     * status write in the package (done, the agent API, batch, board drag and
+     * bulk, list bulk, TaskShow, claim, closing passes) is a model save, so all
+     * of them land here. The kind supplies its own refusal.
      */
-    protected function guardApprovalLock(): void
+    protected function guardKindLock(): void
     {
-        if (\Sgrjr\Dispatch\Services\ApprovalTasks::resolving()) {
+        if (\Sgrjr\Dispatch\Services\TaskKinds::writing()) {
             return;
         }
 
-        $marker = \Sgrjr\Dispatch\Services\ApprovalTasks::MARKER;
-        $now = is_array($this->context) ? ($this->context[$marker] ?? null) : null;
+        $original = $this->exists ? $this->getOriginal('context') : null;
 
-        if (! $this->exists) {
-            if ($now !== null) {
-                throw \Sgrjr\Dispatch\Exceptions\ApprovalTaskLocked::filing();
+        foreach (\Sgrjr\Dispatch\Services\TaskKinds::registered() as $key => $class) {
+            $now = is_array($this->context) ? ($this->context[$key] ?? null) : null;
+            $was = is_array($original) ? ($original[$key] ?? null) : null;
+
+            if ($was === null && $now !== null) {
+                throw app($class)->lockedException($this, true);
             }
-
-            return;
-        }
-
-        $original = $this->getOriginal('context');
-        $was = is_array($original) ? ($original[$marker] ?? null) : null;
-        if ($was === null) {
-            if ($now !== null) {
-                throw \Sgrjr\Dispatch\Exceptions\ApprovalTaskLocked::filing();
+            if ($was !== null && $now != $was) {
+                throw app($class)->lockedException($this, false);
             }
-
-            return;
         }
 
-        if ($this->isDirty('status') || $now != $was) {
-            throw \Sgrjr\Dispatch\Exceptions\ApprovalTaskLocked::forTask($this->code);
+        if ($this->exists && $this->isDirty('status')) {
+            $kind = \Sgrjr\Dispatch\Services\TaskKinds::for($this);
+            if ($kind !== null && $kind->locksStatus($this)) {
+                throw $kind->lockedException($this, false);
+            }
         }
+    }
+
+    /** TASK-1188 — this task's registered kind, or null (the default controls). */
+    public function kind(): ?\Sgrjr\Dispatch\Contracts\TaskKind
+    {
+        return \Sgrjr\Dispatch\Services\TaskKinds::for($this);
     }
 
     /**
