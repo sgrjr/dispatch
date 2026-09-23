@@ -324,3 +324,35 @@ test('a LINK action points at the work\'s own tool: surfaces render the url, and
         ->assertSee('href="https://example.test/requests/64"', false)
         ->assertSee('Review &amp; Mark Done', false);
 });
+
+// --- a task that CLOSES WITH ITS RECORD (RecordGatedKind, TASK-1190) --------------------
+
+test('a record-gated task links to its record\'s tool while it is open, locks its status, and closes only through closeGated with the note', function () {
+    config(['dispatch.task_kinds.ticket' => \Sgrjr\Dispatch\Tests\Fixtures\TicketGatedKind::class]);
+    \Sgrjr\Dispatch\Tests\Fixtures\TicketGatedKind::$tickets = [64 => true];
+    $task = TaskKinds::asKind(fn () => app(DispatchTaskService::class)->create([
+        'title' => 'Gated', 'status' => 'open', 'context' => ['ticket' => ['id' => 64]],
+    ]));
+    $staff = dispatchMakeUser(730);
+
+    $view = app(TaskActions::class)->describe($task, $staff);
+    expect($view['actions'][0]['url'])->toBe('https://example.test/tickets/64')
+        ->and($view['actions'][0]['label'])->toBe('Review & Mark Done')
+        ->and($view['hides'])->toBe(['status', 'claim'])
+        ->and($view['locks_status'])->toBeTrue();
+
+    $task->status = 'done';
+    expect(fn () => $task->save())->toThrow(TaskKindLocked::class, 'closes with its record');
+
+    // The record is decided in its tool; its closer closes the task with the note.
+    \Sgrjr\Dispatch\Tests\Fixtures\TicketGatedKind::$tickets = [64 => false];
+    $fresh = $task->fresh();
+    expect(TaskKinds::closeGated($fresh, 'done', 'Added the plan; starts November.', $staff, 'the ticket was marked done'))->toBeTrue()
+        ->and(TaskKinds::closeGated($fresh->fresh(), 'done', 'again'))->toBeFalse();
+
+    $event = $task->comments()->where('event_type', TaskComment::EVENT_STATUS_CHANGE)->latest('id')->firstOrFail();
+    expect($task->fresh()->status)->toBe('done')
+        ->and($event->body)->toBe("Status changed from `open` to `done` (the ticket was marked done).\n\nAdded the plan; starts November.")
+        ->and($event->meta['note'])->toBe('Added the plan; starts November.')
+        ->and(app(TaskActions::class)->describe($task->fresh(), $staff)['actions'])->toBe([]);
+});

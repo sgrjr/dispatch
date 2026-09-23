@@ -81,6 +81,16 @@ declares:
   a plain task. A kind that travels also lets the pass close the passer; one
   that doesn't and locks its status (an approval) refuses the pass.
 
+**A task that closes with its record** (`Kinds\RecordGatedKind`, TASK-1190):
+the canonical pattern for work decided in ANOTHER tool (a customer's plan
+request, a timesheet). Implement `record()`, `recordIsOpen()`, `toolUrl()` (and
+`toolLabel()`). The base gives one LINK action to the tool (`TaskAction::link`,
+never performed from the task), hides status + claim, locks the status, and
+travels with a pass. The record's closer calls `TaskKinds::closeGated($task,
+$status, $note, $actor, $because)` for each task it gates: that closes it as the
+kind, with the note as the body of the status event, then notifies and unblocks
+dependents. ⛔ Not the task-to-task `blocked_by` link.
+
 **One action path:** `Services\TaskActions` (`describe` / `offered` /
 `perform`). TaskShow renders the actions and hides what the kind asks; the
 agent API's `show` carries a `kind` block; `perform` runs an action, **403** for

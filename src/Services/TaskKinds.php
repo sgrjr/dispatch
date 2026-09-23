@@ -2,7 +2,10 @@
 
 namespace Sgrjr\Dispatch\Services;
 
+use Illuminate\Contracts\Auth\Authenticatable;
+use Sgrjr\Dispatch\Contracts\DispatchNotifier;
 use Sgrjr\Dispatch\Contracts\TaskKind;
+use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Models\Task;
 
 /**
@@ -42,6 +45,44 @@ final class TaskKinds
         } finally {
             self::$writing--;
         }
+    }
+
+    /**
+     * TASK-1190 — the ONE call a record's closer makes for each task its record
+     * gates ({@see \Sgrjr\Dispatch\Kinds\RecordGatedKind}): close it as the kind,
+     * with the closer's note as the body of the status event, then notify and
+     * unblock its dependents like every other status surface. Returns false (and
+     * writes nothing) when the task is already closed.
+     *
+     * @param  string|null  $because  why, for the timeline: "the plan request was marked done"
+     */
+    public static function closeGated(Task $task, string $status = 'done', ?string $note = null, ?Authenticatable $actor = null, ?string $because = null): bool
+    {
+        if ($task->isClosed()) {
+            return false;
+        }
+
+        $from = $task->status;
+        $task->status = $status;
+        $task->withStatusNote($note);
+        self::asKind(fn () => $task->save());
+
+        $actorId = $actor !== null ? (int) $actor->getAuthIdentifier() : null;
+        $task->recordEvent(
+            TaskComment::EVENT_STATUS_CHANGE,
+            $actorId,
+            $task->statusChangeMeta(['from' => $from, 'to' => $status]),
+            $task->statusChangeBody("Status changed from `{$from}` to `{$status}`".($because ? " ({$because})" : '').'.'),
+        );
+
+        try {
+            app(DispatchNotifier::class)->taskStatusChanged($task, $from, $status, $actor);
+        } catch (\Throwable) {
+            // the notifier contract never throws; never let it undo a close
+        }
+        app(DispatchTaskService::class)->notifyDependentsOfClosure($task, $actorId);
+
+        return true;
     }
 
     /** @return array<string, class-string<TaskKind>> the registered kinds that resolve to a TaskKind class */
