@@ -302,3 +302,25 @@ test('⛔ a kind that does NOT travel and locks its status refuses a closing pas
     expect($task->fresh()->status)->toBe('open')
         ->and(Task::query()->where('origin_type', 'task')->where('origin_id', $task->code)->count())->toBe(0);
 });
+
+// --- a kind whose work has its own tool links to it (TASK-1190) ----------------------
+
+test('a LINK action points at the work\'s own tool: surfaces render the url, and it is never performed', function () {
+    config(['dispatch.task_kinds.form_link' => \Sgrjr\Dispatch\Tests\Fixtures\FormLinkKind::class]);
+    $task = TaskKinds::asKind(fn () => app(DispatchTaskService::class)->create([
+        'title' => 'A request', 'status' => 'open', 'context' => ['form_link' => ['id' => 64]],
+    ]));
+    $staff = dispatchMakeUser(720);
+
+    $action = app(TaskActions::class)->describe($task, $staff)['actions'][0];
+    expect($action['key'])->toBe('open_form')
+        ->and($action['url'])->toBe('https://example.test/requests/64');
+
+    expect(fn () => app(TaskActions::class)->perform($task, 'open_form', $staff))
+        ->toThrow(TaskActionRefused::class, 'opens a page');
+
+    $this->actingAs($staff);
+    Livewire::test(TaskShow::class, ['task' => $task])
+        ->assertSee('href="https://example.test/requests/64"', false)
+        ->assertSee('Review &amp; Mark Done', false);
+});

@@ -93,6 +93,10 @@ final class TaskActions
                 : new TaskActionRefused("`{$key}` is not an action {$task->code} offers you now.", $asAgent ? 403 : 422);
         }
 
+        if ($action->isLink()) {
+            throw new TaskActionRefused("{$action->label} opens a page ({$action->url}); it is not run from the task.");
+        }
+
         foreach ($action->requiredInputs() as $required) {
             if (trim((string) ($input[$required] ?? '')) === '') {
                 throw new TaskActionRefused("{$action->label} needs `{$required}`.");

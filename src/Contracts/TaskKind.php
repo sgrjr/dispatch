@@ -32,7 +32,9 @@ interface TaskKind
     public static function key(): string;
 
     /**
-     * The actions THIS viewer is offered now, in display order. A null viewer
+     * The actions THIS viewer is offered now, in display order. An action may
+     * be a LINK to the work's own tool (TaskAction::link): when the flow is
+     * complex, point at it rather than rebuilding it in the task. A null viewer
      * is an agent or the trusted CLI (no person); the action service then keeps
      * only the agentAllowed ones.
      *

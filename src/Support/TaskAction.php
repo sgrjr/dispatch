@@ -9,6 +9,11 @@ namespace Sgrjr\Dispatch\Support;
  * An input: {key, label, type: text|textarea|select, required?: bool,
  * options?: [{value, label}], placeholder?: string}. A `required` input is
  * checked by the action service before the kind runs, so a kind can rely on it.
+ *
+ * A LINK action (`url` set, TASK-1190) is a pointer, not something the task
+ * runs: when the work has its own tool (a request's review form), the task
+ * links to it instead of reinventing it. Surfaces render it as a link, and
+ * TaskActions::perform() refuses it.
  */
 final class TaskAction
 {
@@ -28,7 +33,19 @@ final class TaskAction
         public readonly array $inputs = [],
         public readonly ?string $confirm = null,
         public readonly bool $agentAllowed = false,
+        public readonly ?string $url = null,
     ) {}
+
+    /** A link to the work's own tool, never performed (TASK-1190). */
+    public static function link(string $key, string $label, string $url, string $style = self::STYLE_PRIMARY): self
+    {
+        return new self($key, $label, $style, url: $url);
+    }
+
+    public function isLink(): bool
+    {
+        return $this->url !== null;
+    }
 
     /** @return array<int, string> the keys of the inputs that must be filled */
     public function requiredInputs(): array
@@ -49,6 +66,7 @@ final class TaskAction
             'inputs' => $this->inputs,
             'confirm' => $this->confirm,
             'agent_allowed' => $this->agentAllowed,
+            'url' => $this->url,
         ];
     }
 }

@@ -201,6 +201,9 @@
                                     @endif
                                 </label>
                             @endforeach
+                            @if (! empty($action['url']))
+                                <a href="{{ $action['url'] }}" class="dispatch-btn {{ $action['style'] === 'primary' ? '' : 'is-secondary' }}">{{ $action['label'] }}</a>
+                            @else
                             <button
                                 type="button"
                                 wire:click="performAction('{{ $action['key'] }}')"
@@ -209,6 +212,7 @@
                                 class="dispatch-btn {{ $action['style'] === 'primary' ? '' : 'is-secondary' }}"
                                 @if ($action['style'] === 'danger') style="color: var(--dispatch-danger);" @endif
                             >{{ $action['label'] }}</button>
+                            @endif
                         </div>
                     @endforeach
                 </div>
