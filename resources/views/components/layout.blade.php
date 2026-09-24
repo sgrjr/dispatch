@@ -310,6 +310,13 @@
                         @endif
                     </a>
                 @endif
+                {{-- Host-configured links (dispatch.nav.links) — see Support\NavLinks. --}}
+                @foreach (\Sgrjr\Dispatch\Support\NavLinks::resolve($dispatchNavIsStaff) as $dispatchNavLink)
+                    <a href="{{ $dispatchNavLink['href'] }}" class="dispatch-nav-host"
+                        @if ($dispatchNavLink['title']) title="{{ $dispatchNavLink['title'] }}" @endif
+                        @if ($dispatchNavLink['new_tab']) target="_blank" rel="noopener" @endif
+                    >{{ $dispatchNavLink['label'] }}</a>
+                @endforeach
                 @if ($dispatchNavIsStaff)
                     {{-- W13-9: search from anywhere — a plain GET that lands on the
                          List page's existing ?q= param (TaskList's $search reads it

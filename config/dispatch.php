@@ -199,6 +199,27 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Main navigation — host links
+    |--------------------------------------------------------------------------
+    |
+    | Extra links appended to the Dispatch layout's top navigation, after the
+    | built-in Board / List / New / … links and before the search box — so a
+    | host can tie Dispatch back into the rest of its app without publishing
+    | the layout. Each entry: `label` plus either a literal `url` or a
+    | `route` name (+ optional `params`; skipped when not registered).
+    | Optional: `staff_only` (DispatchGate::isStaff()), `new_tab`, `title`.
+    |
+    |   'links' => [
+    |       ['label' => 'Chat', 'url' => '/chat', 'staff_only' => true],
+    |       ['label' => 'Dashboard', 'route' => 'dashboard'],
+    |   ],
+    */
+    'nav' => [
+        'links' => [],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Capture widget
     |--------------------------------------------------------------------------
     |

@@ -284,6 +284,28 @@ Change the URL prefix, name prefix, or middleware stacks entirely in
 wire your own routes to the same Livewire component classes if you need a
 non-default mount point.
 
+### Linking back into your app — `nav.links`
+
+The layout's top navigation takes host-configured links, appended after the
+built-in ones (before the search box), so Dispatch reads as part of your app
+without publishing the layout view:
+
+```php
+// config/dispatch.php
+'nav' => [
+    'links' => [
+        ['label' => 'Chat', 'url' => '/chat', 'staff_only' => true],
+        ['label' => 'Dashboard', 'route' => 'dashboard'],
+        ['label' => 'Docs', 'url' => 'https://docs.example.test', 'new_tab' => true],
+    ],
+],
+```
+
+Each entry needs a `label` and either a literal `url` or a `route` name (plus
+optional `params`). A route that is not registered is skipped, not rendered
+dead. Optional keys: `staff_only` (shown only when `DispatchGate::isStaff()`),
+`new_tab`, `title` (tooltip). Resolution lives in `Support\NavLinks`.
+
 ---
 
 ## 6. The CLI verb loop
