@@ -319,6 +319,26 @@ class AgentController extends Controller
             : $userModel::query()->find((int) $ref);
     }
 
+    /**
+     * Where an agent's lane-less `add` lands (TASK-1237): `agent.add_lane` —
+     * null (no department, the old behavior), 'session' (the lane this
+     * session was granted), or a lane key. Anything that is not a real lane
+     * reads as null, never a 422 on a task the agent did not route.
+     */
+    private function defaultAddLane($session): ?string
+    {
+        $setting = config('dispatch.agent.add_lane');
+        if (! is_string($setting) || trim($setting) === '') {
+            return null;
+        }
+
+        $lane = trim($setting) === 'session'
+            ? (is_string($session->lane ?? null) ? trim($session->lane) : '')
+            : trim($setting);
+
+        return $lane !== '' && app(LaneResolver::class)->isLane($lane) ? $lane : null;
+    }
+
     public function add(Request $request): JsonResponse
     {
         $s = $this->session($request);
@@ -390,6 +410,8 @@ class AgentController extends Controller
                 abort(422, "`{$v['lane']}` is not a valid lane.");
             }
             $attributes['lane'] = $v['lane'];
+        } elseif (($default = $this->defaultAddLane($s)) !== null) {
+            $attributes['lane'] = $default;
         }
 
         $labels = $v['labels'] ?? [];
@@ -574,6 +596,14 @@ class AgentController extends Controller
         abort_if($max > 0 && count($v['operations']) > $max, 422, "Batch too large: {$max} operations max.");
 
         $dryRun = (bool) ($v['dry_run'] ?? false);
+
+        // An `add` that names no lane lands in agent.add_lane (TASK-1237).
+        if (($default = $this->defaultAddLane($s)) !== null) {
+            $v['operations'] = array_map(
+                fn (array $op) => ($op['op'] ?? null) === 'add' && ! array_key_exists('lane', $op) ? $op + ['lane' => $default] : $op,
+                $v['operations'],
+            );
+        }
 
         try {
             $outcome = app(DispatchBatchService::class)->apply(

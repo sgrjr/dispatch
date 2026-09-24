@@ -464,3 +464,51 @@ test('the approval queue renders every lane option and the no-lane choice', func
         ->assertSee('Ops · Triage')
         ->assertSee('Support');
 });
+
+// --- TASK-1237: where an agent's lane-less add lands ------------------------
+
+test('agent.add_lane null (default): a lane-less add stays unrouted, as before', function () {
+    bindAgentLaneResolver();
+
+    $code = $this->withToken(lanedAgentToken('ops:triage'))->postJson('api/dispatch/agent/add', ['title' => 'no lane given'])
+        ->assertCreated()->json('task.code');
+
+    expect(Task::where('code', $code)->value('lane'))->toBeNull();
+});
+
+test("agent.add_lane 'session': a lane-less add lands in the session's granted lane; an explicit lane wins", function () {
+    bindAgentLaneResolver();
+    config(['dispatch.agent.add_lane' => 'session']);
+    $token = lanedAgentToken('ops:triage');
+
+    $defaulted = $this->withToken($token)->postJson('api/dispatch/agent/add', ['title' => 'code work'])->assertCreated()->json('task.code');
+    $explicit = $this->withToken($token)->postJson('api/dispatch/agent/add', ['title' => 'for support', 'lane' => 'support'])->assertCreated()->json('task.code');
+
+    expect(Task::where('code', $defaulted)->value('lane'))->toBe('ops:triage')
+        ->and(Task::where('code', $explicit)->value('lane'))->toBe('support');
+});
+
+test("agent.add_lane 'session' also covers batch adds, and a laneless session files unrouted", function () {
+    bindAgentLaneResolver();
+    config(['dispatch.agent.add_lane' => 'session']);
+
+    $this->withToken(lanedAgentToken('ops:triage', ['batch']))->postJson('api/dispatch/agent/batch', ['operations' => [
+        ['op' => 'add', 'title' => 'batch code work', 'ref' => 'a'],
+        ['op' => 'add', 'title' => 'batch for support', 'ref' => 'b', 'lane' => 'support'],
+    ]])->assertOk();
+
+    expect(Task::where('title', 'batch code work')->value('lane'))->toBe('ops:triage')
+        ->and(Task::where('title', 'batch for support')->value('lane'))->toBe('support');
+
+    $code = $this->withToken(unlanedAgentToken())->postJson('api/dispatch/agent/add', ['title' => 'from a laneless session'])->assertCreated()->json('task.code');
+    expect(Task::where('code', $code)->value('lane'))->toBeNull();
+});
+
+test('agent.add_lane naming a lane that does not exist files unrouted rather than refusing the add', function () {
+    bindAgentLaneResolver();
+    config(['dispatch.agent.add_lane' => 'nowhere']);
+
+    $code = $this->withToken(lanedAgentToken('ops'))->postJson('api/dispatch/agent/add', ['title' => 'still filed'])->assertCreated()->json('task.code');
+
+    expect(Task::where('code', $code)->value('lane'))->toBeNull();
+});

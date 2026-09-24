@@ -6,6 +6,7 @@ use Illuminate\Console\Command;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 use Sgrjr\Dispatch\Services\AgentSessionService;
 use Sgrjr\Dispatch\Services\DispatchBatchService;
+use Sgrjr\Dispatch\Support\SkillPublisher;
 
 /**
  * Diagnose agent config drift — the recurring "stale published config silently
@@ -53,6 +54,7 @@ class DispatchDoctor extends Command
         $this->checkConfigCache($cached);
         $this->checkKeyDrift();
         $this->checkPublishedAssetDrift();
+        $this->checkSkills();
 
         return $this->option('json') ? $this->reportJson($env, $enabled) : $this->reportHuman($env, $enabled);
     }
@@ -160,6 +162,33 @@ class DispatchDoctor extends Command
      * are excluded on purpose — overriding them is their entire point, so drift
      * there is a feature, not a finding. Config has its own key-drift check.
      */
+    /**
+     * The rendered Claude Code skills against a fresh render (TASK-1237): a
+     * stale copy means the config, an overlay or the package moved since the
+     * last `dispatch:skills:publish`.
+     */
+    protected function checkSkills(): void
+    {
+        $publisher = app(SkillPublisher::class);
+
+        foreach ($publisher->skills() as $skill) {
+            try {
+                $state = $publisher->status($skill)['state'];
+            } catch (\InvalidArgumentException $e) {
+                $this->add('error', "skills.{$skill}", $e->getMessage());
+
+                continue;
+            }
+
+            match ($state) {
+                SkillPublisher::UP_TO_DATE => $this->add('ok', "skills.{$skill}", 'Rendered skill is current.'),
+                SkillPublisher::MISSING => $this->add('info', "skills.{$skill}", 'Not published — run `php artisan dispatch:skills:publish` if this host uses Claude Code.'),
+                SkillPublisher::STALE => $this->add('warn', "skills.{$skill}", 'Stale: config, an overlay or the package changed. Run `php artisan dispatch:skills:publish`.'),
+                default => $this->add('warn', "skills.{$skill}", "The copy in .claude/skills is {$state}. Move its edits into `dispatch.skills.vars` or an overlay, then `dispatch:skills:publish --force`."),
+            };
+        }
+    }
+
     protected function checkPublishedAssetDrift(): void
     {
         $trees = [

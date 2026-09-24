@@ -3,6 +3,13 @@ name: dispatch-track
 description: PROACTIVELY capture any actionable item — bug, feature request, follow-up, "same recipe for X", "we should also...", customer feedback, "track this", "future task" — as a Dispatch task via the `dispatch:add` CLI, in the SAME response that surfaces the item; don't ask permission first. Also use to DRIVE the Dispatch verb loop when picking up and closing out work: `dispatch:pull` → `dispatch:next` → do the work → `dispatch:note` → `dispatch:done` → `dispatch:push`. Also use when the user explicitly says "track ...", "add a task for ...", "log this as ...", "future task: ...", "remember to ...", "what should I work on next", "pull tasks", "push tasks".
 ---
 
+<!-- dispatch:template
+  A TEMPLATE (TASK-1237): hosts don't copy this file, they render it with
+  `php artisan dispatch:skills:publish` (variables, if/else/endif blocks and
+  overlay slots — see src/Support/SkillPublisher.php). This note is dropped
+  from the rendered skill.
+-->
+
 # Dispatch task capture & verb loop
 
 This project tracks open work — bugs, features, follow-ups, tech debt,
@@ -54,10 +61,16 @@ with its own `dispatch:add` call.
 ```bash
 php artisan dispatch:add "<title>" \
   --type=<bug|feature|chore|debt|verify> \
-  --priority=<blocker|high|medium|low> \
-  --description="<full markdown body>" \
+  --priority=<low|medium|high|blocker> \
+<!-- dispatch:if code_lane -->
+  --lane={{ code_lane }} \
+<!-- dispatch:else -->
+  [--lane=<department>] \
+<!-- dispatch:endif -->
+  --description-file=<body.md> \
   --label=source:<customer|agent> \
   [--label=area:<area>] \
+  [--due=<date>] \
   [--public]
 ```
 
@@ -72,22 +85,40 @@ job creation" ✓, "Bug in jobs" ✗.
 - `debt` — known tech debt, security hardening, performance, "should fix this later"
 - `verify` — a previously-claimed-done thing that needs smoke-testing
 
-**`--priority`**
+**`--priority`** — how urgent, which is NOT how important:
+- `low` — **the default for a new feature, idea or follow-up you file**; nice-to-have polish, someday
+- `medium` — a latent bug, or a feature someone is actively waiting on
+- `high` — user-blocking, a security issue, or a noisy production bug
 - `blocker` — production is broken right now, users can't use the app
-- `high` — user-blocking, security issue, or a noisy bug
-- `medium` — default; pick this when unclear
-- `low` — nice-to-have polish, idea for someday
+<!-- dispatch:if loud_priorities -->
 
-**`--description`** — write it as if for a future agent with no context.
-Include:
+⚠️ {{ loud_priorities }} are **loud**: they email the people a task concerns,
+with an alarm in the subject. Filing at one of them is a deliberate act — never
+the default, never because the item "matters".
+<!-- dispatch:endif -->
+
+**`--lane`** — the department that will WORK the task.
+<!-- dispatch:if code_lane -->
+- **Code work → `--lane={{ code_lane }}`.** A bug, feature, chore, debt or
+  verify task that gets worked in this codebase goes to the developer lane.
+  Leave `--lane` off and the task lands in **No department**, where nobody is
+  watching for it.
+- Name another lane only when another department does the work — a customer
+  follow-up, a sales or accounting action. `dispatch:add --help` names the lanes.
+<!-- dispatch:else -->
+- Omit it unless this app routes work by department; then name the lane that
+  will do the work.
+<!-- dispatch:endif -->
+
+**`--description-file`** (or `--description="…"`, or `-` for stdin) — write it
+as if for a future agent with no context. Include:
 - What was reported / what triggers the issue
 - What success looks like (acceptance criteria, even one line)
 - Relevant file paths, function/class names, line numbers if known
 - Related task codes (e.g. `TASK-042`) if this links to existing work
 - Any commands or one-liners that reproduce the issue
 
-Use markdown freely. For multi-line bodies, use a shell heredoc or a
-properly-quoted string.
+Use markdown freely. A body file beats shell quoting for anything multi-line.
 
 **`--label`** (repeat for each) — labels are auto-created if missing, no
 setup required. Sensible starting conventions:
@@ -96,18 +127,21 @@ setup required. Sensible starting conventions:
 - `area:<area>` — check this project's existing labels (`dispatch:labels` lists
   them with usage, or the board) before inventing a new one; reuse what's
   already there. A near-duplicate you mint becomes a one-off label someone has
-  to clean up at `/labels` later
+  to clean up at `{{ labels_path }}` later
 - `epic:<slug>` — an epic is now just a single-label **Focus**: tag it with an
-  `epic:<slug>` label and manage the steering lens at `/focuses`. There is no
-  special epic type anymore.
+  `epic:<slug>` label and manage the steering lens at `{{ focuses_path }}`. There
+  is no special epic type anymore.
 
 **Label kinds** decide where a label renders: `area:*` / `epic:*` are
 **elevated** (navigational — they lead cards/rows and a board can lane by them);
 `source:*` / `kind:*` are **meta** (bookkeeping — detail view only). Anything
 else is a plain label.
 
+**`--due`** — a deadline, when there is one (`2026-08-15`, `"+3 days"`).
+
 **`--public`** — omit unless the item should be visible to non-staff
 submitters (default is private/internal).
+<!-- dispatch:slot capture -->
 
 ### After creating
 
@@ -127,10 +161,16 @@ until the user explicitly asks to sync.
 > `dispatch:next` / `dispatch:done` / `dispatch:push`) reads and writes
 > **this app's own local database** — right for tracking work on this
 > checkout. If you're working the **real, production backlog** instead —
+<!-- dispatch:if remote_host -->
+> {{ app_name }}'s authoritative task list lives on production
+> (`{{ remote_host }}`) — stop and use
+<!-- dispatch:else -->
 > i.e. the authoritative task list lives on a different, deployed instance —
-> stop and use `.claude/skills/dispatch-agent-session/SKILL.md` instead: it
-> commissions a human-approved session, after which the verbs target
-> production automatically (sticky remote).
+> stop and use
+<!-- dispatch:endif -->
+> `.claude/skills/dispatch-agent-session/SKILL.md` instead: it commissions a
+> human-approved session, after which the verbs target production
+> automatically (sticky remote).
 >
 > **Sticky-remote caveat:** while a commissioned agent-session token is
 > ACTIVE on this machine, the plain verbs below default to the REMOTE
@@ -140,11 +180,12 @@ until the user explicitly asks to sync.
 >
 > **Dropped-session caveat:** if a session died involuntarily instead
 > (mid-run 401, denied/revoked/expired), the plain verbs FAIL LOUD rather
-> than silently acting on the local DB — local data must never masquerade
-> as the remote board. For local tracking in that state: pass `--local`
-> per call, or run `dispatch:session:end` once to acknowledge the drop and
-> restore local-by-default (`dispatch:session:refresh --wait` renews the
-> session instead, if remote work should continue).
+> than silently acting on the local DB — local throwaway tasks must never
+> masquerade as the production board. For local tracking in that state:
+> pass `--local` per call, or run `dispatch:session:end` once to
+> acknowledge the drop and restore local-by-default
+> (`dispatch:session:refresh --wait` renews the session instead, if
+> production work should continue).
 
 When the user asks "what should I work on next", or you're about to start a
 unit of work that should be tracked end-to-end, drive Dispatch's CLI verbs in
@@ -224,18 +265,17 @@ parse against that instead of guessing field names from examples.
    change; always pass a commit SHA when you have one. Record how it resolved
    with a `result.resolution` key (`built | already-implemented | obsolete`,
    free-form allowed) so the board can tell built work from what was already in
-   the tree. **Pick the closed status by what actually happened** — each means
+   the tree. **Pick the closed status by what actually happened**; each means
    exactly one thing:
    - `done` = the prescribed work was completed, nothing left;
    - `resolved` = dealt with, but **not as written** (partly, differently, or
      the need went away). `--note="<what actually happened>"` is REQUIRED
      (refused without one);
    - `declined` = not done, by decision.
-   ⛔ Never close "handled another way" work as `done`. `--status=verifying`, or
-   `--status=backburner` (parked/not-now — out of the queue without rejecting,
-   distinct from declined) are the non-closing alternatives. (`--note` rides
-   any status as the body of the status event; for a free-standing comment,
-   use `dispatch:note`.)
+   ⛔ Never close handled-another-way work as `done`. `--status=verifying` or
+   `--status=backburner` (parked / not-now, out of the queue without declining)
+   are the non-closing alternatives. (`--note` rides any status as the body of
+   the status event; for a free-standing comment, use `dispatch:note`.)
 
    **If you close `verifying`, name the exact check** — in `--result` or a
    preceding note. A bare `verifying` with no stated ask is noise: it reads
@@ -248,18 +288,18 @@ parse against that instead of guessing field names from examples.
    someone else has to find your code later.
 
    **Stamp run metrics (optional).** To memorialize what the run cost —
-   tokens, cost, tool usage, duration — fold `dispatch:metrics` into the same
-   `--result` call so the numbers come from the transcript, not your say-so
-   (you can't read your own token usage, so never hand-write these):
+   tokens, cost, tool usage, duration — add `--with-metrics` to the same
+   `done` call. The numbers come from the transcript, not your say-so (you
+   can't read your own token usage, so never hand-write these):
 
    ```bash
-   php artisan dispatch:done <code> --commit=<sha> \
-     --result="$(php artisan dispatch:metrics <code> --json)"
+   php artisan dispatch:done <code> --commit=<sha> --result-file=result.json \
+     --with-metrics --since="<claimed_at from claim>"
    ```
 
    It windows the transcript to this task's claim→now span (many tasks per
-   session is fine) and lands under `context.result.metrics`. Add `--note` for
-   a one-line internal summary on the timeline instead.
+   session is fine) and lands under `context.result.metrics`, beside your
+   summary rather than over it.
 
 7. **`php artisan dispatch:push`** — only when the user explicitly asks to
    sync local state to a remote install. Never push automatically as a side
@@ -267,7 +307,8 @@ parse against that instead of guessing field names from examples.
 
 ### Related read-only commands
 
-- `php artisan dispatch:queue --n=10` — the next N tasks in priority order, as a table (triage a backlog)
+- `php artisan dispatch:queue --limit=10` — the next N tasks in priority order (triage a backlog); `--count` is the zero-filled census
+- `php artisan dispatch:find <words>` — search title/code/description across **every** status ("was this already built?")
 - `php artisan dispatch:show <code>` — full detail + thread for one task
 - `php artisan dispatch:schema` — the documented `--json` shape (the frozen
   `TaskPresenter` contract) every `--json` verb's output conforms to
@@ -286,10 +327,12 @@ php artisan dispatch:batch run.json             # apply to the local DB in one t
 
 Each operation is either an `add` (new task, defaults to triage) or an `update`
 (existing task by `code`); labels attach additively, comments dedupe, and the
-whole file applies atomically. `php artisan dispatch:schema` documents the
-manifest under the `batch` key. To turn a `todo.md`-style checklist into a
+whole file applies atomically. The same `priority` and `lane` rules as
+`dispatch:add` apply to every `add`. `php artisan dispatch:schema` documents the
+manifest under the `batch` key. To turn a checklist-style markdown file into a
 manifest automatically, use the `dispatch-batch-migrate` skill. (Add `--remote`
 only when driving the **production** backlog — see the agent-session skill.)
+<!-- dispatch:slot loop -->
 
 ### Working the production backlog instead of local dev
 
@@ -302,15 +345,17 @@ peer.
 That's different from **working the real, authoritative backlog directly on
 production** from somewhere else (no local checkout of the prod DB at all).
 For that, commission a human-approved session first — see
-`.claude/skills/dispatch-agent-session/SKILL.md` for the one-shot
-`dispatch:session:request --wait` → approval flow. While that session's token
+`.claude/skills/dispatch-agent-session/SKILL.md` for the
+`dispatch:session:request` → approval flow. While that session's token
 is active, the verbs target production **by default** (sticky remote — each
 call announces `→ remote: <host>`; `--local` overrides); with no active
-session, the plain verbs above never reach production.
+session, the plain verbs above never reach production — and after a session
+DROPS mid-run, they fail loud instead of quietly reverting to local (see the
+dropped-session caveat above).
 
 ### See also
 
-- [`README.md`](../../../README.md) — full install/usage guide, including the
+- `{{ package_path }}/README.md` — full install/usage guide, including the
   three contract bindings (`DispatchGate`, `TenantResolver`,
   `SubmitterResolver`) that shape what "staff" and "visible" mean in this app,
   plus §8 "AI / remote agent" for the full agent-CLI verb list and the
@@ -318,3 +363,4 @@ session, the plain verbs above never reach production.
 - `.claude/skills/dispatch-agent-session/SKILL.md` — commissioning and
   driving a session against the production backlog
 - `config/dispatch.php` — every tunable, commented inline
+<!-- dispatch:slot see-also -->

@@ -1,14 +1,26 @@
 ---
 name: dispatch-agent-session
-description: PROACTIVELY use when asked to work the PRODUCTION Dispatch backlog from outside the deploy — "work the live/prod backlog", "run as a remote agent", "commission an agent session", "pick up real tasks remotely", "work this against production", "work/claim all the open production items", "plan and complete the production backlog" — or whenever context makes clear the target is the authoritative (production) Dispatch instance rather than local dev. Drives the human-commissioned session protocol (two-step for agents: `dispatch:session:request` → surface the user_code → `dispatch:session:status --wait` collects on approval; `--wait` on the request is the human-at-a-terminal one-shot) and the verb loop that follows — while the session token is active every dispatch verb targets production automatically (sticky remote), so the loop is queue → claim → work → note → done → session:end — plus the batch "memorialize" path (`dispatch:batch`) that commits a whole run of add/update ops in one hit. Also use when a session goes stale (401 mid-loop, denied, revoked, expired) and needs graceful handling. Do NOT use for local dev work against the app's own database — see `dispatch-track` for that.
+description: "Work {{ app_name }}'s REAL production Dispatch backlog from this checkout - \"work the production backlog\", \"pick up real dispatch tasks\", \"run as a remote dispatch agent\", \"work prod tickets\". Drives the commissioned-session protocol (session:request -> user_code -> session:status --wait) and the claim -> work -> note -> done loop; also stale/401 sessions. Not for local dev-DB tasks (plain dispatch:* --local)."
 ---
 
-# Work the production Dispatch backlog as a commissioned agent
+<!-- dispatch:template
+  A TEMPLATE (TASK-1237): hosts don't copy this file, they render it with
+  `php artisan dispatch:skills:publish` (variables, if/else/endif blocks and
+  overlay slots — see src/Support/SkillPublisher.php). This note is dropped
+  from the rendered skill.
+-->
 
-A human **commissions** you a short-lived session in a staff-gated UI; every
-dispatch verb after that runs against production as that session. This is NOT
-local dev tracking (that's `dispatch-track`) — it's the real, authoritative
-backlog.
+# Working {{ app_name }}'s PRODUCTION Dispatch backlog remotely
+
+{{ app_name }} installs the `sgrjr/dispatch` package. The **real** backlog — live
+user feedback, real bug/feature tasks — exists **only on production**
+<!-- dispatch:if remote_host -->
+(`{{ remote_host }}`); the local dev DB holds throwaway tasks. A
+<!-- dispatch:else -->
+(the deployed instance); the local dev DB holds throwaway tasks. A
+<!-- dispatch:endif -->
+staff human **commissions** you a short-lived session, and every dispatch verb
+after that runs against production as that session.
 
 **The prime rule: the CLI narrates the pipeline.** Every output and every error
 names the next step — often as a ready-to-paste command with the values filled
@@ -25,13 +37,23 @@ boundaries.
 #    approver sees + controls the actual grant). Buffered/blocked harness that
 #    can't read stdout mid-command? add --code-file=<path> — the user_code is
 #    written there as JSON the moment it exists.
+<!-- dispatch:if code_lane -->
+#    Lane: omit it — production grants `{{ code_lane }}` by default, which
+#    is the lane you want. Pass --lane=<key> only when the commission says to
+#    serve a different department.
+<!-- dispatch:endif -->
 php artisan dispatch:session:request --name="<agent>" --purpose="<why>"
 
-# 2. Show the operator the user_code verbatim, then collect the token — the poll
-#    blocks until the human decides (most land in ~10s); don't ask them to come
-#    back and say "approved":
-#    "Approve in the Agent Sessions UI (/dispatch/agent-sessions on the target
-#     instance) — confirm the code reads <user_code>."
+# 2. Show the operator the user_code verbatim AND the "Approval task: TASK-…"
+#    line the request printed. The request filed an "Approval requested" task
+#    that rang the approvers' lane. The operator approves it from that task
+#    (Approve / Deny); {{ agent_sessions_path }} still works too.
+#    Then collect the token. The poll blocks until the human decides (most land
+#    in ~10s), so don't ask them to come back and say "approved":
+#    "Approve TASK-… (or at {{ remote_url }}{{ agent_sessions_path }})
+#     — confirm the code reads <user_code>."
+#    ⛔ Never try to close an approval task yourself (done / batch / status):
+#    it is refused with a 422, by design. Only a human's Approve/Deny decides it.
 php artisan dispatch:session:status --wait
 #    (--wait ON session:request folds request→collect into ONE call — the
 #     shortcut for a HUMAN at a terminal, not a buffered agent.)
@@ -81,6 +103,31 @@ Notes on the loop:
   description is not evidence-free — read `context` before you decline it.**
   (Field cost of skipping this: a sweep `declined` a live bug whose `context`
   already named its fix commit.)
+<!-- dispatch:if code_lane -->
+- **You serve a LANE, not the whole board.** Your session is granted one —
+  normally `{{ code_lane }}` — and `next`/`claim` then offer you only that lane,
+  the department above it (`{{ code_lane_department }}`), and **unrouted** work.
+  Never a sibling sub-lane, never another department. `session:status` prints
+  the granted lane; so does the approval UI. **An empty `next` under a lane
+  means "nothing in your lane", not "the board is empty"** — check
+  `dispatch:queue --count` before concluding the backlog is clear.
+- **Claim-by-code is exempt.** `dispatch:claim TASK-042` works on any task in
+  any lane — that is how a human hands you work outside your lane. A `--lane=`
+  filter only narrows WITHIN what you are served, so you cannot use it to
+  reach another department's work.
+<!-- dispatch:endif -->
+- **Filing new work mid-run** (a bug you tripped over, a follow-up the work
+  surfaced): `dispatch:add "<title>" --type=… --description-file=body.md`.
+<!-- dispatch:if code_lane -->
+  **Code work goes to `--lane={{ code_lane }}`** — left off, it lands in **No
+  department**, where nobody is watching for it. Name another lane only when
+  another department does the work.
+<!-- dispatch:endif -->
+  **Priority: a new feature or follow-up is `low`, a latent bug `medium`.**
+<!-- dispatch:if loud_priorities -->
+  {{ loud_priorities }} are loud — they email the people the task concerns — so
+  they are for real urgency only, never a default.
+<!-- dispatch:endif -->
 - `next`/`claim` are **focus-steered** — production runs a Focus that steers you
   to the sanctioned work first (it never starves; empty/busy focuses fall
   through). That's the mandate and normally what you WANT. Use `--no-focus` only
@@ -89,8 +136,8 @@ Notes on the loop:
 - Claim is atomic and race-safe. A named code is honored only while the task is
   still unclaimed (open/triage) — an empty, non-zero result means someone else
   has it: skip it, don't force it.
-- The backlog is **live** — other agents and humans work it too. Re-run
-  `dispatch:queue` between tasks; claim each item only when you START it.
+- The backlog is **live** — other agents and {{ app_name }}'s staff work it too.
+  Re-run `dispatch:queue` between tasks; claim each item only when you START it.
 - On close, record **`result.resolution`** — `built | already-implemented |
   obsolete` (free-form allowed) — so the board can tell what you built from what
   was already there (the vet's "already-implemented" close should stamp it).
@@ -112,13 +159,15 @@ Notes on the loop:
   stdin. Never pipe a body through shell command substitution to dodge a missing
   flag; there is always a file.
 - **`dispatch:edit` and `dispatch:merge` do NOT reach the remote** — they are not
-  agent verbs, so mid-session they refuse instead of writing to the local dev DB
-  (codes are minted per-database; the same code names a different task on each
-  side). To change a **title or description** on the remote, write a batch
-  manifest `update` op (`{"op":"update","code":"TASK-042","description":"…"}`)
-  and apply it with `dispatch:batch` — that op carries `title`, `type`,
-  `priority`, `description`, `labels`, `due_at`, and comments. `--due` and
-  `--label` also ride `dispatch:done` for a single task.
+  agent verbs, so mid-session they refuse instead of writing to this checkout's
+  local dev DB (codes are minted per-database; the same code names a different
+  task on each side). To change a **title or description** on the production
+  board, write a batch manifest `update` op
+  (`{"op":"update","code":"TASK-042","description":"…"}`) and apply it with
+  `dispatch:batch` — that op carries `title`, `type`, `priority`, `description`,
+  `labels`, `due_at`, and comments. `--due` and `--label` also ride
+  `dispatch:done` for a single task.
+<!-- dispatch:slot loop -->
 
 ## Decision card — the calls the tool can't make for you
 
@@ -166,7 +215,7 @@ Park/unpark works the same way: `--status=backburner` shelves,
 `--status=open|triage|verifying` revives — the timeline's status-change events
 say where it came from.
 
-**Task kinds (TASK-1188).** Some tasks define their own controls: `dispatch:show <CODE> --json`
+**Task kinds.** Some tasks define their own controls: `dispatch:show <CODE> --json`
 carries a `kind` block (null for a plain task). `kind.locks_status: true` means done/batch/claim
 are REFUSED (a 422, by design); the task moves only by its own actions. `kind.actions` lists the
 ones YOU may run: `php artisan dispatch:perform <CODE> <action> [--input=key=value]`. A person's
@@ -187,9 +236,10 @@ php artisan dispatch:batch run.json
 an existing code (status moves only if you set it — memorialize honest
 statuses); labels attach; comments dedupe; keyed re-submits are safe; `due_at`
 is tri-state on either op kind — omit it to leave the date alone, `null`/`""`
-to clear, an ISO date to set. Needs the `batch` scope. The
-`dispatch-batch-migrate` skill converts a `todo.md`-style checklist into a
-manifest.
+to clear, an ISO date to set. The filing rules above (`priority`, `lane`) hold
+for every `add`. Needs the `batch` scope. The `dispatch-batch-migrate` skill
+converts any checklist-style markdown into a manifest.
+<!-- dispatch:slot batch -->
 
 ## When things go wrong
 
@@ -199,13 +249,14 @@ manifest.
   `session:request`). Only a still-pending request actually polls the remote.
 - **`expired` / `revoked` / mid-loop `401`** — the local token is cleared and a
   **drop marker** goes up: bare verbs now FAIL LOUD instead of silently serving
-  the local dev DB as if it were production (that masquerade reads as data
-  loss). The baked-in resolution is **`dispatch:session:refresh --wait`** — it
+  this checkout's local dev DB as if it were production (that masquerade reads
+  as data loss — production tasks "vanish", local throwaway tasks look real).
+  The baked-in resolution is **`dispatch:session:refresh --wait`** — it
   re-requests with the same identity/scopes, names itself a renewal of the
-  dropped session for the approver, and blocks for the human decision. Run it
-  ONCE and tell the operator; **never loop it** — approval is still a human
-  call. `dispatch:session:end` instead acknowledges the drop (back to local
-  work); `--local` overrides per call.
+  dropped session for the approver at `{{ agent_sessions_path }}`, and blocks for
+  the human decision. Run it ONCE and tell the operator; **never loop it** —
+  approval is still a human's call. `dispatch:session:end` instead
+  acknowledges the drop (back to local-only work); `--local` overrides per call.
 - **No banner, and a task you KNOW exists reads as missing?** `→ remote:` rides
   every sticky call; its **absence is the tell**. If `show` answers "Task not
   found" for a live production code, `queue` comes back empty for a bucket that
@@ -226,13 +277,19 @@ manifest.
   once or twice, widening the budget; then surface it and ask. Never spin.
 - **Transport / TLS / secret errors** — the CLI prints the exact fix (CA
   bundle, stale config cache). `php artisan dispatch:doctor` diagnoses agent
-  config drift on either end.
+  config drift: locally it confirms `remote.url` points at
+  `{{ remote_url }}/api/dispatch/agent` over HTTPS; on
+  production (the operator's box) it flags an unset `bootstrap_secret` (→ 503),
+  a verb missing from the published `agent.verbs` (→ 403 not scoped), or a
+  stale config cache after a rotate/upgrade. Server-side drift is theirs to fix
+  — surface the symptom, don't work around it.
 
 ## Hard boundaries (no tool guardrail — hold these yourself)
 
 - Never point a dev checkout's DB connection at production; the commissioned
   session IS the access path.
-- Never approve your own session, or route approval through a non-staff user.
+- Never approve your own session, or route approval through a non-staff user
+  (they can't see `{{ agent_sessions_path }}`).
 - Never fabricate a `done` — memorialize partial work honestly
   (`in_progress` / `verifying` + a note), in the verb loop and in batches alike.
 - Don't claim tasks to "reserve" them. Survey → plan → claim serially as you
@@ -254,14 +311,23 @@ manifest.
   asserting it did — more than one "the API dropped my labels" report has turned
   out to be a client-side parse of a documented shape (`labels` is `string[]`).
 
-## Client prerequisites
+## Client prerequisites (this dev box)
 
 ```
-DISPATCH_AGENT_REMOTE_URL=https://<production-host>/api/dispatch/agent
+DISPATCH_AGENT_REMOTE_URL={{ remote_url }}/api/dispatch/agent
 # token dotfile: ~/.dispatch/agent-token.json by default (0600, outside the repo)
-# bootstrap secret: --secret=… or DISPATCH_AGENT_BOOTSTRAP_SECRET (client env)
+# bootstrap secret: --secret=… or DISPATCH_AGENT_BOOTSTRAP_SECRET (ask the operator)
 # sticky remote: on by default; DISPATCH_AGENT_STICKY=false to require --remote per call
 ```
 
-`php artisan dispatch:doctor` pre-flights the client/server agent config
-(remote URL, verbs, secret, cache state) before the first session of the day.
+If `DISPATCH_AGENT_REMOTE_URL` is unset, every command fails fast with an
+instructive error instead of silently falling back to local — by design. The
+same doctrine covers a token lost mid-run: a drop marker
+(`~/.dispatch/agent-token.json.dropped`) makes bare verbs fail loud until
+`dispatch:session:refresh --wait` renews the session or `dispatch:session:end`
+acknowledges the drop — never trust bare-verb output as production data after
+a 401 without one of those. `php artisan dispatch:doctor` pre-flights the
+config before the first session of the day and flags a lingering drop marker.
+(Production must have `DISPATCH_AGENT=true` + the bootstrap secret set — the
+operator's setup, not yours.)
+<!-- dispatch:slot prerequisites -->

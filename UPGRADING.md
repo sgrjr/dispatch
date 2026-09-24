@@ -53,6 +53,42 @@ Quick diagnosis:
   directly (missing verb, unset secret, still-cached config) instead of leaving
   you to infer it from a `403`/`401`/`503`.
 
+## Unreleased — the shipped skills are rendered templates (TASK-1237)
+
+**Behavior change: `vendor:publish --tag=dispatch-skills` is gone.** The three
+skills (`dispatch-track`, `dispatch-agent-session`, `dispatch-batch-migrate`)
+now ship as templates, and `php artisan dispatch:skills:publish` renders them
+into `.claude/skills`. It uses your `dispatch.skills.vars`:
+- `app_name`, `remote_host`
+- `agent_sessions_path`, `focuses_path`, `labels_path`
+- `code_lane` (defaults to `agent.lane`)
+
+It also inserts overlay files from `.claude/dispatch-skills/<skill>/<slot>.md`
+for host-only prose.
+
+To migrate a host that hand-edited its copies:
+1. Move each host fact into a var, and each host-only paragraph into an overlay.
+2. Run `dispatch:skills:publish --force` once. The hand copies read as
+   UNMANAGED, and the first publish refuses them without `--force`.
+3. Diff the result against the old copies.
+
+From then on:
+- `dispatch:skills:publish --check` exits non-zero on drift.
+- `dispatch:doctor` warns when a rendered copy is stale or hand-edited.
+- A plain publish never overwrites a hand edit.
+
+The rendered skills also now tell agents to file code work with
+`--lane=<code_lane>`, and to file a new feature at `low` / a bug at `medium`.
+They name the priorities that email people (`notifications.email_priorities`).
+
+**`agent.add_lane`** (new, default null = unchanged). A task an agent files
+over the agent API (`add`, or a batch `add`) that names no lane lands in:
+- `'session'`: the lane its session was granted, or
+- a fixed lane key, if you set one.
+
+An explicit lane always wins. A value that is not a real lane files unrouted
+rather than refusing the add.
+
 ## Unreleased — task kinds: a task defines its own controls (TASK-1188)
 
 **No migration. Two config edits on hosts with a published `config/dispatch.php`.**

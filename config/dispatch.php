@@ -226,6 +226,33 @@ return [
     | downloads (TaskAttachment::viewerKind()). SVG and HTML are deliberately
     | absent: both can carry script.
     */
+    /*
+    |--------------------------------------------------------------------------
+    | Shipped Claude Code skills (TASK-1237)
+    |--------------------------------------------------------------------------
+    |
+    | The package ships its skills as TEMPLATES; `php artisan
+    | dispatch:skills:publish` renders them into `target` with these `vars`
+    | and the host's overlay files (`overlays/<skill>/<slot>.md`). Edit the
+    | vars or an overlay, re-publish, done — never hand-edit the rendered
+    | copy (the publisher refuses to overwrite one without --force).
+    | `dispatch:doctor` reports a stale copy. Unset vars take the package
+    | defaults (SkillPublisher::vars()); `code_lane` defaults to agent.lane.
+    */
+    'skills' => [
+        'publish' => ['dispatch-track', 'dispatch-agent-session', 'dispatch-batch-migrate'],
+        'target' => base_path('.claude/skills'),
+        'overlays' => base_path('.claude/dispatch-skills'),
+        'vars' => [
+            // 'app_name' => 'Acme',
+            // 'remote_host' => 'www.example.com',          // the production instance
+            // 'agent_sessions_path' => '/dispatch/agent-sessions',
+            // 'focuses_path' => '/dispatch/focuses',
+            // 'labels_path' => '/dispatch/labels',
+            // 'code_lane' => 'engineering:developer',      // where code work is filed
+        ],
+    ],
+
     'attachments' => [
         'enabled' => true,
         'disk' => env('DISPATCH_ATTACHMENT_DISK', 'local'),
@@ -500,6 +527,14 @@ return [
         // (`marketing:sales`) and never another department. Claim-by-code is
         // always exempt, so a human can still hand an agent any task.
         'lane' => env('DISPATCH_AGENT_LANE'),
+
+        // TASK-1237 — the lane a task an AGENT files lands in when the add
+        // names none (`dispatch:add` / a batch `add` over the agent API).
+        // null (default) = no department, as before; 'session' = the lane
+        // the filing session was granted (normally the developer lane — an
+        // agent's filings are overwhelmingly code work); or a lane key. An
+        // explicit --lane always wins.
+        'add_lane' => env('DISPATCH_AGENT_ADD_LANE'),
 
         // TASK-1021 (approval lane): a session request files an "Approval requested" task in
         // THIS lane: the people who decide agent access. Null = the
