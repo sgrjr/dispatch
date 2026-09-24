@@ -22,6 +22,9 @@
         .dispatch-show-title { font-size: 1.65rem; line-height: 1.25; font-weight: 750; letter-spacing: -0.015em; margin: 0; flex: 1 1 24rem; min-width: 0; overflow-wrap: anywhere; }
         .dispatch-show-headactions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
         .dispatch-show-jump { display: none; }
+        .dispatch-comments-link:hover { text-decoration: none; }
+        .dispatch-count { display: inline-flex; align-items: center; justify-content: center; min-width: 1.35rem; padding: 0 0.4rem; border-radius: var(--dispatch-radius-pill); background: var(--dispatch-accent); color: var(--dispatch-accent-contrast); font-size: 0.7rem; font-weight: 700; line-height: 1.35rem; }
+        .dispatch-comments-anchor { scroll-margin-top: 1rem; }
         @media (max-width: 960px) { .dispatch-show-jump { display: inline-flex; } }
 
         /* Status + priority are the signal: bigger, filled, first. */
@@ -149,6 +152,10 @@
             <h1 class="dispatch-show-title">{{ $task->title }}</h1>
 
             <div class="dispatch-show-headactions">
+                {{-- Plain in-page anchor to the thread below — no JS. --}}
+                <a href="#comments" class="dispatch-btn is-secondary is-small dispatch-comments-link">
+                    Comments <span class="dispatch-count">{{ $commentCount }}</span>
+                </a>
                 @if ($canEdit)
                     <a href="#dispatch-properties" class="dispatch-btn is-secondary is-small dispatch-show-jump">Edit properties</a>
                 @endif
@@ -393,8 +400,10 @@
                 @endif
             </section>
 
-            {{-- Comment thread --}}
-            <livewire:dispatch-thread :task="$task" :key="'task-thread-'.$task->id" />
+            {{-- Comment thread — the header's #comments link lands here. --}}
+            <div id="comments" class="dispatch-comments-anchor">
+                <livewire:dispatch-thread :task="$task" :key="'task-thread-'.$task->id" />
+            </div>
 
             {{-- ═══ Reference: collapsed and quiet — there when you need it ═══ --}}
             @php($agentMetrics = \Sgrjr\Dispatch\Support\MetricsPresenter::present($task->context, $task->type))

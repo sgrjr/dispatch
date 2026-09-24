@@ -302,3 +302,17 @@ test('the meta editor renders and keeps a working error bag even when the diagno
     // ...and the real validation error bag still flows through a re-render.
     $component->set('status', 'not-a-real-status')->call('saveMeta')->assertHasErrors('status');
 });
+
+test('the header links to #comments and counts comments, not system events', function () {
+    $this->actingAs(dispatchMakeUser(70));
+    $task = app(DispatchTaskService::class)->create(['title' => 'Chatty task']);
+
+    $task->comments()->create(['body' => 'internal', 'is_internal' => true, 'event_type' => TaskComment::EVENT_COMMENT]);
+    $task->comments()->create(['body' => 'public', 'is_internal' => false, 'event_type' => TaskComment::EVENT_COMMENT]);
+    $task->comments()->create(['body' => 'moved', 'is_internal' => true, 'event_type' => TaskComment::EVENT_DESCRIPTION_EDITED]);
+
+    Livewire::test(TaskShow::class, ['task' => $task])
+        ->assertViewHas('commentCount', 2)
+        ->assertSee('href="#comments"', false)
+        ->assertSee('id="comments"', false);
+});

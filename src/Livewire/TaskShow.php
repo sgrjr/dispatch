@@ -696,7 +696,16 @@ class TaskShow extends Component
         // controls it hides, and its panel. Null = the default controls only.
         $kindView = app(\Sgrjr\Dispatch\Services\TaskActions::class)->describe($this->task, Auth::user());
 
+        // The header's "Comments" jump link. Same visibility as the thread
+        // (TaskThread::render()): non-staff never count internal notes; system
+        // event rows are activity, not comments.
+        $commentQuery = $this->task->comments()->where('event_type', TaskComment::EVENT_COMMENT);
+        if (! Gate::allows('commentInternal', $this->task)) {
+            $commentQuery->where('is_internal', false);
+        }
+
         return view('dispatch::livewire.task-show', [
+            'commentCount' => $commentQuery->count(),
             'kindView' => $kindView,
             'hiddenControls' => $kindView['hides'] ?? [],
             'watchPrefs' => Auth::id() ? $this->task->watchPreferencesFor((int) Auth::id()) : null,
