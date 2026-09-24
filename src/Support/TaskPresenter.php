@@ -243,7 +243,7 @@ class TaskPresenter
                     'labels' => 'string[] (ATTACHED additively — never replaces existing labels)',
                     'commit' => 'string|null (stored under context.result.commit)',
                     'result' => 'object|null (stored under context.result)',
-                    'comments' => '[{body:string, internal:bool}]',
+                    'comments' => '[{body:string, public?:bool (default false: an internal, staff-only note; true = the submitter sees it and is emailed), internal?:bool (legacy inverse of public)}]',
                     'note' => 'string|null — what actually happened; REQUIRED (this, or a comment in the same op) when status=resolved. Recorded as the body of the status event; on add it also lands as a comment.',
                     // TASK-995 — the shorthand "<type>:<id>" string OR the
                     // explicit *_type/*_id pair; tri-state like due_at (absent =

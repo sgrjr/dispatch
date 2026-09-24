@@ -830,7 +830,9 @@ class DispatchBatchService
             $task->comments()->create([
                 'user_id' => $actorUserId,
                 'body' => $body,
-                'is_internal' => (bool) ($c['internal'] ?? false),
+                // Internal unless the comment opts into public (`public: true`
+                // or an explicit `internal: false`).
+                'is_internal' => \Sgrjr\Dispatch\Http\Controllers\AgentController::noteIsInternal($c),
                 'event_type' => TaskComment::EVENT_COMMENT,
                 'meta' => $actorMeta ?: null,
             ]);

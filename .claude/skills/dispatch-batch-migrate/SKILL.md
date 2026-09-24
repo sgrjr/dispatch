@@ -148,8 +148,9 @@ done signal.
   unparseable value fails the whole manifest by op index anyway.
 - **`commit`** — a trailing `(commit <sha>)` / `#<sha>` → the op's `commit`.
 - **`comments`** — trailing notes after `—`, `:`, or an indented sub-bullet
-  become a `comment` (`{"body": "…"}`). Mark it `"internal": true` unless it's
-  clearly submitter-facing.
+  become a `comment` (`{"body": "…"}`). A comment is an **internal** (staff-only)
+  note by default; add `"public": true` only for a reply meant for the
+  submitter (they see it and are emailed).
 - **`ref`** (add) — give every add a short handle (`n1`, `n2`, … or a slug) so
   the response maps it back to the minted code.
 - **`key`** (add, optional) — if the same list may be applied more than once,
@@ -169,7 +170,7 @@ a working file, not a checked-in artifact (e.g. `<scratchpad>/dispatch-batch.jso
   "operations": [
     {"op": "update", "code": "TASK-042", "status": "in_progress",
      "commit": "abc1234", "labels": ["area:checkout"],
-     "comments": [{"body": "after-tax path fixed; pre-tax remains", "internal": true}]},
+     "comments": [{"body": "after-tax path fixed; pre-tax remains"}]},
 
     {"op": "add", "ref": "n1", "title": "Checkout crashes on null coupon",
      "type": "bug", "priority": "medium", "labels": ["area:checkout"]},
@@ -251,7 +252,7 @@ by simply applying again.
 {
   "operations": [
     {"op": "update", "code": "TASK-042", "status": "in_progress", "commit": "abc1234",
-     "comments": [{"body": "after-tax done, pre-tax left", "internal": true}]},
+     "comments": [{"body": "after-tax done, pre-tax left"}]},
     {"op": "update", "code": "TASK-043", "status": "done", "labels": ["area:webhooks"]},
     {"op": "add", "ref": "n1", "title": "Checkout crashes on null coupon",
      "type": "bug", "priority": "medium", "labels": ["area:checkout"]},

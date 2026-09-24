@@ -26,7 +26,13 @@ class TaskThread extends Component
     public Task $task;
 
     public string $body = '';
-    public bool $is_internal = false;
+    /**
+     * Staff opt IN to a public reply (the submitter sees it and is emailed);
+     * a staff comment is an internal note by default. A non-staff commenter
+     * (the submitter) always writes publicly — an internal note would hide
+     * their own reply from them.
+     */
+    public bool $is_public = false;
 
     /** @var array<int,\Livewire\Features\SupportFileUploads\TemporaryUploadedFile> */
     public array $newAttachments = [];
@@ -43,7 +49,7 @@ class TaskThread extends Component
     {
         return [
             'body' => 'required|string|min:1|max:5000',
-            'is_internal' => 'boolean',
+            'is_public' => 'boolean',
             'newAttachments.*' => 'nullable|file',
         ];
     }
@@ -59,9 +65,9 @@ class TaskThread extends Component
         Gate::authorize('comment', $this->task);
         $this->validate();
 
-        // Silently downgrade an internal-note request from a non-staff user
-        // rather than erroring — mirrors rupkeep's defensive behavior.
-        $internal = $this->is_internal && Gate::allows('commentInternal', $this->task);
+        // Internal unless a staff member opted into a public reply; anyone who
+        // may not write internal notes (the submitter) writes publicly.
+        $internal = Gate::allows('commentInternal', $this->task) && ! $this->is_public;
 
         $attachmentService = app(AttachmentService::class);
         foreach ($this->newAttachments as $file) {
@@ -94,7 +100,7 @@ class TaskThread extends Component
             $this->task->watch(Auth::id());
         }
 
-        $this->reset('body', 'is_internal', 'newAttachments');
+        $this->reset('body', 'is_public', 'newAttachments');
         $this->dispatch('commentAdded');
     }
 

@@ -436,7 +436,10 @@ class AgentController extends Controller
         $v = $request->validate([
             'code' => ['required', 'string'],
             'body' => ['required', 'string'],
+            // Internal by default; `public: true` (or an explicit
+            // `internal: false`) opts into a note the submitter sees.
             'internal' => ['nullable', 'boolean'],
+            'public' => ['nullable', 'boolean'],
         ]);
 
         /** @var class-string<Task> $taskModel */
@@ -451,13 +454,26 @@ class AgentController extends Controller
             null,
             $this->agentMeta($s),
             $v['body'],
-            (bool) ($v['internal'] ?? false),
+            self::noteIsInternal($v),
         );
 
         return response()->json([
             'task' => TaskPresenter::toArray($task->fresh()->load('labels', 'submitter', 'assignee')),
             'comment_id' => $comment->id,
         ]);
+    }
+
+    /** A note is internal unless it opts into public (`public: true` or `internal: false`). */
+    public static function noteIsInternal(array $v): bool
+    {
+        if (array_key_exists('public', $v) && $v['public'] !== null) {
+            return ! filter_var($v['public'], FILTER_VALIDATE_BOOLEAN);
+        }
+        if (array_key_exists('internal', $v) && $v['internal'] !== null) {
+            return filter_var($v['internal'], FILTER_VALIDATE_BOOLEAN);
+        }
+
+        return true;
     }
 
     public function done(Request $request): JsonResponse

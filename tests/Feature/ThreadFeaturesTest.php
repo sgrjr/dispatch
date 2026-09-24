@@ -58,6 +58,7 @@ test('posting a public comment fires the notifier taskCommented hook exactly onc
 
     Livewire::test(TaskThread::class, ['task' => $task])
         ->set('body', 'Here is a public update')
+        ->set('is_public', true)
         ->call('save');
 
     expect($spy->commented)->toHaveCount(1);
@@ -99,11 +100,10 @@ test('an internal comment also fires the notifier taskCommented hook', function 
 
     $this->actingAs($author);
 
-    // The shipped DefaultGate treats any authenticated user as staff, so this
-    // internal-note request is honored rather than silently downgraded.
+    // The shipped DefaultGate treats any authenticated user as staff, and a
+    // staff comment is an INTERNAL note unless it opts into public.
     Livewire::test(TaskThread::class, ['task' => $task])
         ->set('body', 'Staff-only heads up')
-        ->set('is_internal', true)
         ->call('save');
 
     expect($spy->commented)->toHaveCount(1);
@@ -172,4 +172,97 @@ test('an internal comment stays hidden from a non-staff viewer', function () {
     Livewire::test(TaskThread::class, ['task' => $task])
         ->assertSee('Public update visible to everyone')
         ->assertDontSee('Internal note not for customer eyes');
+});
+
+// ── comment visibility: internal by default, public is the opt-in ──────────
+
+test('a staff comment is an INTERNAL note by default, and the composer says so', function () {
+    $this->actingAs(dispatchMakeUser(61));
+    $task = app(DispatchTaskService::class)->create(['title' => 'Default visibility']);
+
+    Livewire::test(TaskThread::class, ['task' => $task])
+        ->assertSee('Internal note: staff only')
+        ->assertSee('Add internal note')
+        ->set('body', 'Just between us')
+        ->call('save');
+
+    expect($task->comments()->where('body', 'Just between us')->value('is_internal'))->toBeTrue();
+});
+
+test('opting into public names the consequence before it is sent', function () {
+    $this->actingAs(dispatchMakeUser(62));
+    $task = app(DispatchTaskService::class)->create(['title' => 'Public reply']);
+
+    Livewire::test(TaskThread::class, ['task' => $task])
+        ->set('is_public', true)
+        ->assertSee('Public reply: visible to the submitter.')
+        ->assertSee('Send public reply')
+        ->set('body', 'Fixed — thanks for reporting it')
+        ->call('save');
+
+    expect($task->comments()->where('body', 'Fixed — thanks for reporting it')->value('is_internal'))->toBeFalse();
+});
+
+test('a submitter (not staff) always writes publicly — an internal note would hide their own reply', function () {
+    $submitter = dispatchMakeUser(63);
+    app()->singleton(\Sgrjr\Dispatch\Contracts\DispatchGate::class, fn () => new class implements \Sgrjr\Dispatch\Contracts\DispatchGate
+    {
+        public function isStaff(?Authenticatable $user): bool
+        {
+            return false;
+        }
+
+        public function canSeeAll(?Authenticatable $user): bool
+        {
+            return false;
+        }
+
+        public function scopeVisible(\Illuminate\Database\Eloquent\Builder $query, ?Authenticatable $user): \Illuminate\Database\Eloquent\Builder
+        {
+            return $query;
+        }
+    });
+    $task = app(DispatchTaskService::class)->create(['title' => 'From a customer', 'submitter_user_id' => $submitter->id]);
+    $this->actingAs($submitter);
+
+    Livewire::test(TaskThread::class, ['task' => $task])
+        ->assertDontSee('Add internal note')
+        ->set('body', 'Any update?')
+        ->call('save');
+
+    expect($task->comments()->where('body', 'Any update?')->value('is_internal'))->toBeFalse();
+});
+
+test('dispatch:note is internal by default; --public opts in', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'CLI notes']);
+
+    $this->artisan('dispatch:note', ['code' => $task->code, 'body' => 'agent finding'])->assertSuccessful();
+    $this->artisan('dispatch:note', ['code' => $task->code, 'body' => 'shipped — try it now', '--public' => true])->assertSuccessful();
+
+    expect($task->comments()->where('body', 'agent finding')->value('is_internal'))->toBeTrue()
+        ->and($task->comments()->where('body', 'shipped — try it now')->value('is_internal'))->toBeFalse();
+});
+
+test('a batch comment is internal unless it says public (or the legacy internal:false)', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'Batch notes']);
+
+    app(\Sgrjr\Dispatch\Services\DispatchBatchService::class)->apply([
+        ['op' => 'update', 'code' => $task->code, 'comments' => [
+            ['body' => 'default note'],
+            ['body' => 'public note', 'public' => true],
+            ['body' => 'legacy public', 'internal' => false],
+        ]],
+    ]);
+
+    $vis = $task->comments()->pluck('is_internal', 'body');
+    expect((bool) $vis['default note'])->toBeTrue()
+        ->and((bool) $vis['public note'])->toBeFalse()
+        ->and((bool) $vis['legacy public'])->toBeFalse();
+});
+
+test('the agent API note is internal unless it says public', function () {
+    expect(\Sgrjr\Dispatch\Http\Controllers\AgentController::noteIsInternal([]))->toBeTrue()
+        ->and(\Sgrjr\Dispatch\Http\Controllers\AgentController::noteIsInternal(['public' => true]))->toBeFalse()
+        ->and(\Sgrjr\Dispatch\Http\Controllers\AgentController::noteIsInternal(['internal' => false]))->toBeFalse()
+        ->and(\Sgrjr\Dispatch\Http\Controllers\AgentController::noteIsInternal(['internal' => true, 'public' => false]))->toBeTrue();
 });

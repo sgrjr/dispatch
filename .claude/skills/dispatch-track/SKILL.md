@@ -256,8 +256,9 @@ parse against that instead of guessing field names from examples.
 
 5. **`php artisan dispatch:note <code> "<finding>"`** — as you discover
    things (root cause, a decision point, a blocker), log them immediately
-   rather than only summarizing at the end. The note is visible to the
-   submitter by default; pass `--internal` to keep it staff-only.
+   rather than only summarizing at the end. A note is **internal** (staff
+   only) by default; pass `--public` only for something meant for the
+   submitter — they see it and are emailed.
 
 6. **`php artisan dispatch:done <code> --commit=<sha> --result='{"tests":"passing"}'`**
    — mark the task complete once the work lands. `--commit` + `--result` are

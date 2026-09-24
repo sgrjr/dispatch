@@ -53,6 +53,24 @@ Quick diagnosis:
   directly (missing verb, unset secret, still-cached config) instead of leaving
   you to infer it from a `403`/`401`/`503`.
 
+## Unreleased — comments are internal by default; public is the opt-in
+
+**Behavior change.** A staff comment used to be public, meaning the submitter
+saw it and was emailed, unless someone ticked "Internal". The default is now
+flipped everywhere a comment is written.
+
+| Where | Default now | How to make it public |
+|---|---|---|
+| Task page thread | Internal note, staff only | A staff member ticks **Make public**. The composer names the result ("Internal note: staff only" / "Public reply: visible to the submitter") and the button reads **Add internal note** / **Send public reply**. |
+| `dispatch:note` | Internal | `--public`. `--internal` is still accepted. |
+| Agent API `note` | Internal | `public: true`, or an explicit `internal: false` |
+| Batch comments | Internal | `"public": true`, or the legacy `"internal": false` |
+
+A non-staff commenter (the submitter) still always writes publicly, because an
+internal note would hide their own reply from them. In the thread, staff now see
+a **public** badge on the comments the submitter can see, not an "internal" badge
+on the rest. System/status events are unchanged.
+
 ## Unreleased — the shipped skills are rendered templates (TASK-1237)
 
 **Behavior change: `vendor:publish --tag=dispatch-skills` is gone.** The three

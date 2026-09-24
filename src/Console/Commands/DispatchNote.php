@@ -11,7 +11,8 @@ use Sgrjr\Dispatch\Support\TaskPresenter;
 
 /**
  * Trusted CLI surface: queries tasks directly (no DispatchGate::scopeVisible).
- * Comments default to public; pass --internal to mark one internal-only.
+ * Notes are INTERNAL (staff only) by default; pass --public for one the
+ * submitter sees (and is emailed about). --internal is still accepted.
  */
 class DispatchNote extends Command
 {
@@ -22,7 +23,8 @@ class DispatchNote extends Command
         {code : The task code, e.g. TASK-042}
         {body? : The comment body (markdown ok). Omit and use --body-file for a long/multi-line body.}
         {--body-file= : Read the comment body from a file (or `-` for stdin) instead of the inline body argument}
-        {--internal : Mark the comment internal (default: public)}
+        {--public : Make the note public — the submitter sees it and is emailed (default: internal, staff only)}
+        {--internal : Internal (staff only) — the default; kept for older scripts}
         {--remote : Act on the configured remote agent API (the default while an agent session token is active)}
         {--local : Act on the local DB even while an agent session token is active (overrides sticky-remote)}
         {--json : Emit machine-readable JSON instead of human text}';
@@ -48,7 +50,9 @@ class DispatchNote extends Command
             $r = $this->agentPost('note', array_filter([
                 'code' => $this->argument('code'),
                 'body' => $body,
-                'internal' => $this->option('internal') ? true : null,
+                // Explicit either way, so the answer never depends on the
+                // server's default.
+                'internal' => ! $this->option('public'),
             ], fn ($v) => $v !== null));
 
             if ($r === null) {
@@ -72,13 +76,12 @@ class DispatchNote extends Command
             return self::FAILURE;
         }
 
-        // recordEvent() hardcodes is_internal=false, so we go through the
-        // comments() relation directly to honor --internal, as the contract
-        // allows.
+        // Through the comments() relation directly, so the visibility is
+        // exactly what was asked (internal unless --public).
         $comment = $task->comments()->create([
             'user_id' => Auth::id(),
             'body' => $body,
-            'is_internal' => (bool) $this->option('internal'),
+            'is_internal' => ! $this->option('public'),
             'event_type' => TaskComment::EVENT_COMMENT,
         ]);
 

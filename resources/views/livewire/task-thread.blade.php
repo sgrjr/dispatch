@@ -2,7 +2,11 @@
     <style>
         .dispatch-thread-list { list-style: none; margin: 0 0 1rem; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
         .dispatch-thread-item { border: 1px solid var(--dispatch-border); border-radius: var(--dispatch-radius-md); padding: 0.7rem 0.9rem; font-size: 0.82rem; background: var(--dispatch-surface); }
-        .dispatch-thread-item.is-internal { background: var(--dispatch-warning-bg); border-color: var(--dispatch-warning); }
+        {{-- Internal notes are the norm; a PUBLIC comment (the submitter sees it) is the one that stands out. --}}
+        .dispatch-thread-item.is-public { background: var(--dispatch-warning-bg); border-color: var(--dispatch-warning); }
+        .dispatch-thread-visibility { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.72rem; }
+        .dispatch-thread-visibility label { display: flex; align-items: center; gap: 0.4rem; font-weight: 600; }
+        .dispatch-thread-visibility small { color: var(--dispatch-text-muted); font-weight: 400; }
         .dispatch-thread-item.is-system { background: var(--dispatch-surface-muted); color: var(--dispatch-text-muted); }
         .dispatch-thread-item-head { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.02em; }
         .dispatch-thread-body { margin-top: 0.4rem; white-space: pre-wrap; }
@@ -17,7 +21,7 @@
             @php $isSystem = $c->isSystem(); @endphp
             <li @class([
                 'dispatch-thread-item',
-                'is-internal' => !$isSystem && $c->is_internal,
+                'is-public' => $canCommentInternal && !$isSystem && !$c->is_internal,
                 'is-system' => $isSystem,
             ])>
                 <div class="dispatch-thread-item-head">
@@ -26,8 +30,12 @@
                         @if ($isSystem)
                             <span class="dispatch-badge">{{ str_replace('_', ' ', $c->event_type) }}</span>
                         @endif
-                        @if ($c->is_internal)
-                            <span class="dispatch-badge is-warning">internal</span>
+                        @if ($canCommentInternal && !$isSystem)
+                            @if ($c->is_internal)
+                                <span class="dispatch-badge" title="Staff only — the submitter can't see it">internal note</span>
+                            @else
+                                <span class="dispatch-badge is-warning" title="The submitter can see this and was emailed">public</span>
+                            @endif
                         @endif
                     </span>
                     <span style="color: var(--dispatch-text-faint); text-transform:none;">{{ $c->created_at?->diffForHumans() }}</span>
@@ -85,14 +93,18 @@
 
             <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem; margin-top:0.5rem;">
                 @if ($canCommentInternal)
-                    <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.72rem; font-weight:600; color: var(--dispatch-warning);">
-                        <input type="checkbox" wire:model="is_internal">
-                        Internal — hide from submitter
-                    </label>
+                    <div class="dispatch-thread-visibility">
+                        <label style="{{ $is_public ? 'color: var(--dispatch-warning);' : '' }}">
+                            <input type="checkbox" wire:model.live="is_public">
+                            Make public — the submitter sees it and gets an email
+                        </label>
+                        <small>{{ $is_public ? 'Public reply: visible to the submitter.' : 'Internal note: staff only. The submitter never sees it.' }}</small>
+                    </div>
+                    <button type="button" wire:click="save" wire:loading.attr="disabled" wire:target="save" class="dispatch-btn">{{ $is_public ? 'Send public reply' : 'Add internal note' }}</button>
                 @else
                     <span></span>
+                    <button type="button" wire:click="save" wire:loading.attr="disabled" wire:target="save" class="dispatch-btn">Post comment</button>
                 @endif
-                <button type="button" wire:click="save" wire:loading.attr="disabled" wire:target="save" class="dispatch-btn">Post comment</button>
             </div>
         </div>
     @endif
