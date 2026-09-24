@@ -14,7 +14,7 @@ use Sgrjr\Dispatch\Services\DispatchBatchService;
  * PU-2.10 / TASK-1021: "Approval requested", a task that times out. Agent-session
  * requests are the first client (R18/R19).
  *
- *   - a request FILES a task (lane, due = expiry, topic/origin = the request, high);
+ *   - a request FILES a task (lane, due = expiry, topic/origin = the request, low);
  *   - Approve / Deny on the task decides the request; deciding it on its own
  *     screen closes the task too (ONE closer);
  *   - an undecided request EXPIRES, and so does its task (declined, resolution
@@ -38,14 +38,14 @@ function approvalRequest(string $name = 'claude-remote'): array
     return [$session, $task, $payload];
 }
 
-test('a session request files an "Approval requested" task: routed, due at the expiry, high, marked', function () {
+test('a session request files an "Approval requested" task: routed, due at the expiry, low, marked', function () {
     [$session, $task, $payload] = approvalRequest();
 
     expect($task)->not->toBeNull()
         ->and($payload['approval_task'])->toBe($task->code)
         ->and($task->title)->toBe('Approval requested: agent session for claude-remote')
         ->and($task->status)->toBe('open')
-        ->and($task->priority)->toBe('high')
+        ->and($task->priority)->toBe('low')
         ->and($task->lane)->toBe('marketing:developer')
         ->and($task->due_at->timestamp)->toBe($session->expires_at->timestamp)
         ->and($task->topic_type)->toBe('agent_session')

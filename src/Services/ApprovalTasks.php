@@ -17,7 +17,7 @@ use Sgrjr\Dispatch\Models\TaskComment;
  * Approve / Deny actions call approve()/deny() below.
  *
  * An Approvable (an agent-session request first) files ONE task here:
- *   - title "Approval requested: <label>", priority high, open;
+ *   - title "Approval requested: <label>", priority low, open;
  *   - routed to the approvers' lane;
  *   - due_at = the request's expiry;
  *   - topic + origin = the approvable (kind:id).
@@ -77,8 +77,11 @@ final class ApprovalTasks
                 'title' => 'Approval requested: '.$item->approvalLabel(),
                 'description' => $item->approvalDetails(),
                 'type' => 'verify',
-                // High on purpose: it BLOCKS someone, so it rings loud (R31).
-                'priority' => 'high',
+                // LOW on purpose: the approver is the person who just prompted
+                // the agent, and is already watching for the code. A loud ring
+                // (R31) mails them about their own request, which is pure noise.
+                // The task still rings the lane bell and sits in chat to approve.
+                'priority' => 'low',
                 'status' => 'open',
                 'visibility' => Task::VISIBILITY_STAFF,
                 'submitter_user_id' => null,

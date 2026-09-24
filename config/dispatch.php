@@ -322,9 +322,14 @@ return [
         // so an inbox stays worth reading.
         //
         // ⛔ This never silences a SUBMITTER's receipt — "your request was
-        // received", and what happened to it since, always sends. See
-        // MailNotifier::send().
+        // received", and what happened to it since, sends unless the task is
+        // SILENT (below). See MailNotifier::send().
         'email_priorities' => ['blocker', 'high'],
+
+        // A task at one of these priorities sends NO email at all, the
+        // submitter's receipt included: low work is mostly agent- or
+        // system-filed, and its submitter already knows (owner, 2026-09-23).
+        'silent_priorities' => ['low'],
     ],
 
     /*

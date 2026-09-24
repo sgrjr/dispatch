@@ -22,9 +22,15 @@ use Sgrjr\Dispatch\Notifications\TaskUpdate;
  * default) sends mail, and everything quieter is left to the in-app bell.
  *
  * ⛔ A RECEIPT IS NOT AN ALERT. The submitter's own copy — "your request was
- * received", and what happened to it since — always sends, whatever the
- * priority, and never carries the alarm: it is a reply to the person who
- * asked, not an interruption aimed at staff. Only alerts are gated.
+ * received", and what happened to it since — sends at every priority that
+ * is not SILENT, and never carries the alarm: it is a reply to the person who
+ * asked, not an interruption aimed at staff.
+ *
+ * SILENT (owner ruling, 2026-09-23): a task at a
+ * `dispatch.notifications.silent_priorities` priority (`low` by default) sends
+ * NO email to anyone, receipts included. Low is mostly work an agent or the
+ * system filed, and its submitter is the person who just asked for it (an
+ * agent-session approval is the canonical case), so a receipt is pure noise.
  *
  * Gated by `dispatch.notifications.enabled`. Per the DispatchNotifier
  * contract this NEVER throws: every method wraps its body in try/catch so
@@ -316,7 +322,7 @@ class MailNotifier implements DispatchNotifier
      */
     protected function send(mixed $user, Task $task, string $summary, ?TaskComment $comment = null): void
     {
-        if (! $user || ! method_exists($user, 'notify')) {
+        if (! $user || ! method_exists($user, 'notify') || $this->isSilent($task)) {
             return;
         }
 
@@ -334,6 +340,14 @@ class MailNotifier implements DispatchNotifier
     {
         return $task->submitter_user_id !== null
             && (string) $user->getAuthIdentifier() === (string) $task->submitter_user_id;
+    }
+
+    /** Is this task too quiet to email ANYONE about, its submitter included? */
+    protected function isSilent(Task $task): bool
+    {
+        $silent = (array) config('dispatch.notifications.silent_priorities', ['low']);
+
+        return in_array((string) $task->priority, $silent, true);
     }
 
     /**

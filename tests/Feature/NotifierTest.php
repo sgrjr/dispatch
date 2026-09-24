@@ -198,6 +198,26 @@ test('a quiet task emails no staff — but the submitter still gets their receip
     Notification::assertNotSentTo([$watcher], TaskUpdate::class);
 });
 
+test('a low task emails nobody — not staff, not even the submitter\'s receipt', function () {
+    Notification::fake();
+
+    $submitter = dispatchMakeUser(1);
+    $watcher = dispatchMakeUser(2);
+    $actor = dispatchMakeUser(3);
+
+    $task = app(DispatchTaskService::class)->create([
+        'title' => 'Someday work',
+        'submitter_user_id' => $submitter->id,
+        'priority' => 'low',
+    ]);
+    $task->watch($watcher->id);
+
+    (new MailNotifier())->taskCreated($task->fresh());
+    (new MailNotifier())->taskStatusChanged($task->fresh(), 'open', 'done', $actor);
+
+    Notification::assertNothingSent();
+});
+
 test('the alarm says WHY: a blocker is blocking, a high is urgent, a receipt is neither', function () {
     Notification::fake();
 
