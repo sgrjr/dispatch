@@ -45,6 +45,9 @@ class DispatchServiceProvider extends ServiceProvider
         $this->app->singleton(LaneResolver::class, fn ($app) => $app->make(config('dispatch.contracts.lanes', \Sgrjr\Dispatch\Support\NullLaneResolver::class)));
         // TASK-1001 — the conversation (envelope) seam, same fallback again.
         $this->app->singleton(ConversationResolver::class, fn ($app) => $app->make(config('dispatch.contracts.conversation', \Sgrjr\Dispatch\Support\NullConversationResolver::class)));
+        // Where attachment bytes live (a private disk by default; a host's own
+        // file system when it binds one) — same fallback for older configs.
+        $this->app->singleton(\Sgrjr\Dispatch\Contracts\AttachmentStore::class, fn ($app) => $app->make(config('dispatch.contracts.attachment_store', \Sgrjr\Dispatch\Services\DiskAttachmentStore::class)));
 
         // Backs the DispatchTask facade (programmatic reporting).
         $this->app->singleton(DispatchManager::class);

@@ -8,7 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
-use Symfony\Component\HttpFoundation\StreamedResponse;
+use Symfony\Component\HttpFoundation\Response;
 use Sgrjr\Dispatch\Contracts\DispatchGate;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskAttachment;
@@ -69,7 +69,7 @@ class AttachmentController extends Controller
      * Stream the file. 403s unless the attachment's owning task is visible to
      * the current user (AttachmentService::canAccess reuses the one scope).
      */
-    public function download(TaskAttachment $attachment): StreamedResponse
+    public function download(TaskAttachment $attachment): Response
     {
         abort_unless(
             app(AttachmentService::class)->canAccess($attachment, Auth::user()),
@@ -77,6 +77,20 @@ class AttachmentController extends Controller
         );
 
         return app(AttachmentService::class)->download($attachment);
+    }
+
+    /**
+     * Show the file in the browser (an image, a PDF, a CSV or text file as
+     * plain text); anything else downloads. Same gate as download().
+     */
+    public function view(TaskAttachment $attachment): Response
+    {
+        abort_unless(
+            app(AttachmentService::class)->canAccess($attachment, Auth::user()),
+            403,
+        );
+
+        return app(AttachmentService::class)->view($attachment);
     }
 
     /**

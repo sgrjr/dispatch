@@ -145,7 +145,8 @@
             @if ($task->attachments->where('is_image', false)->isNotEmpty())
                 <div class="dispatch-gallery" style="flex-direction: column; align-items: stretch;">
                     @foreach ($task->attachments->where('is_image', false) as $attachment)
-                        <a href="{{ route('dispatch.attachments.download', $attachment) }}" class="dispatch-file-row">
+                        {{-- Viewable (PDF / CSV / text) opens in a new tab; anything else downloads. --}}
+                        <a href="{{ route($attachment->viewerKind() ? 'dispatch.attachments.view' : 'dispatch.attachments.download', $attachment) }}" @if ($attachment->viewerKind()) target="_blank" rel="noopener" @endif class="dispatch-file-row">
                             📎 {{ $attachment->original_name }}
                             <span style="color: var(--dispatch-text-faint); margin-left:auto;">{{ number_format($attachment->size_bytes / 1024, 1) }} KB</span>
                         </a>

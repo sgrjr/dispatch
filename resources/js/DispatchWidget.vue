@@ -296,7 +296,7 @@ function previewUrl(file) {
 
           <div class="dw-files">
             <label class="dw-attach">
-              <input type="file" multiple accept="image/*,application/pdf,text/plain" @change="onPick" hidden />
+              <input type="file" multiple accept="image/*,application/pdf,text/*,.csv,.json,.xml,.md,.zip,.xlsx,.xls,.docx,.doc,.pptx,.ppt" @change="onPick" hidden />
               <span>Attach / paste screenshot</span>
             </label>
             <ul v-if="files.length" class="dw-thumbs">

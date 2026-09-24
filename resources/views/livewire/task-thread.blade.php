@@ -46,7 +46,8 @@
                                     <img src="{{ route('dispatch.attachments.download', $attachment) }}" alt="{{ $attachment->original_name }}" loading="lazy">
                                 </a>
                             @else
-                                <a href="{{ route('dispatch.attachments.download', $attachment) }}" class="dispatch-file-row">📎 {{ $attachment->original_name }}</a>
+                                {{-- Viewable (PDF / CSV / text) opens in a new tab; anything else downloads. --}}
+                                <a href="{{ route($attachment->viewerKind() ? 'dispatch.attachments.view' : 'dispatch.attachments.download', $attachment) }}" @if ($attachment->viewerKind()) target="_blank" rel="noopener" @endif class="dispatch-file-row">📎 {{ $attachment->original_name }}</a>
                             @endif
                         @endforeach
                     </div>

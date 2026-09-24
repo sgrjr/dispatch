@@ -27,6 +27,7 @@ Route::post('/capture', [CaptureController::class, 'store'])->middleware('thrott
 // Attachments — authorized upload/stream/delete via the shared AttachmentService.
 Route::post('/attachments', [AttachmentController::class, 'store'])->middleware('throttle:dispatch-capture')->name('attachments.store');
 Route::get('/attachments/{attachment}/download', [AttachmentController::class, 'download'])->name('attachments.download');
+Route::get('/attachments/{attachment}/view', [AttachmentController::class, 'view'])->name('attachments.view');
 Route::delete('/attachments/{attachment}', [AttachmentController::class, 'destroy'])->name('attachments.destroy');
 
 // Submitter portal — "my submissions" (separate middleware so non-staff reach it).

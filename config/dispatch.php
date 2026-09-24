@@ -80,6 +80,11 @@ return [
         // default still yields sibling tasks (the package computes those) —
         // it just has no label, URL or transcript to offer.
         'conversation' => \Sgrjr\Dispatch\Support\NullConversationResolver::class,
+
+        // Where attachment BYTES live (the records and every rule stay in the
+        // package). The default keeps them on `attachments.disk`; a host binds
+        // its own AttachmentStore to keep them in its own file system.
+        'attachment_store' => \Sgrjr\Dispatch\Services\DiskAttachmentStore::class,
     ],
 
     /*
@@ -212,7 +217,14 @@ return [
     |
     | Images/files on tasks and comments. Files live on a PRIVATE disk under a
     | hashed path and are streamed through an authorized controller — never a
-    | public URL. Keep `disk` off the `public` disk.
+    | public URL. Keep `disk` off the `public` disk. (`disk` is read by the
+    | default store; a host-bound `contracts.attachment_store` decides its own.)
+    |
+    | `allowed_mimes` is checked against the SERVER-sniffed type. What a
+    | browser can show opens inline through the `view` route — raster images
+    | and PDFs as themselves, CSV / text as plain text — and everything else
+    | downloads (TaskAttachment::viewerKind()). SVG and HTML are deliberately
+    | absent: both can carry script.
     */
     'attachments' => [
         'enabled' => true,
@@ -221,8 +233,19 @@ return [
         'max_size_kb' => env('DISPATCH_ATTACHMENT_MAX_KB', 10240),
         'max_per_batch' => 10,
         'allowed_mimes' => [
+            // shown inline
             'image/png', 'image/jpeg', 'image/gif', 'image/webp',
-            'application/pdf', 'text/plain',
+            'application/pdf',
+            'text/plain', 'text/csv', 'application/csv', 'text/x-csv', 'text/tab-separated-values',
+            'application/json', 'text/xml', 'application/xml', 'text/markdown',
+            // download only
+            'application/zip',
+            'application/vnd.ms-excel',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/msword',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/vnd.ms-powerpoint',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
         ],
     ],
 
