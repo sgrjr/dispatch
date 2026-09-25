@@ -53,6 +53,29 @@ Quick diagnosis:
   directly (missing verb, unset secret, still-cached config) instead of leaving
   you to infer it from a `403`/`401`/`503`.
 
+## Unreleased — agents download attachments (TASK-1242)
+
+A commissioned agent can now save a task's screenshots and files instead of
+asking a human to transcribe them.
+
+- **New verb `attachment`** — `GET agent/attachments/{id}` streams one file
+  (task- or comment-level) as a `nosniff` download. It is in the package's
+  `KNOWN_VERBS` and default `agent.verbs`. **A host that published
+  `config/dispatch.php` must add `'attachment'` to its `agent.verbs`** for it
+  to be part of the default grant (`dispatch:doctor` warns until it is); list
+  it in `agent.disabled_verbs` to withhold it instead.
+- **Contract (additive):** each entry of the full shape's `attachments[]` gains
+  `id`; each comment gains `attachments[]` (same shape) beside its
+  `attachment_count`. The `event_types` list gains `attachment_fetched`.
+- **CLI:** `dispatch:attachment <CODE> [--id=*] [--json]` saves to
+  `storage/app/dispatch/attachments/<CODE>/`. Optional
+  `composer require phpoffice/phpspreadsheet` adds per-sheet CSVs for
+  `.xlsx/.xls/.ods`.
+- **Audit:** the first download of a file by a session records an internal,
+  non-notifying `attachment_fetched` event on its task.
+- **Re-publish the skills** (`php artisan dispatch:skills:publish --force`):
+  `dispatch-agent-session` now says to fetch attachments.
+
 ## Unreleased — comments are internal by default; public is the opt-in
 
 **Behavior change.** A staff comment used to be public, meaning the submitter

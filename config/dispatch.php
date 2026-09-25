@@ -534,7 +534,7 @@ return [
         'poll_interval' => (int) env('DISPATCH_AGENT_POLL_INTERVAL', 5),
         'request_throttle' => env('DISPATCH_AGENT_REQUEST_THROTTLE', '10,1'),
         'verb_throttle' => env('DISPATCH_AGENT_VERB_THROTTLE', '120,1'),
-        'verbs' => ['next', 'queue', 'show', 'add', 'note', 'done', 'claim', 'batch', 'handoff', 'perform'],
+        'verbs' => ['next', 'queue', 'show', 'add', 'note', 'done', 'claim', 'batch', 'handoff', 'perform', 'attachment'],
 
         // TASK-999 (R24) — the lane an agent session SERVES by default: which
         // work `next`/`claim` will offer it. Null (the default) = unrestricted,

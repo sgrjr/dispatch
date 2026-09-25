@@ -9,13 +9,16 @@ use Sgrjr\Dispatch\Contracts\LaneResolver;
 use Sgrjr\Dispatch\Http\Middleware\AuthenticateAgentSession;
 use Sgrjr\Dispatch\Models\AgentSession;
 use Sgrjr\Dispatch\Models\Task;
+use Sgrjr\Dispatch\Models\TaskAttachment;
 use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Services\AgentSessionService;
+use Sgrjr\Dispatch\Services\AttachmentService;
 use Sgrjr\Dispatch\Services\DispatchBatchService;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
 use Sgrjr\Dispatch\Support\Anchor;
 use Sgrjr\Dispatch\Support\DueDate;
 use Sgrjr\Dispatch\Support\TaskPresenter;
+use Symfony\Component\HttpFoundation\Response;
 
 /**
  * The remote agent verb loop (§19/§20 Phase 2). Every action here runs behind
@@ -191,6 +194,38 @@ class AgentController extends Controller
                 'kind' => app(\Sgrjr\Dispatch\Services\TaskActions::class)->describe($task, null, true),
             ],
         ]);
+    }
+
+    /**
+     * TASK-1242 — stream one attachment's bytes, task- or comment-level (the
+     * ids ride `show`'s full shape). Gated by the `attachment` scope alone:
+     * `show` already hands an approved session every task by code, internal
+     * notes included, so an attachment is reachable exactly when its owning
+     * task is — no narrower rule that `show` doesn't also keep.
+     *
+     * Always a download (Content-Disposition: attachment, nosniff), never the
+     * inline view, and never a URL: the bytes come through this authorized
+     * route or not at all. Each first fetch per session is recorded on the
+     * owning task's timeline as an internal, silent event — who read what.
+     */
+    public function attachment(Request $request, int $id): Response
+    {
+        $s = $this->session($request);
+
+        /** @var class-string<TaskAttachment> $model */
+        $model = config('dispatch.models.task_attachment');
+        $attachment = $model::query()->find($id);
+
+        // One 404 for "no such record" and "its task is gone" — no oracle.
+        $task = $attachment?->ownerTask();
+        abort_if($attachment === null || $task === null, 404);
+
+        $this->recordAttachmentFetch($task, $attachment, $s);
+
+        $response = app(AttachmentService::class)->download($attachment);
+        $response->headers->set('X-Content-Type-Options', 'nosniff');
+
+        return $response;
     }
 
     public function claim(Request $request): JsonResponse
@@ -723,6 +758,36 @@ class AgentController extends Controller
      * @param  array<string,mixed>  $extra
      * @return array<string,mixed>
      */
+    /**
+     * The TASK-1242 access audit: one internal timeline event per (session,
+     * attachment). Silent by construction — recordEvent() only writes the
+     * row; nothing here reaches a notifier — and deduped so a re-download
+     * inside the same session adds nothing.
+     */
+    private function recordAttachmentFetch(Task $task, TaskAttachment $attachment, AgentSession $s): void
+    {
+        $already = $task->comments()
+            ->where('event_type', TaskComment::EVENT_ATTACHMENT_FETCHED)
+            ->get(['meta'])
+            ->contains(fn (TaskComment $c) => ($c->meta['agent_session_id'] ?? null) === $s->public_id
+                && (int) ($c->meta['attachment_id'] ?? 0) === (int) $attachment->getKey());
+
+        if ($already) {
+            return;
+        }
+
+        $task->recordEvent(
+            TaskComment::EVENT_ATTACHMENT_FETCHED,
+            null,
+            $this->agentMeta($s, [
+                'attachment_id' => (int) $attachment->getKey(),
+                'filename' => $attachment->original_name,
+            ]),
+            ($s->agent_name ?: 'An agent').' downloaded '.$attachment->original_name.'.',
+            true,
+        );
+    }
+
     private function agentMeta(AgentSession $s, array $extra = []): array
     {
         return $extra + [

@@ -78,12 +78,10 @@ class DispatchShow extends Command
             $this->line('  labels: '.$task->labels->pluck('name')->implode(', '));
         }
         if ($task->attachments->isNotEmpty()) {
-            // Existence signal (W8-6): the binaries live on a private, auth-gated
-            // disk and never travel the CLI/JSON surface — print the metadata so a
-            // human (or agent reading `--json`) knows evidence exists.
-            $this->line('  <fg=gray>Attachments:</>');
+            // W8-6 / TASK-1242: the metadata here; the bytes via dispatch:attachment.
+            $this->line('  <fg=gray>Attachments:</> <fg=gray>(save them: dispatch:attachment '.$task->code.')</>');
             foreach ($task->attachments as $a) {
-                $this->line('    '.$a->original_name.' ('.$a->mime_type.', '.$a->size_bytes.' bytes)'.($a->is_image ? ' · image' : ''));
+                $this->line('    #'.$a->id.' '.$a->original_name.' ('.$a->mime_type.', '.$a->size_bytes.' bytes)'.($a->is_image ? ' · image' : ''));
             }
         }
         if ($task->submitter) {
@@ -218,7 +216,7 @@ class DispatchShow extends Command
                 $tag = $c->is_internal ? '[INTERNAL]' : ($c->isSystem() ? '['.$c->event_type.']' : '');
                 // Per-comment attachment signal (W8-6) — evidence hung off a reply.
                 $atts = $c->relationLoaded('attachments') ? $c->attachments->count() : $c->attachments()->count();
-                $suffix = $atts > 0 ? ' [+'.$atts.' attachment(s)]' : '';
+                $suffix = $atts > 0 ? ' [+'.$atts.' attachment(s) — dispatch:attachment '.$task->code.']' : '';
                 $this->line('  <fg=gray>'.$when.'</> <fg=yellow>'.$who.'</> '.$tag.$suffix);
                 foreach (preg_split('/\R/', trim((string) $c->body)) as $line) {
                     $this->line('    '.$line);

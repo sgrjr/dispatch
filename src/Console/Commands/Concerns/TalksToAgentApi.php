@@ -4,6 +4,7 @@ namespace Sgrjr\Dispatch\Console\Commands\Concerns;
 
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Symfony\Component\Console\Input\InputInterface;
@@ -571,6 +572,79 @@ trait TalksToAgentApi
      */
     protected function agentRequest(string $method, string $path, array $payload = [], bool $requireToken = true): ?array
     {
+        $base = $this->agentPreflight($requireToken);
+        if ($base === null) {
+            return null;
+        }
+
+        $url = $base.'/'.ltrim($path, '/');
+        $method = strtoupper($method);
+
+        try {
+            $response = $method === 'GET'
+                ? $this->agentClient()->get($url, $payload)
+                : $this->agentClient()->send($method, $url, ['json' => $payload]);
+        } catch (ConnectionException $e) {
+            $this->reportConnectionFailure($e);
+
+            return null;
+        }
+
+        if ($this->agentResponseFailed($response)) {
+            return null;
+        }
+
+        return $response->json();
+    }
+
+    /**
+     * TASK-1242 — stream a binary GET (an attachment's bytes) straight into
+     * $destination instead of decoding JSON. Same guards and the same
+     * 401/429/403 narration as {@see agentRequest()}; on any failure the
+     * partial file is removed and false is returned.
+     */
+    protected function agentDownload(string $path, string $destination): bool
+    {
+        $base = $this->agentPreflight(true);
+        if ($base === null) {
+            return false;
+        }
+
+        // Our own handle, so it is closed before any unlink (Windows refuses to
+        // delete a file a stream still holds open).
+        $handle = @fopen($destination, 'w+b');
+        if ($handle === false) {
+            $this->error("Cannot write {$destination}.");
+
+            return false;
+        }
+
+        try {
+            $response = $this->agentClient()->sink($handle)->get($base.'/'.ltrim($path, '/'));
+            $failed = $this->agentResponseFailed($response);
+        } catch (ConnectionException $e) {
+            $this->reportConnectionFailure($e);
+            $failed = true;
+        } finally {
+            if (is_resource($handle)) {
+                fclose($handle);
+            }
+        }
+
+        if ($failed) {
+            @unlink($destination);
+        }
+
+        return ! $failed;
+    }
+
+    /**
+     * The checks every agent call makes before it leaves the box: a remote is
+     * configured, it is HTTPS (outside local), and — when required — a token
+     * is held. Returns the base URL, or null after emitting the error.
+     */
+    private function agentPreflight(bool $requireToken): ?string
+    {
         $base = $this->agentBaseUrl();
         if ($base === null) {
             $this->error('No agent remote configured. Set dispatch.agent.remote.url (DISPATCH_AGENT_REMOTE_URL).');
@@ -593,19 +667,15 @@ trait TalksToAgentApi
             return null;
         }
 
-        $url = $base.'/'.ltrim($path, '/');
-        $method = strtoupper($method);
+        return $base;
+    }
 
-        try {
-            $response = $method === 'GET'
-                ? $this->agentClient()->get($url, $payload)
-                : $this->agentClient()->send($method, $url, ['json' => $payload]);
-        } catch (ConnectionException $e) {
-            $this->reportConnectionFailure($e);
-
-            return null;
-        }
-
+    /**
+     * Narrate a failed agent response (401 drop, 429 back-off, 403 scope, any
+     * other HTTP error) and report whether it failed. A 401 clears the token.
+     */
+    private function agentResponseFailed(Response $response): bool
+    {
         if ($response->status() === 401) {
             // Mark BEFORE forgetting — the marker copies the renewal identity
             // out of the dotfile the next line deletes.
@@ -613,7 +683,7 @@ trait TalksToAgentApi
             $this->forgetToken();
             $this->error('Agent session was revoked or expired (401). Local token cleared; bare verbs now refuse the silent local fallback. Renew with `dispatch:session:refresh --wait` (a human approves again), or report and stop — never re-request in a retry loop.');
 
-            return null;
+            return true;
         }
 
         // 429 = rate-limited, NOT a dead session. The observed failure cascade
@@ -623,7 +693,7 @@ trait TalksToAgentApi
             $retryAfter = (string) $response->header('Retry-After');
             $this->error('Agent API rate-limited this client (429'.($retryAfter !== '' ? ", Retry-After: {$retryAfter}s" : '').'). The session token is still valid — back off, then retry the SAME verb. Do NOT re-request or refresh the session over a 429.');
 
-            return null;
+            return true;
         }
 
         // 403 = the token is fine, the VERB is outside this session's grant.
@@ -633,16 +703,16 @@ trait TalksToAgentApi
             $msg = (string) ($response->json('message') ?: substr($response->body(), 0, 300));
             $this->error('Agent API 403: '.$msg);
 
-            return null;
+            return true;
         }
 
         if (! $response->successful()) {
             $this->error("Agent API HTTP {$response->status()}: ".substr($response->body(), 0, 300));
 
-            return null;
+            return true;
         }
 
-        return $response->json();
+        return false;
     }
 
     /**

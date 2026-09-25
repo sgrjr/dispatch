@@ -35,8 +35,12 @@ class AgentSessionService
      * published `config/dispatch.php` before it existed keeps an
      * `agent.verbs` array missing it; this UNION is what still lets it be
      * explicitly requested (see UPGRADING.md).
+     *
+     * `attachment` (TASK-1242) — download a task's (or comment's) attachment
+     * bytes. A read, the same sensitivity tier as `show` (which already hands
+     * the session internal notes and exception context).
      */
-    public const KNOWN_VERBS = ['next', 'queue', 'show', 'add', 'note', 'done', 'claim', 'batch', 'handoff', 'perform'];
+    public const KNOWN_VERBS = ['next', 'queue', 'show', 'add', 'note', 'done', 'claim', 'batch', 'handoff', 'perform', 'attachment'];
 
     /**
      * Register a pending session and return the one-time bootstrap payload.

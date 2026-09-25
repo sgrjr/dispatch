@@ -17,7 +17,11 @@
     "require-dev": {
         "orchestra/testbench": "^9.0 || ^10.0",
         "pestphp/pest": "^3.0",
-        "pestphp/pest-plugin-laravel": "^3.0"
+        "pestphp/pest-plugin-laravel": "^3.0",
+        "phpoffice/phpspreadsheet": "^1.29 || ^2.0 || ^3.0"
+    },
+    "suggest": {
+        "phpoffice/phpspreadsheet": "dispatch:attachment also writes each sheet of a downloaded .xlsx/.xls/.ods as a CSV an agent can read"
     },
     "autoload": {
         "psr-4": {

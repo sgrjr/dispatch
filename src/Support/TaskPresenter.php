@@ -98,17 +98,11 @@ class TaskPresenter
             $data['arc'] = self::arc($task);
             $data['description'] = $task->description;
             $data['context'] = $task->context;
-            // Task-level attachment metadata (W8-6): existence SIGNALS only — there
-            // is no fetch URL because binaries do not travel the agent JSON API
-            // (private disk, auth-gated streaming). A human who attached a
-            // screenshot reasonably assumes the agent saw it; surface it so the
-            // agent can ask for a transcription rather than silently proceeding.
-            $data['attachments'] = $task->attachments->map(fn (TaskAttachment $a) => [
-                'filename' => $a->original_name,
-                'mime' => $a->mime_type,
-                'size_bytes' => $a->size_bytes,
-                'is_image' => (bool) $a->is_image,
-            ])->values()->all();
+            // Task-level attachments (W8-6, TASK-1242). Never a URL: the `id`
+            // is what `dispatch:attachment` names to stream the bytes through
+            // the scope-gated agent route. A human who attached a screenshot
+            // reasonably assumes the agent saw it — so the agent fetches it.
+            $data['attachments'] = self::attachmentList($task->attachments);
             $data['comments'] = $task->comments->map(fn (TaskComment $c) => [
                 'id' => $c->id,
                 'event_type' => $c->event_type,
@@ -116,9 +110,10 @@ class TaskPresenter
                 'author' => $c->user_id ? self::userRef($c->user) : null,
                 'body' => $c->body,
                 'meta' => $c->meta,
-                // Per-comment attachment count (W8-6): same existence signal at the
-                // comment grain — a human may hang evidence off a specific reply.
+                // Per-comment attachments (W8-6, TASK-1242): a human may hang
+                // evidence off a specific reply. The count stays for older clients.
                 'attachment_count' => self::commentAttachmentCount($c),
+                'attachments' => self::attachmentList($c->attachments),
                 'created_at' => optional($c->created_at)->toIso8601String(),
             ])->values()->all();
         }
@@ -157,7 +152,7 @@ class TaskPresenter
                 'is_public' => 'bool',
                 'labels' => 'string[]',
                 'comment_count' => 'int',   // human comments (event_type=comment); >0 → run `show` for direction
-                'attachment_count' => 'int', // task-level; >0 = a human attached evidence the API cannot deliver — ask for a transcription
+                'attachment_count' => 'int', // task-level; >0 = a human attached evidence — fetch it with `dispatch:attachment <CODE>`
                 'due_at' => 'iso8601|null',
                 'dedupe_key' => 'string|null',
                 'submitter' => 'string|int|null',
@@ -196,8 +191,8 @@ class TaskPresenter
                 // context already named its fix commit. For an exception-filed
                 // task this, not the description, is where the evidence lives.
                 'context' => 'object|null — arbitrary per-task data. For an EXCEPTION-filed task it carries the whole incident: exception{class,message,file,line}, trace[], route/method/url, times_seen/first_seen/last_seen, plus result{commit,resolution,metrics} from any agent that worked it. An exception task with an empty description is NOT evidence-free — read context before declining it. Also carries source{file,line,imported_at} import provenance',
-                'attachments' => '[{filename, mime, size_bytes, is_image:bool}] — metadata SIGNALS only: no fetch URL, binaries do not travel the agent API',
-                'comments' => '[{id:int, event_type:string, is_internal:bool, author:string|int|null, body:string, meta:object|null, attachment_count:int, created_at:iso8601}]',
+                'attachments' => '[{id:int, filename, mime, size_bytes, is_image:bool}] — never a URL: `dispatch:attachment <CODE>` downloads them (GET agent/attachments/{id}, scope `attachment`)',
+                'comments' => '[{id:int, event_type:string, is_internal:bool, author:string|int|null, body:string, meta:object|null, attachment_count:int, attachments:[same shape as task attachments], created_at:iso8601}]',
                 // TASK-1188 — on `show` (agent API + dispatch:show --json) only.
                 'kind' => 'object|null — the task KIND (a task that defines its own controls), null for a plain task: {key, actions: [{key, label, style, inputs: [{key, label, type, required?, options?}], confirm, agent_allowed}] (ONLY the ones you may `perform`), hides: string[] (default controls this kind hides: status|assignee|claim|pass|ask), locks_status: bool (true = done/batch/claim/drag are REFUSED; only its actions move it), panel: {title, state?, rows: [{label, value, emphasis?}]}|null}',
             ],
@@ -358,6 +353,8 @@ class TaskPresenter
                 TaskComment::EVENT_ASKED,
                 TaskComment::EVENT_ANSWERED,
                 TaskComment::EVENT_DEPENDENCY_RESOLVED,
+                // TASK-1242 — an agent downloaded an attachment (internal audit).
+                TaskComment::EVENT_ATTACHMENT_FETCHED,
             ],
         ];
     }
@@ -472,6 +469,23 @@ class TaskPresenter
         }
 
         return (int) $task->attachments()->count();
+    }
+
+    /**
+     * The attachment list shape shared by the task and each comment (TASK-1242).
+     *
+     * @param  iterable<TaskAttachment>  $attachments
+     * @return array<int, array{id:int, filename:string, mime:?string, size_bytes:int, is_image:bool}>
+     */
+    protected static function attachmentList(iterable $attachments): array
+    {
+        return collect($attachments)->map(fn (TaskAttachment $a) => [
+            'id' => (int) $a->getKey(),
+            'filename' => $a->original_name,
+            'mime' => $a->mime_type,
+            'size_bytes' => (int) $a->size_bytes,
+            'is_image' => (bool) $a->is_image,
+        ])->values()->all();
     }
 
     /**

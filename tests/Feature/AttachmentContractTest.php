@@ -7,11 +7,12 @@ use Sgrjr\Dispatch\Services\DispatchTaskService;
 use Sgrjr\Dispatch\Support\TaskPresenter;
 
 /*
- * W8-6 [pkg]: attachments become VISIBLE in the agent JSON contract as EXISTENCE
- * SIGNALS (no fetch URL — binaries live on a private, auth-gated disk and never
- * travel the JSON API). This file locks the FROZEN ADDITIVE shape: the summary
- * gains exactly `attachment_count`; the full view gains exactly `attachments[]`
- * plus a per-comment `attachment_count`; nothing else moves.
+ * W8-6 [pkg]: attachments are VISIBLE in the agent JSON contract (never a fetch
+ * URL — the bytes stream only through the scope-gated agent route, TASK-1242,
+ * addressed by the `id` carried here). This file locks the FROZEN ADDITIVE
+ * shape: the summary gains exactly `attachment_count`; the full view gains
+ * exactly `attachments[]` plus a per-comment `attachment_count` + `attachments[]`;
+ * nothing else moves.
  */
 
 beforeEach(fn () => dispatchFakeUsers());
@@ -63,7 +64,7 @@ test('GOLDEN SHAPE: the summary adds exactly attachment_count; nothing else move
     ]);
 });
 
-test('GOLDEN SHAPE: the full view adds exactly attachments[] + a per-comment attachment_count (W8-6)', function () {
+test('GOLDEN SHAPE: the full view adds exactly attachments[] + a per-comment attachment_count/attachments[] (W8-6, TASK-1242)', function () {
     [$task] = attachmentRichTask();
 
     $full = TaskPresenter::toArray($task->load('comments'), true);
@@ -89,13 +90,15 @@ test('GOLDEN SHAPE: the full view adds exactly attachments[] + a per-comment att
         'description', 'context', 'attachments', 'comments',
     ]);
 
-    // Each comment entry gains exactly `attachment_count` (after meta, before
-    // created_at) — the rest of the comment shape is byte-frozen.
+    // Each comment entry gains exactly `attachment_count` + `attachments` (after
+    // meta, before created_at) — the rest of the comment shape is byte-frozen.
     expect(array_keys($full['comments'][0]))->toBe([
         'id', 'event_type', 'is_internal', 'author', 'body', 'meta',
-        'attachment_count', 'created_at',
+        'attachment_count', 'attachments', 'created_at',
     ]);
-    expect($full['comments'][0]['attachment_count'])->toBe(1);
+    expect($full['comments'][0]['attachment_count'])->toBe(1)
+        ->and($full['comments'][0]['attachments'][0]['filename'])->toBe('trace.txt')
+        ->and($full['comments'][0]['attachments'][0]['id'])->toBeInt();
 });
 
 test('attachment_count agrees across all 3 preference tiers for the same task (W8-6)', function () {
@@ -125,13 +128,14 @@ test('attachment_count agrees across all 3 preference tiers for the same task (W
     expect(TaskPresenter::toArray($cold)['attachment_count'])->toBe(2);
 });
 
-test('full attachments[] carries filename/mime/size_bytes/is_image faithfully (W8-6)', function () {
+test('full attachments[] carries id/filename/mime/size_bytes/is_image faithfully (W8-6, TASK-1242)', function () {
     [$task] = attachmentRichTask();
 
     $attachments = TaskPresenter::toArray($task, true)['attachments'];
 
     expect($attachments)->toHaveCount(1);
     expect($attachments[0])->toBe([
+        'id' => $task->attachments->first()->id,
         'filename' => 'shot.png',
         'mime' => 'image/png',
         'size_bytes' => 2048,
@@ -148,8 +152,10 @@ test('schema() documents the new summary/full_adds/done keys (W8-6)', function (
 
     // full_adds gains attachments[] and the comments line grows attachment_count.
     expect($schema['full_adds'])->toHaveKey('attachments')
-        ->and($schema['full_adds']['attachments'])->toContain('no fetch URL')
-        ->and($schema['full_adds']['comments'])->toContain('attachment_count:int');
+        ->and($schema['full_adds']['attachments'])->toContain('id:int')
+        ->and($schema['full_adds']['attachments'])->toContain('dispatch:attachment')
+        ->and($schema['full_adds']['comments'])->toContain('attachment_count:int')
+        ->and($schema['full_adds']['comments'])->toContain('attachments:');
 
     // The new top-level `done` close-conventions key, between full_adds and batch.
     expect($schema)->toHaveKey('done');
@@ -173,5 +179,5 @@ test('DispatchShow human output shows the Attachments block and the per-comment 
         ->and($out)->toContain('shot.png (image/png, 2048 bytes) · image');
 
     // The comment that carries a file gets a [+N attachment(s)] suffix in Thread.
-    expect($out)->toContain('[+1 attachment(s)]');
+    expect($out)->toContain('[+1 attachment(s) — dispatch:attachment '.$task->code.']');
 });

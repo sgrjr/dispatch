@@ -42,6 +42,10 @@ class TaskComment extends Model
     // pressed what, with which inputs. Internal: the kind's own events (e.g.
     // an approval's status change) are what the timeline reads by.
     public const EVENT_ACTION = 'kind_action';
+    // TASK-1242 — an agent session downloaded an attachment (the access
+    // audit). Internal, attributed to the session in meta, never notifies,
+    // and recorded once per (session, attachment): a re-fetch is not news.
+    public const EVENT_ATTACHMENT_FETCHED = 'attachment_fetched';
 
     protected $table = 'dispatch_task_comments';
 

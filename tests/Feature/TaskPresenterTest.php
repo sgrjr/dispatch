@@ -81,7 +81,7 @@ test('the full shape adds description, context and comments', function () {
         ->and($data['comments'])->toBeArray()->toHaveCount(1);
 
     $comment = $data['comments'][0];
-    expect(array_keys($comment))->toEqual(['id', 'event_type', 'is_internal', 'author', 'body', 'meta', 'attachment_count', 'created_at'])
+    expect(array_keys($comment))->toEqual(['id', 'event_type', 'is_internal', 'author', 'body', 'meta', 'attachment_count', 'attachments', 'created_at'])
         ->and($comment['body'])->toBe('a note');
 });
 

@@ -56,6 +56,13 @@ Route::middleware(['dispatch.agent', 'throttle:dispatch-agent-verb'])->group(fun
     // TASK-1188 — run a task kind's action (agentAllowed ones only). A host
     // must add `perform` to its published `agent.verbs` (see UPGRADING.md).
     Route::post('perform', [AgentController::class, 'perform'])->middleware('dispatch.agent.scope:perform')->name('perform');
+    // TASK-1242 — stream one attachment's bytes (task- or comment-level; the
+    // ids ride `show`). A host that published config/dispatch.php before this
+    // verb must add `attachment` to its `agent.verbs` (see UPGRADING.md).
+    Route::get('attachments/{id}', [AgentController::class, 'attachment'])
+        ->whereNumber('id')
+        ->middleware('dispatch.agent.scope:attachment')
+        ->name('attachment');
 
     // Batch memorialize (§20) — apply a whole manifest of add/update ops in ONE
     // transactional hit instead of a verb call per task. Additive + server-bounded

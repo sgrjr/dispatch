@@ -731,14 +731,20 @@ a claiming agent needs the human's direction, which lives there. Run
 `php artisan dispatch:schema` to get both shapes as data instead of relying on
 this example.
 
-**Attachment signals.** The summary shape carries an `attachment_count`; the
-full shape adds an `attachments[]` array (`filename`, `mime`, `size_bytes`,
-`is_image`) plus a per-comment `attachment_count`. These are **signals only** —
-there is no fetch URL, and binaries never travel the agent API. An agent that
-sees `attachment_count > 0` should read it as "a human attached evidence I can't
-retrieve" and **ask for a transcription** of the screenshot/file before
-proceeding rather than guessing. (`dispatch:show`'s human output lists the
-attachments so a person can relay them.)
+**Attachments.** The summary shape carries an `attachment_count`; the full
+shape adds an `attachments[]` array (`id`, `filename`, `mime`, `size_bytes`,
+`is_image`) and, on every comment, an `attachment_count` plus the same
+`attachments[]`. There is never a URL: the bytes stream through
+`GET agent/attachments/{id}` behind the `attachment` scope (in the default
+grant). `php artisan dispatch:attachment <CODE> [--id=…]` saves them under
+`storage/app/dispatch/attachments/<CODE>/` as `<id>-<cleaned name>` — the
+uploader's filename can never leave that directory — and, when
+`phpoffice/phpspreadsheet` is installed, writes each sheet of a workbook as a
+CSV beside it (formula cells take their saved values; nothing recalculates).
+Each session's first download of a file records an internal
+`attachment_fetched` event on the owning task — attributed to the session,
+never notifying anyone. An attachment is reachable exactly when its task is:
+the agent API has no narrower visibility rule than `show`'s.
 
 ### Batch memorialize — one hit instead of forty
 
