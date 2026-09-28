@@ -135,7 +135,7 @@ class DispatchEdit extends Command
 
         $this->info("Updated {$task->code}");
         $this->line("  title: {$task->title}");
-        $this->line("  type: {$task->type}  ·  priority: {$task->priority}  ·  status: {$task->status}");
+        $this->line(($task->type ? "  kind: {$task->type}  ·" : ' ')." priority: {$task->priority}  ·  status: {$task->status}");
         $this->line('  due: '.($task->due_at ? $task->due_at->toDateTimeString() : '(none)'));
         if ($descriptionChanged) {
             $this->line('  description updated (previous body memorialized on the timeline).');

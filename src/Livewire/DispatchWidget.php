@@ -29,7 +29,8 @@ class DispatchWidget extends Component
     public bool $open = false;
 
     public string $title = '';
-    public string $type = 'bug';
+    /** Optional (TASK-1018): '' files the report with no kind; the capture lane routes it. */
+    public string $type = '';
     public string $description = '';
     public string $pageUrl = '';
 
@@ -42,7 +43,7 @@ class DispatchWidget extends Component
     {
         return [
             'title' => 'required|string|min:3|max:255',
-            'type' => 'required|in:bug,feature',
+            'type' => 'nullable|in:bug,feature',
             'description' => 'nullable|string|max:20000',
             'screenshots.*' => 'nullable|file',
         ];
@@ -67,7 +68,7 @@ class DispatchWidget extends Component
     private function resetForm(): void
     {
         $this->reset(['title', 'description', 'screenshots', 'createdCode']);
-        $this->type = 'bug';
+        $this->type = '';
         $this->resetErrorBag();
     }
 
@@ -95,7 +96,7 @@ class DispatchWidget extends Component
         $task = app(DispatchTaskService::class)->create([
             'title' => $this->title,
             'description' => $description !== '' ? $description : null,
-            'type' => $this->type,
+            'type' => $this->type !== '' ? $this->type : null,
             'priority' => 'medium',
             'status' => 'triage',
         ], ['source:widget']);

@@ -73,7 +73,7 @@ class DispatchShow extends Command
         }
 
         $this->line('<fg=cyan;options=bold>'.$task->code.'</> <fg=white>'.$task->title.'</>');
-        $this->line('  priority: '.$task->priority.'  ·  type: '.$task->type.'  ·  status: '.$task->status.'  ·  public: '.($task->is_public ? 'yes' : 'no'));
+        $this->line('  priority: '.$task->priority.($task->type ? '  ·  kind: '.$task->type : '').'  ·  status: '.$task->status.'  ·  public: '.($task->is_public ? 'yes' : 'no'));
         if ($task->labels->isNotEmpty()) {
             $this->line('  labels: '.$task->labels->pluck('name')->implode(', '));
         }

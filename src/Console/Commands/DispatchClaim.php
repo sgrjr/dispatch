@@ -90,7 +90,7 @@ class DispatchClaim extends Command
 
         $this->info("Claimed {$task->code}");
         $this->line("  title: {$task->title}");
-        $this->line("  type: {$task->type}  ·  priority: {$task->priority}  ·  status: {$task->status}");
+        $this->line(($task->type ? "  kind: {$task->type}  ·" : ' ')." priority: {$task->priority}  ·  status: {$task->status}");
 
         $this->emitClaimFollowUp($task->code, $claimedAt);
 

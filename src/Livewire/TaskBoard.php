@@ -434,7 +434,7 @@ class TaskBoard extends Component
             $gate->scopeVisible($query, $user);
 
             if (null !== ($sel = $this->activeSelection($this->typeFilter, $taskClass::types()))) {
-                $query->whereIn('type', $sel);
+                $query->ofKind($sel);
             }
             if (null !== ($sel = $this->activeSelection($this->priorityFilter, $taskClass::priorities()))) {
                 $query->whereIn('priority', $sel);

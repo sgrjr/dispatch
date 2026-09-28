@@ -411,7 +411,7 @@ test('dispatch:queue --remote --count forwards count=1 and prints the returned e
 });
 
 test('dispatch:show renders an Agent run section from stamped context.result.metrics', function () {
-    $task = app(DispatchTaskService::class)->create(['title' => 'agent-worked task']);
+    $task = app(DispatchTaskService::class)->create(['title' => 'agent-worked task', 'type' => 'feature']);
     $task->context = ['result' => ['commit' => 'abc1234', 'metrics' => [
         'window' => ['basis' => 'claimed_at'],
         'duration_s' => 754,

@@ -138,6 +138,7 @@
                             <div>
                                 <label for="dispatch-widget-type" class="dispatch-label">Type</label>
                                 <select id="dispatch-widget-type" wire:model="type" class="dispatch-select">
+                                    <option value="">Not sure</option>
                                     <option value="bug">Bug</option>
                                     <option value="feature">Feature suggestion</option>
                                 </select>

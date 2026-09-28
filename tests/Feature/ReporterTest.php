@@ -44,7 +44,7 @@ test('fromException derives title, signature, context and dedupes with occurrenc
     $second = DispatchTask::fromException($e);
 
     expect($first)->toBeInstanceOf(Task::class);
-    expect($first->type)->toBe('bug');
+    expect($first->type)->toBeNull(); // TASK-1018: capture no longer stamps bug
     expect($first->title)->toContain('RuntimeException');
     expect($first->title)->toContain('Kaboom');
     expect($first->labels->pluck('name')->all())->toContain('source:exception');

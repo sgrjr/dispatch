@@ -68,7 +68,7 @@ class Focus extends Model
         }
 
         if (! empty($filters['types'])) {
-            $query->whereIn('type', (array) $filters['types']);
+            $query->ofKind((array) $filters['types']);
         }
 
         if (! empty($filters['priorities'])) {

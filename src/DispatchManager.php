@@ -56,7 +56,6 @@ class DispatchManager
      */
     public function fromException(Throwable $e, array $options = []): ?Task
     {
-        $options['type'] ??= 'bug';
         // A break is loud if the host says breaks are loud
         // (`dispatch.reporter.exception_priority`). Null leaves it at the
         // ordinary default, so this changes nothing for a host that has not
@@ -102,7 +101,8 @@ class DispatchManager
 
             $attributes = [
                 'title' => $title,
-                'type' => $options['type'] ?? 'bug',
+                // No default kind (TASK-1018): bug()/feature() still name one.
+                'type' => $options['type'] ?? null,
                 'priority' => $options['priority'] ?? 'medium',
                 'status' => $options['status'] ?? 'triage',
                 'description' => $options['description'] ?? null,

@@ -83,7 +83,7 @@ class DispatchTaskService
         $actor ??= Auth::user();
 
         $attributes['title'] = Str::limit(trim((string) ($attributes['title'] ?? '')), 255, '…');
-        $attributes['type'] ??= 'feature';
+        // No default kind (TASK-1018): a task has one only when someone chose it.
         $attributes['priority'] ??= 'medium';
         $attributes['status'] ??= 'triage';
         $attributes['is_public'] = (bool) ($attributes['is_public'] ?? false);
@@ -184,7 +184,6 @@ class DispatchTaskService
         }
 
         $attributes['exception_signature'] = $signature;
-        $attributes['type'] ??= 'bug';
         $attributes['status'] ??= 'triage';
 
         return $this->create($attributes, $labelNames);
@@ -459,7 +458,7 @@ class DispatchTaskService
                         fn ($q, $s) => $q->where('status', $s),
                         fn ($q) => $q->whereIn('status', ['open', 'in_progress', 'triage'])
                     )
-                    ->when($type, fn ($q, $type) => $q->where('type', $type))
+                    ->when($type, fn ($q, $type) => $q->ofKind($type))
                     ->when($label, fn ($q, $label) => $q->whereHas(
                         'labels',
                         fn ($lq) => $lq->whereIn('name', LabelAlias::canonicalize((array) $label))
@@ -517,7 +516,7 @@ class DispatchTaskService
         $label = $filters['label'] ?? null;
 
         return $this->applyLaneFilter($this->applyAnchorFilters(
-            $q->when($type, fn ($qq, $type) => $qq->where('type', $type))
+            $q->when($type, fn ($qq, $type) => $qq->ofKind($type))
                 ->when($label, fn ($qq, $label) => $qq->whereHas(
                     'labels',
                     fn ($lq) => $lq->whereIn('name', LabelAlias::canonicalize((array) $label))
@@ -614,7 +613,7 @@ class DispatchTaskService
                             ->orWhereRaw("{$table}.description LIKE ? ESCAPE '!'", [$like]);
                     })
                     ->when($status, fn ($q, $s) => $q->where('status', $s))
-                    ->when($type, fn ($q, $type) => $q->where('type', $type))
+                    ->when($type, fn ($q, $type) => $q->ofKind($type))
                     ->when($label, fn ($q, $label) => $q->whereHas(
                         'labels',
                         fn ($lq) => $lq->whereIn('name', LabelAlias::canonicalize((array) $label))
@@ -686,7 +685,7 @@ class DispatchTaskService
                         $taskModel::query()
                             ->whereIn('status', ['open', 'triage'])
                             ->when($code, fn ($q, $c) => $q->where('code', $c))
-                            ->when($type, fn ($q, $type) => $q->where('type', $type))
+                            ->when($type, fn ($q, $type) => $q->ofKind($type))
                             ->when($label, fn ($q, $label) => $q->whereHas(
                                 'labels',
                                 fn ($lq) => $lq->whereIn('name', LabelAlias::canonicalize((array) $label))

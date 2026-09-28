@@ -48,7 +48,7 @@ test('the Agent run panel renders the stamped metrics for staff', function () {
     $staff = dispatchMakeUser(40);
     $this->actingAs($staff);
 
-    $task = app(DispatchTaskService::class)->create(['title' => 'agent-worked task']);
+    $task = app(DispatchTaskService::class)->create(['title' => 'agent-worked task', 'type' => 'feature']);
     $task->context = ['result' => ['commit' => 'abc1234', 'metrics' => [
         'window' => ['basis' => 'claimed_at'],
         'duration_s' => 754,

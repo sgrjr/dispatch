@@ -19,7 +19,17 @@ class Task extends Model
 {
     use SoftDeletes;
 
+    /**
+     * The KIND vocabulary (TASK-1018, R14). There is no `type` column: a
+     * task's kind is its `kind:<type>` label ({@see KIND_PREFIX}). `type`
+     * survives one release as a derived attribute — read it and you get the
+     * kind; write it and the label follows on save — so every caller keeps
+     * working while the vocabulary moves to tags. See UPGRADING.md.
+     */
     public const TYPES = ['bug', 'feature', 'chore', 'debt', 'verify'];
+
+    /** The label namespace that carries a task's kind. */
+    public const KIND_PREFIX = 'kind:';
     public const PRIORITIES = ['blocker', 'high', 'medium', 'low'];
     public const STATUSES = ['triage', 'open', 'in_progress', 'verifying', 'backburner', 'done', 'resolved', 'declined'];
 
@@ -99,6 +109,86 @@ class Task extends Model
             $task->guardKindLock();
             $task->guardStatusNote();
         });
+
+        // TASK-1018 — a `type` write lands as the kind:* label once the row exists.
+        static::saved(function (self $task) {
+            $task->syncPendingKind();
+        });
+    }
+
+    /** A `type` written since the last save, waiting to become the kind:* label. */
+    protected ?string $pendingKind = null;
+
+    protected bool $kindWritten = false;
+
+    /**
+     * `$task->type` — the task's kind, read from its `kind:<type>` label (the
+     * first one in the configured vocabulary), or null for a task with no kind.
+     */
+    public function getTypeAttribute(): ?string
+    {
+        if ($this->kindWritten) {
+            return $this->pendingKind;
+        }
+        if (! $this->exists && ! $this->relationLoaded('labels')) {
+            return null;
+        }
+
+        return static::kindOf($this->labels->pluck('name')->all());
+    }
+
+    /** `$task->type = 'bug'` (and `type` in create/fill) — becomes the kind:bug label on save. */
+    public function setTypeAttribute(mixed $value): void
+    {
+        $value = is_string($value) ? trim($value) : null;
+        $this->pendingKind = $value !== '' ? $value : null;
+        $this->kindWritten = true;
+    }
+
+    /** The kind among these label names, or null. */
+    public static function kindOf(array $labelNames): ?string
+    {
+        foreach ($labelNames as $name) {
+            if (is_string($name) && str_starts_with($name, self::KIND_PREFIX)) {
+                $kind = substr($name, strlen(self::KIND_PREFIX));
+                if (in_array($kind, static::types(), true)) {
+                    return $kind;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /** Only tasks of these kinds — what `--type` / `?type=` filter on now. */
+    public function scopeOfKind(Builder $query, string|array $kinds): Builder
+    {
+        $names = array_map(fn ($k) => self::KIND_PREFIX.$k, (array) $kinds);
+
+        return $query->whereHas('labels', fn (Builder $l) => $l->whereIn('name', $names));
+    }
+
+    protected function syncPendingKind(): void
+    {
+        if (! $this->kindWritten) {
+            return;
+        }
+        $this->kindWritten = false;
+        $kind = $this->pendingKind;
+        $this->pendingKind = null;
+
+        $labelModel = config('dispatch.models.label');
+        $current = $this->labels()->get();
+        $stale = $current->filter(fn ($l) => str_starts_with($l->name, self::KIND_PREFIX)
+            && in_array(substr($l->name, strlen(self::KIND_PREFIX)), static::types(), true)
+            && $l->name !== self::KIND_PREFIX.$kind);
+        if ($stale->isNotEmpty()) {
+            $this->labels()->detach($stale->modelKeys());
+        }
+        if ($kind !== null && ! $current->contains('name', self::KIND_PREFIX.$kind)) {
+            $this->labels()->attach($labelModel::query()->firstOrCreate(['name' => self::KIND_PREFIX.$kind])->getKey());
+        }
+        $this->unsetRelation('labels');
     }
 
     /**

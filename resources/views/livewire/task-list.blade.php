@@ -212,7 +212,7 @@
                             </div>
                             <div class="dispatch-list-meta">
                                 <span class="dispatch-badge is-{{ $task->priority }}">{{ $priorityLabels[$task->priority] ?? $task->priority }}</span>
-                                <span class="dispatch-badge">{{ $typeLabels[$task->type] ?? $task->type }}</span>
+                                @if ($task->type)<span class="dispatch-badge">{{ $typeLabels[$task->type] ?? $task->type }}</span>@endif
                                 <span class="dispatch-badge is-info">{{ $statusLabels[$task->status] ?? $task->status }}</span>
                                 @if ($task->is_public)
                                     <span class="dispatch-badge is-success">public</span>
@@ -250,7 +250,7 @@
                         </div>
                         <div class="dispatch-list-meta">
                             <span class="dispatch-badge is-{{ $task->priority }}">{{ $priorityLabels[$task->priority] ?? $task->priority }}</span>
-                            <span class="dispatch-badge">{{ $typeLabels[$task->type] ?? $task->type }}</span>
+                            @if ($task->type)<span class="dispatch-badge">{{ $typeLabels[$task->type] ?? $task->type }}</span>@endif
                             <span class="dispatch-badge is-info">{{ $statusLabels[$task->status] ?? $task->status }}</span>
                             @if ($task->is_public)
                                 <span class="dispatch-badge is-success">public</span>

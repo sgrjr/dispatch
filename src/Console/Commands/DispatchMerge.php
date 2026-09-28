@@ -91,7 +91,7 @@ class DispatchMerge extends Command
 
         $this->info("Merged {$loserCode} into {$merged->code}.");
         $this->line("  {$merged->code}: {$merged->title}");
-        $this->line('  priority: '.$merged->priority.'  ·  type: '.$merged->type.'  ·  status: '.$merged->status);
+        $this->line('  priority: '.$merged->priority.($merged->type ? '  ·  kind: '.$merged->type : '').'  ·  status: '.$merged->status);
 
         return self::SUCCESS;
     }

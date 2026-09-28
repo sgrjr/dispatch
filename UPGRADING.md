@@ -1,5 +1,29 @@
 # Upgrading `sgrjr/dispatch`
 
+## `type` retires into `kind:*` labels (TASK-1018)
+
+A task's kind (bug / feature / chore / debt / verify) is now its
+`kind:<type>` **label**. Migration `2026_01_01_000025` copies every task's
+`type` into that label and **drops the `dispatch_tasks.type` column** — run
+`php artisan migrate` after upgrading.
+
+For ONE release the old surface keeps working:
+
+- `$task->type` reads the kind from the label (null when a task has none);
+  `$task->type = 'bug'` / `'type' => 'bug'` on create, fill, batch `update`
+  or the task page writes the label on save.
+- `--type=x` on `add` / `queue` / `next` / `find` / `claim`, and `?type=x` on
+  the agent API, are shorthand for the `kind:x` label filter
+  (`Task::ofKind()`); the agent JSON keeps `type` as a derived field.
+- Nothing stamps a default kind any more: `create()`, `capture()`,
+  `fromException()`, the capture endpoint and the widget leave a task
+  kindless unless someone chose one (the capture LANE routes it instead).
+  `DispatchTask::bug()` / `feature()` still name theirs.
+
+Before the next release, move callers to labels: `--label=kind:x`,
+`whereHas('labels', …)` / `ofKind()`, and read `kind:*` from `labels`.
+Raw queries on the column (`where('type', …)`) now fail — use `ofKind()`.
+
 ## After upgrading the dispatch package
 
 The package's **routes and config are read from `vendor/` at runtime**, so an

@@ -58,7 +58,7 @@ test('an add op mints a new task in triage with labels and a comment', function 
     expect($task->status)->toBe('triage')            // never assumes done
         ->and($task->type)->toBe('bug')
         ->and($task->submitter_user_id)->toBeNull()  // agent/CLI task
-        ->and($task->labels->pluck('name')->sort()->values()->all())->toBe(['area:api', 'source:agent'])
+        ->and($task->labels->pluck('name')->sort()->values()->all())->toBe(['area:api', 'kind:bug', 'source:agent']) // TASK-1018: the kind IS a label
         ->and($task->comments()->where('event_type', TaskComment::EVENT_COMMENT)->count())->toBe(1);
 });
 

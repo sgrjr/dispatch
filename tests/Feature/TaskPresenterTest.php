@@ -37,7 +37,7 @@ test('the summary shape carries exactly the documented keys', function () {
         ->and($data['type'])->toBe('bug')
         ->and($data['priority'])->toBe('high')
         ->and($data['is_public'])->toBeFalse()
-        ->and($data['labels'])->toEqualCanonicalizing(['area:api', 'urgent'])
+        ->and($data['labels'])->toEqualCanonicalizing(['area:api', 'kind:bug', 'urgent']) // TASK-1018: the kind IS a label
         ->and($data['comment_count'])->toBe(0)
         ->and($data['dedupe_key'])->toBeNull()
         ->and($data)->not->toHaveKey('description');

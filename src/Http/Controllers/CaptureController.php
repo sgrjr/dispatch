@@ -49,7 +49,8 @@ class CaptureController extends Controller
 
         $task = $tasks->create(array_filter([
             'title' => $data['title'],
-            'type' => $data['type'] ?? 'bug',
+            // No default kind (TASK-1018); the capture lane routes it instead.
+            'type' => $data['type'] ?? null,
             'description' => $description !== '' ? $description : null,
             'status' => 'triage',
             'context' => $context,

@@ -106,7 +106,7 @@ class TaskShow extends Component
         $this->task = $task->load(['labels', 'submitter', 'assignee', 'attachments']);
 
         $this->status = $task->status;
-        $this->type = $task->type;
+        $this->type = (string) ($task->type ?? ''); // '' = no kind (TASK-1018)
         $this->priority = $task->priority;
         $this->assignee_choice = $task->assignee_group
             ? 'group:'.$task->assignee_group
@@ -144,7 +144,7 @@ class TaskShow extends Component
 
         $this->validate([
             'status' => 'required|in:'.implode(',', $taskClass::statuses()),
-            'type' => 'required|in:'.implode(',', $taskClass::types()),
+            'type' => 'nullable|in:'.implode(',', $taskClass::types()),
             'priority' => 'required|in:'.implode(',', $taskClass::priorities()),
             'assignee_choice' => 'nullable|string',
             'is_public' => 'boolean',
@@ -178,8 +178,8 @@ class TaskShow extends Component
             $this->task->withStatusNote($this->statusNote);
             $statusChanged = true;
         }
-        if ($this->task->type !== $this->type) {
-            $this->task->type = $this->type;
+        if ($this->task->type !== ($this->type !== '' ? $this->type : null)) {
+            $this->task->type = $this->type !== '' ? $this->type : null;
         }
         if ($this->task->priority !== $this->priority) {
             $this->task->priority = $this->priority;

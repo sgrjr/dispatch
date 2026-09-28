@@ -125,7 +125,7 @@ Notes on the loop:
   reach another department's work.
 <!-- dispatch:endif -->
 - **Filing new work mid-run** (a bug you tripped over, a follow-up the work
-  surfaced): `dispatch:add "<title>" --type=… --description-file=body.md`.
+  surfaced): `dispatch:add "<title>" --label=kind:… --description-file=body.md`.
 <!-- dispatch:if code_lane -->
   **Code work goes to `--lane={{ code_lane }}`** — left off, it lands in **No
   department**, where nobody is watching for it. Name another lane only when

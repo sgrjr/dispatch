@@ -34,7 +34,7 @@ test('the service applies defaults and attaches labels through the contracts', f
         ['source:widget'],
     );
 
-    expect($task->type)->toBe('feature');
+    expect($task->type)->toBeNull(); // TASK-1018: no default kind
     expect($task->priority)->toBe('medium');
     expect($task->status)->toBe('triage');
     expect($task->is_public)->toBeFalse();
@@ -49,6 +49,6 @@ test('capture dedupes recurring errors onto the same task', function () {
     $again = $svc->capture('boom-signature', ['title' => 'Undefined index (repeat)']);
 
     expect($again->id)->toBe($first->id);
-    expect($first->type)->toBe('bug');
+    expect($first->type)->toBeNull(); // TASK-1018: capture no longer stamps bug
     expect($first->comments()->where('event_type', 'exception_occurrence')->count())->toBe(1);
 });

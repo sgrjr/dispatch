@@ -214,7 +214,7 @@ class DispatchAdd extends Command
 
         $this->info("Created {$task->code}");
         $this->line("  title: {$task->title}");
-        $this->line("  type: {$task->type}  ·  priority: {$task->priority}  ·  status: {$task->status}  ·  public: ".($task->is_public ? 'yes' : 'no'));
+        $this->line(($task->type ? "  kind: {$task->type}  ·" : ' ')." priority: {$task->priority}  ·  status: {$task->status}  ·  public: ".($task->is_public ? 'yes' : 'no'));
         // Read off the task, not the flag: a keyed re-add returns the EXISTING
         // task untouched, and printing the date it actually carries is the
         // honest receipt.

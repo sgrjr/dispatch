@@ -307,7 +307,7 @@
                                     </div>
                                 @endif
                                 <div class="dispatch-card-meta">
-                                    <span class="dispatch-badge">{{ $task->type }}</span>
+                                    @if ($task->type)<span class="dispatch-badge">{{ $task->type }}</span>@endif
                                     @if ($task->is_public)
                                         <span class="dispatch-badge is-success">public</span>
                                     @endif

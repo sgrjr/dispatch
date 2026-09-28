@@ -211,7 +211,7 @@
         <div class="dispatch-show-signals">
             <span class="dispatch-pill" title="Status">{{ $statusLabels[$task->status] ?? str_replace('_', ' ', $task->status) }}</span>
             <span class="dispatch-pill is-{{ $task->priority }}" title="Priority">{{ $task->priority }}</span>
-            <span class="dispatch-badge">{{ $task->type }}</span>
+            @if ($task->type)<span class="dispatch-badge">{{ $task->type }}</span>@endif
             @if ($task->is_public)
                 <span class="dispatch-badge is-success">public</span>
             @endif
@@ -590,6 +590,7 @@
                         <div class="dispatch-field">
                             <label class="dispatch-label">Type</label>
                             <select wire:model="type" class="dispatch-select">
+                                <option value="">—</option>
                                 @foreach ($typeLabels as $code => $label) <option value="{{ $code }}">{{ $label }}</option> @endforeach
                             </select>
                         </div>

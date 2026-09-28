@@ -60,7 +60,7 @@ with its own `dispatch:add` call.
 
 ```bash
 php artisan dispatch:add "<title>" \
-  --type=<bug|feature|chore|debt|verify> \
+  --label=kind:<bug|feature|chore|debt|verify> \
   --priority=<low|medium|high|blocker> \
 <!-- dispatch:if code_lane -->
   --lane={{ code_lane }} \
@@ -78,7 +78,8 @@ php artisan dispatch:add "<title>" \
 noun phrase. Specific enough to scan in a list: "Form fields not saving on
 job creation" ✓, "Bug in jobs" ✗.
 
-**`--type`**
+**`--label=kind:…`** — the task's KIND is a tag (`type` retired into `kind:*`
+labels; `--type=x` still works one more release as shorthand for `--label=kind:x`):
 - `bug` — broken behavior, regression, error, defect, customer complaint about how something works
 - `feature` — new capability, enhancement, "would be nice if"
 - `chore` — UI polish, refactor, doc update, dev experience
@@ -210,7 +211,7 @@ dispatch:done <code> --commit=<sha> --result='{...}'   # close it out (structure
 dispatch:push              # sync local state back up, if a remote is configured
 ```
 
-`dispatch:claim` (`--type=` / `--label=*` to scope which task it claims) is
+`dispatch:claim` (`--label=*`, e.g. `--label=kind:bug`, to scope which task it claims) is
 the race-safe way to pick up work — prefer it over treating `dispatch:next`'s
 result as already yours, since `next` is read-only and doesn't reserve
 anything. `php artisan dispatch:schema` prints the documented `--json` shape
@@ -244,7 +245,7 @@ parse against that instead of guessing field names from examples.
 
 3. **`php artisan dispatch:claim --json`** — claim it before you start:
    marks the task `in_progress` and assigns it in one atomic transaction.
-   Scope with `--type=` / `--label=*` the same way you'd scope `next`. This
+   Scope with `--label=*` (e.g. `--label=kind:chore`) the same way you'd scope `next`. This
    matters whenever more than one agent (or an agent and a human) might pull
    from the same backlog — `next` alone is just a preview and doesn't
    reserve anything. When an active **Focus** exists, `next`/`claim` steer

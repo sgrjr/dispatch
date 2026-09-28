@@ -25,7 +25,7 @@
                         </div>
                         <div class="dispatch-list-meta">
                             <span class="dispatch-badge is-{{ $task->priority }}">{{ $task->priority }}</span>
-                            <span class="dispatch-badge">{{ $task->type }}</span>
+                            @if ($task->type)<span class="dispatch-badge">{{ $task->type }}</span>@endif
                             <span class="dispatch-badge is-info">{{ $statusLabels[$task->status] ?? $task->status }}</span>
                             @include('dispatch::livewire.partials.label-chips', ['labels' => $task->labels, 'context' => 'row'])
                         </div>
