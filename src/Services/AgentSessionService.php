@@ -40,7 +40,7 @@ class AgentSessionService
      * bytes. A read, the same sensitivity tier as `show` (which already hands
      * the session internal notes and exception context).
      */
-    public const KNOWN_VERBS = ['next', 'queue', 'show', 'add', 'note', 'done', 'claim', 'batch', 'handoff', 'perform', 'attachment'];
+    public const KNOWN_VERBS = ['next', 'queue', 'show', 'add', 'note', 'done', 'claim', 'batch', 'handoff', 'perform', 'attachment', 'attach'];
 
     /**
      * Register a pending session and return the one-time bootstrap payload.

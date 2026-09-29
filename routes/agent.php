@@ -64,6 +64,11 @@ Route::middleware(['dispatch.agent', 'throttle:dispatch-agent-verb'])->group(fun
         ->middleware('dispatch.agent.scope:attachment')
         ->name('attachment');
 
+    // TASK-1328 — the upload counterpart: attach a local file (multipart) to
+    // a task or one of its comments. A host that published config/dispatch.php
+    // before this verb must add `attach` to its `agent.verbs` (see UPGRADING.md).
+    Route::post('attach', [AgentController::class, 'attach'])->middleware('dispatch.agent.scope:attach')->name('attach');
+
     // Batch memorialize (§20) — apply a whole manifest of add/update ops in ONE
     // transactional hit instead of a verb call per task. Additive + server-bounded
     // (no delete, labels attach not replace, status never assumed done), so it

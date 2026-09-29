@@ -734,6 +734,48 @@ trait TalksToAgentApi
     }
 
     /**
+     * TASK-1328 — multipart POST for `dispatch:attach`: a local FILE plus
+     * ordinary form fields, unlike agentPost()'s JSON body. Same guards and
+     * 401/429/403 narration as agentRequest(). The file rides under its
+     * DISPLAY name (not necessarily the source path's basename — `--as`
+     * overrides it), so the server's stored `original_name` is exactly what
+     * the caller intended, the zip-fallback rename included.
+     *
+     * @param  array<string,mixed>  $fields
+     * @return array<string,mixed>|null
+     */
+    protected function agentPostFile(string $path, string $filePath, string $filename, array $fields = []): ?array
+    {
+        $base = $this->agentPreflight(true);
+        if ($base === null) {
+            return null;
+        }
+
+        $contents = @file_get_contents($filePath);
+        if ($contents === false) {
+            $this->error("Cannot read {$filePath}.");
+
+            return null;
+        }
+
+        try {
+            $response = $this->agentClient()
+                ->attach('file', $contents, $filename)
+                ->post($base.'/'.ltrim($path, '/'), $fields);
+        } catch (ConnectionException $e) {
+            $this->reportConnectionFailure($e);
+
+            return null;
+        }
+
+        if ($this->agentResponseFailed($response)) {
+            return null;
+        }
+
+        return $response->json();
+    }
+
+    /**
      * Whether a transport exception looks like a missing/broken CA bundle — the
      * classic cURL error 60 on a box with no `curl.cainfo` / `openssl.cafile`.
      * First `--remote` run on a bare box hits this, so name the fix rather than

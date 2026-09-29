@@ -5,6 +5,7 @@ namespace Sgrjr\Dispatch\Http\Controllers;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Validation\ValidationException;
 use Sgrjr\Dispatch\Contracts\LaneResolver;
 use Sgrjr\Dispatch\Http\Middleware\AuthenticateAgentSession;
 use Sgrjr\Dispatch\Models\AgentSession;
@@ -226,6 +227,79 @@ class AgentController extends Controller
         $response->headers->set('X-Content-Type-Options', 'nosniff');
 
         return $response;
+    }
+
+    /**
+     * TASK-1328 — the upload counterpart to {@see attachment()}. Closes the
+     * gap that left an agent-generated artifact (e.g. a report written
+     * straight to disk) reachable only with shell access to the box: this
+     * makes it a real TaskAttachment, gated by the same task-visibility rule
+     * as everything else on the board.
+     *
+     * `comment_id` attaches to an EXISTING comment (so several files can
+     * share one note — post it first with `note`, or reuse a prior attach's
+     * returned `comment_id`); `body` instead mints a NEW comment and attaches
+     * to that; neither given attaches directly to the task. A mime the board
+     * doesn't accept inline (HTML/SVG — deliberately excluded, both can
+     * carry script) is zipped rather than refused — {@see
+     * AttachmentService::storeForAgent()} — so the artifact is never
+     * silently dropped just because of its format.
+     */
+    public function attach(Request $request): JsonResponse
+    {
+        $s = $this->session($request);
+
+        $v = $request->validate([
+            'code' => ['required', 'string'],
+            'file' => ['required', 'file'],
+            'comment_id' => ['nullable', 'integer'],
+            'body' => ['nullable', 'string'],
+            'internal' => ['nullable', 'boolean'],
+            'public' => ['nullable', 'boolean'],
+        ]);
+
+        /** @var class-string<Task> $taskModel */
+        $taskModel = config('dispatch.models.task');
+        $task = $taskModel::query()->where('code', $v['code'])->first();
+        abort_if($task === null, 404);
+
+        $attachable = $task;
+        $commentId = null;
+
+        if (! empty($v['comment_id'])) {
+            $comment = $task->comments()->whereKey($v['comment_id'])->first();
+            abort_if($comment === null, 422, "{$task->code} has no comment #{$v['comment_id']}.");
+            $attachable = $comment;
+            $commentId = $comment->id;
+        } elseif (! empty($v['body'])) {
+            $comment = $task->recordEvent(
+                TaskComment::EVENT_COMMENT,
+                null,
+                $this->agentMeta($s),
+                $v['body'],
+                self::noteIsInternal($v),
+            );
+            $attachable = $comment;
+            $commentId = $comment->id;
+        }
+
+        try {
+            $result = app(AttachmentService::class)->storeForAgent($request->file('file'), $attachable, null);
+        } catch (ValidationException $e) {
+            abort(422, (string) collect($e->errors())->flatten()->first());
+        }
+
+        return response()->json([
+            'attachment' => [
+                'id' => $result['attachment']->id,
+                'original_name' => $result['attachment']->original_name,
+                'mime_type' => $result['attachment']->mime_type,
+                'size_bytes' => $result['attachment']->size_bytes,
+            ],
+            'zipped_from' => $result['zipped_from'],
+            'comment_id' => $commentId,
+            'task' => TaskPresenter::toArray($task->fresh()->load('labels', 'submitter', 'assignee'), true),
+        ], 201);
     }
 
     public function claim(Request $request): JsonResponse

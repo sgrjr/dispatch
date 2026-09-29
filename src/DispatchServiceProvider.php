@@ -255,6 +255,8 @@ class DispatchServiceProvider extends ServiceProvider
             \Sgrjr\Dispatch\Console\Commands\DispatchShow::class,
             // TASK-1242 — save a task's attachments locally.
             \Sgrjr\Dispatch\Console\Commands\DispatchAttachment::class,
+            // TASK-1328 — attach a local file to a task (the upload counterpart).
+            \Sgrjr\Dispatch\Console\Commands\DispatchAttach::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchNote::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchDone::class,
             \Sgrjr\Dispatch\Console\Commands\DispatchPull::class,

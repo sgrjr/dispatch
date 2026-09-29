@@ -92,9 +92,8 @@ class AttachmentService
             ]);
         }
 
-        $allowed = (array) config('dispatch.attachments.allowed_mimes', []);
         $mime = (string) ($file->getMimeType() ?: $file->getClientMimeType());
-        if (! empty($allowed) && ! in_array($mime, $allowed, true)) {
+        if (! $this->mimeAllowed($mime)) {
             throw ValidationException::withMessages([
                 'file' => "Files of type {$mime} are not allowed.",
             ]);
@@ -104,6 +103,79 @@ class AttachmentService
         if (str_starts_with($mime, 'image/') && @getimagesize($file->getRealPath()) === false) {
             throw ValidationException::withMessages(['file' => 'The image file is not valid.']);
         }
+    }
+
+    private function mimeAllowed(string $mime): bool
+    {
+        $allowed = (array) config('dispatch.attachments.allowed_mimes', []);
+
+        return empty($allowed) || in_array($mime, $allowed, true);
+    }
+
+    /**
+     * TASK-1328 — the upload counterpart to `dispatch:attachment`'s download,
+     * for an agent that already has bytes ON DISK (a generated report) rather
+     * than an HTTP multipart upload. The allowlist deliberately excludes any
+     * mime that can carry script (HTML, SVG — see config/dispatch.php
+     * `attachments.allowed_mimes`); rather than hard-refuse those and leave
+     * the artifact an orphan reachable only with shell access to the box,
+     * this zips the file and attaches THAT — same posture a human already
+     * uses by hand for a report that isn't a board-accepted type.
+     *
+     * Deliberately NOT folded into store()/validate(): a human's web upload
+     * (AttachmentController::store) keeps the hard rejection, since silently
+     * substituting a zip for a file a person picked themselves would be
+     * surprising. This is the agent attach path only (`dispatch:attach`,
+     * `POST agent/attach`).
+     *
+     * @return array{attachment: TaskAttachment, zipped_from: ?string} `zipped_from`
+     *   is the original (disallowed) mime when a substitution happened, else null.
+     *
+     * @throws ValidationException
+     */
+    public function storeForAgent(UploadedFile $file, Model $attachable, ?int $uploaderId = null): array
+    {
+        $mime = (string) ($file->getMimeType() ?: $file->getClientMimeType());
+
+        if ($this->mimeAllowed($mime)) {
+            return ['attachment' => $this->store($file, $attachable, $uploaderId), 'zipped_from' => null];
+        }
+
+        [$zipped, $zipPath] = $this->zip($file);
+
+        try {
+            return ['attachment' => $this->store($zipped, $attachable, $uploaderId), 'zipped_from' => $mime];
+        } finally {
+            @unlink($zipPath);
+        }
+    }
+
+    /**
+     * @return array{0: UploadedFile, 1: string} the zip as an UploadedFile ready
+     *   for store(), and its temp path (the caller unlinks it once store() has
+     *   copied the bytes into the bound AttachmentStore).
+     */
+    private function zip(UploadedFile $file): array
+    {
+        if (! class_exists(\ZipArchive::class)) {
+            throw ValidationException::withMessages([
+                'file' => "Files of type {$file->getMimeType()} are not allowed, and the zip fallback needs PHP's zip extension (not installed).",
+            ]);
+        }
+
+        $originalName = $file->getClientOriginalName();
+        $zipPath = tempnam(sys_get_temp_dir(), 'dispatch-attach-').'.zip';
+
+        $zip = new \ZipArchive();
+        if ($zip->open($zipPath, \ZipArchive::CREATE | \ZipArchive::OVERWRITE) !== true) {
+            @unlink($zipPath);
+
+            throw ValidationException::withMessages(['file' => 'Could not create a zip for a disallowed file type.']);
+        }
+        $zip->addFile($file->getRealPath(), $originalName);
+        $zip->close();
+
+        return [new UploadedFile($zipPath, $originalName.'.zip', 'application/zip', null, true), $zipPath];
     }
 
     /**

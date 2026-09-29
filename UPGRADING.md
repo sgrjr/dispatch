@@ -1,5 +1,42 @@
 # Upgrading `sgrjr/dispatch`
 
+## New agent verb: `attach` (TASK-1328)
+
+The upload counterpart to `attachment` (TASK-1242's download): an agent — or
+the trusted local CLI — can now put a file already on disk onto a task, so an
+artifact written straight to the filesystem (a generated report, say) is
+never an orphan reachable only with shell access to the box.
+
+```bash
+composer update sgrjr/dispatch
+php artisan optimize:clear
+```
+
+- **New CLI**: `dispatch:attach <CODE> <path> [--as=] [--body=|--body-file=]
+  [--comment-id=] [--public] [--remote|--local] [--json]`, local and
+  `--remote` (`POST agent/attach`). With `--body`, a new internal (or
+  `--public`) comment is minted and the file attaches to IT — the same shape
+  as the board's own "note + attachment" presentation. `--comment-id`
+  attaches to an existing comment instead (share one note across several
+  files by calling this once per file with the first call's `comment_id`).
+  Neither given attaches directly to the task.
+- **`AttachmentService::storeForAgent()`**: a mime the board doesn't accept
+  inline (HTML/SVG — `attachments.allowed_mimes` deliberately excludes both,
+  since either can carry script) is **zipped and attached as the zip**
+  instead of being refused — the exact workaround a human previously had to
+  do by hand. The human web-upload path (`AttachmentController::store`) is
+  unchanged — it still hard-rejects a disallowed mime, since silently
+  substituting a zip for a file a person picked themselves would be
+  surprising; the auto-zip is agent-attach-only.
+
+⚠️ **A host must add `attach` to its published `agent.verbs`** (or
+re-publish `config/dispatch.php --force` and re-apply customizations) before
+any session can be GRANTED the scope — the same stale-published-config trap
+as `batch`/`handoff`/`perform` (see "Enabling the batch verb" below).
+Without it, the verb 403s "not scoped" regardless of what a session
+requests. `php artisan dispatch:doctor` flags a published `agent.verbs` that
+is missing a shipped verb.
+
 ## `type` retires into `kind:*` labels (TASK-1018)
 
 A task's kind (bug / feature / chore / debt / verify) is now its
