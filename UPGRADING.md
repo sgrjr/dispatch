@@ -37,6 +37,24 @@ Without it, the verb 403s "not scoped" regardless of what a session
 requests. `php artisan dispatch:doctor` flags a published `agent.verbs` that
 is missing a shipped verb.
 
+**A Markdown attachment now gets a real preview, not sandboxed plain text.**
+`TaskAttachment::viewerKind()` gained `VIEW_MARKDOWN` (a `.md`/`.markdown`
+file under any `text/*`-family mime — a real upload almost never arrives
+already labeled `text/markdown`, since content-sniffing has no signature for
+Markdown, so the extension is what actually fires this in production).
+`AttachmentService::view()` renders it through the SAME converter already
+trusted for comment bodies and task descriptions
+(`Sgrjr\Dispatch\Support\Markdown::render()` — commonmark configured to
+escape raw HTML input and disallow unsafe link schemes) and serves real
+`text/html`, with the response's `sandbox` CSP as a second, independent
+layer (no tokens granted back — scripts/forms/popups are opted out
+outright, so even a converter bug could not turn into a live XSS). No
+action needed — this activates automatically for existing Markdown
+attachments on upgrade. `task-show.blade.php`/`task-thread.blade.php` also
+gained an explicit "download" link beside any viewable attachment's row
+(previously the only way to get the raw bytes for a viewable file was to
+open the preview and save from there).
+
 ## `type` retires into `kind:*` labels (TASK-1018)
 
 A task's kind (bug / feature / chore / debt / verify) is now its

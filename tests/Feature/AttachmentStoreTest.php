@@ -2,7 +2,9 @@
 
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Livewire\Livewire;
 use Sgrjr\Dispatch\Contracts\AttachmentStore;
+use Sgrjr\Dispatch\Livewire\TaskShow;
 use Sgrjr\Dispatch\Models\TaskAttachment;
 use Sgrjr\Dispatch\Services\AttachmentService;
 use Sgrjr\Dispatch\Services\DiskAttachmentStore;
@@ -50,9 +52,54 @@ test('viewerKind: raster images and PDFs show as themselves, CSV and text as tex
     ['trace.txt', 'text/plain', TaskAttachment::VIEW_TEXT],
     ['payload.json', 'application/json', TaskAttachment::VIEW_TEXT],
     ['page.html', 'text/html', TaskAttachment::VIEW_TEXT],
+    // TASK-1328 — a REAL upload content-sniffs as text/plain regardless of
+    // extension (there's no magic-byte signature for Markdown); only a
+    // synthetic UploadedFile (UploadedFile::fake()) infers text/markdown
+    // from the extension. Both must land on VIEW_MARKDOWN.
+    ['report.md', 'text/plain', TaskAttachment::VIEW_MARKDOWN],
+    ['report.md', 'text/markdown', TaskAttachment::VIEW_MARKDOWN],
+    ['NOTES.MARKDOWN', 'text/plain', TaskAttachment::VIEW_MARKDOWN],
     ['report.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', null],
     ['bundle.zip', 'application/zip', null],
 ]);
+
+test('view() renders a Markdown attachment to real HTML, not sandboxed plain text', function () {
+    $response = app(AttachmentService::class)->view(storedAttachment('TASK-1328-report.md', 'text/plain', "# Guernsey\n\n- two orders overlap\n- **evidence** below\n"));
+
+    expect($response->headers->get('Content-Type'))->toBe('text/html; charset=UTF-8')
+        ->and($response->headers->get('X-Content-Type-Options'))->toBe('nosniff')
+        ->and($response->headers->get('Content-Security-Policy'))->toContain('sandbox');
+
+    $body = $response->getContent();
+    expect($body)->toContain('<h1>Guernsey</h1>')
+        ->and($body)->toContain('<li>two orders overlap</li>')
+        ->and($body)->toContain('<strong>evidence</strong>');
+});
+
+test('a raw <script> tag inside the Markdown source is ESCAPED, never executed (defense layer 1: the converter)', function () {
+    $response = app(AttachmentService::class)->view(storedAttachment(
+        'evil.md',
+        'text/plain',
+        "# hi\n\n<script>alert(document.cookie)</script>\n\n<img src=x onerror=alert(1)>\n",
+    ));
+
+    $body = $response->getContent();
+    expect($body)->not->toContain('<script>alert(document.cookie)</script>')
+        ->and($body)->not->toContain('<img src=x onerror=alert(1)>')
+        ->and($body)->toContain('&lt;script&gt;')
+        ->and($body)->toContain('&lt;img src=x onerror=alert(1)&gt;');
+});
+
+test('an unsafe link scheme in Markdown is neutralized, and the sandbox CSP is the second, independent layer', function () {
+    $response = app(AttachmentService::class)->view(storedAttachment(
+        'evil-link.md',
+        'text/plain',
+        '[click me](javascript:alert(1))',
+    ));
+
+    expect($response->getContent())->not->toContain('href="javascript:')
+        ->and($response->headers->get('Content-Security-Policy'))->toBe("sandbox; default-src 'none'; style-src 'unsafe-inline'");
+});
 
 test('view() shows an image inline, never letting the browser sniff it into something else', function () {
     $response = app(AttachmentService::class)->view(storedAttachment('shot.png', 'image/png'));
@@ -132,6 +179,26 @@ test('a bound AttachmentStore owns the bytes: store(), download() and delete() a
         'response:inline',
         'delete:host/notes.txt',
     ])->and(TaskAttachment::query()->whereKey($attachment->id)->exists())->toBeFalse();
+});
+
+test('TaskShow renders the file-list row (Markdown/CSV viewable + a download-only zip) without error', function () {
+    dispatchFakeUsers();
+    $staff = dispatchMakeUser(88888);
+    $this->actingAs($staff);
+
+    $task = app(DispatchTaskService::class)->create(['title' => 'blade smoke', 'status' => 'open']);
+    app(AttachmentService::class)->store(UploadedFile::fake()->createWithContent('report.md', "# hi\n"), $task);
+    app(AttachmentService::class)->store(UploadedFile::fake()->createWithContent('data.csv', "a,b\n1,2\n"), $task);
+    app(AttachmentService::class)->store(UploadedFile::fake()->create('archive.zip', 10), $task);
+
+    $html = Livewire::test(TaskShow::class, ['task' => $task])->html();
+
+    expect($html)->toContain('report.md')
+        ->and($html)->toContain('data.csv')
+        ->and($html)->toContain('archive.zip')
+        // Markdown/CSV are viewable, so each gets an explicit download link
+        // beside the preview link; the zip is download-only and gets one link.
+        ->and(substr_count($html, '/download'))->toBeGreaterThanOrEqual(3);
 });
 
 test('a CSV upload passes the default allow-list', function () {

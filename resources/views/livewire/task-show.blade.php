@@ -375,11 +375,18 @@
                     @if ($task->attachments->where('is_image', false)->isNotEmpty())
                         <div class="dispatch-file-list">
                             @foreach ($task->attachments->where('is_image', false) as $attachment)
-                                {{-- Viewable (PDF / CSV / text) opens in a new tab; anything else downloads. --}}
-                                <a href="{{ route($attachment->viewerKind() ? 'dispatch.attachments.view' : 'dispatch.attachments.download', $attachment) }}" @if ($attachment->viewerKind()) target="_blank" rel="noopener" @endif class="dispatch-file-row">
-                                    📎 {{ $attachment->original_name }}
-                                    <span style="color: var(--dispatch-text-faint); margin-left:auto;">{{ number_format($attachment->size_bytes / 1024, 1) }} KB</span>
-                                </a>
+                                {{-- Viewable (PDF / Markdown / CSV / text) opens a preview in a new
+                                     tab, with an explicit download link beside it; anything else
+                                     is a plain download-only row. --}}
+                                <div class="dispatch-file-row">
+                                    <a href="{{ route($attachment->viewerKind() ? 'dispatch.attachments.view' : 'dispatch.attachments.download', $attachment) }}" @if ($attachment->viewerKind()) target="_blank" rel="noopener" @endif style="display:flex; align-items:center; gap:0.5rem; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                                        📎 {{ $attachment->original_name }}
+                                    </a>
+                                    <span style="color: var(--dispatch-text-faint); white-space:nowrap;">{{ number_format($attachment->size_bytes / 1024, 1) }} KB</span>
+                                    @if ($attachment->viewerKind())
+                                        <a href="{{ route('dispatch.attachments.download', $attachment) }}" style="color: var(--dispatch-text-faint); text-decoration: underline; white-space:nowrap;">download</a>
+                                    @endif
+                                </div>
                             @endforeach
                         </div>
                     @endif

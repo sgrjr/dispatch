@@ -36,19 +36,32 @@ class TaskAttachment extends Model
 
     public const VIEW_TEXT = 'text';
 
+    /**
+     * TASK-1328 — rendered through the SAME safe converter already trusted for
+     * comment bodies and task descriptions ({@see \Sgrjr\Dispatch\Support\Markdown}),
+     * never the raw bytes: real HTML, not sandboxed plain text.
+     */
+    public const VIEW_MARKDOWN = 'markdown';
+
     /** Raster images only: an SVG can carry script, so it is never shown inline. */
     private const INLINE_IMAGE_MIMES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 
     private const CSV_MIMES = ['text/csv', 'application/csv', 'text/x-csv', 'application/vnd.ms-excel'];
 
+    private const MARKDOWN_EXTENSIONS = ['md', 'markdown'];
+
     /**
      * How this file can be viewed in a browser: `image` / `pdf` as themselves,
-     * `csv` (a table to render) / `text` served as plain text — or null, meaning
-     * download it (the backstop for everything a browser cannot show).
+     * `markdown` rendered to safe HTML, `csv` (a table to render) / `text`
+     * served as plain text — or null, meaning download it (the backstop for
+     * everything a browser cannot show).
      *
      * Reads the stored (server-sniffed) mime first; the extension only refines
-     * a text/* sniff (a CSV usually sniffs as text/plain) and never turns a
-     * binary into something shown inline.
+     * a text/* sniff (a CSV usually sniffs as text/plain, and content-sniffing
+     * has no way to tell ".md" text apart from any other plain text — a REAL
+     * upload almost never arrives already labeled `text/markdown`, unlike a
+     * synthetic UploadedFile that infers it from the extension) and never
+     * turns a binary into something shown inline.
      */
     public function viewerKind(): ?string
     {
@@ -65,6 +78,10 @@ class TaskAttachment extends Model
             return self::VIEW_CSV;
         }
         if (str_starts_with($mime, 'text/') || in_array($mime, ['application/json', 'application/xml'], true)) {
+            if (in_array($ext, self::MARKDOWN_EXTENSIONS, true)) {
+                return self::VIEW_MARKDOWN;
+            }
+
             return $ext === 'csv' ? self::VIEW_CSV : self::VIEW_TEXT;
         }
 

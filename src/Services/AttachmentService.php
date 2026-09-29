@@ -209,8 +209,9 @@ class AttachmentService
     /**
      * Show the file IN the browser when its kind is safe to show
      * ({@see TaskAttachment::viewerKind()}): an image or a PDF as itself, a
-     * CSV or text file as UTF-8 plain text. Anything else falls back to the
-     * download — the backstop for a type no browser can render.
+     * Markdown file rendered to safe HTML, a CSV or text file as UTF-8 plain
+     * text. Anything else falls back to the download — the backstop for a
+     * type no browser can render.
      *
      * Every inline answer is `nosniff`, so the browser never second-guesses
      * the type into HTML; text is additionally sandboxed by CSP, so even a
@@ -223,6 +224,10 @@ class AttachmentService
             return $this->download($attachment);
         }
 
+        if ($kind === TaskAttachment::VIEW_MARKDOWN) {
+            return $this->viewMarkdown($attachment);
+        }
+
         $isText = in_array($kind, [TaskAttachment::VIEW_CSV, TaskAttachment::VIEW_TEXT], true);
         $response = $this->store->response($attachment, true, $isText ? 'text/plain; charset=UTF-8' : null);
         $response->headers->set('X-Content-Type-Options', 'nosniff');
@@ -231,6 +236,57 @@ class AttachmentService
         }
 
         return $response;
+    }
+
+    /**
+     * TASK-1328 — a Markdown attachment's preview: rendered through the SAME
+     * converter already trusted for comment bodies and task descriptions
+     * ({@see \Sgrjr\Dispatch\Support\Markdown::render()} — commonmark
+     * configured to ESCAPE raw HTML input and disallow unsafe link schemes),
+     * never the raw bytes reinterpreted as HTML. That escaping is the first
+     * layer; the response's `sandbox` CSP (no tokens granted back) is a
+     * SECOND, independent one — even a converter bug that let a script tag
+     * through could not execute, because the document opts out of script
+     * execution, forms, and popups outright.
+     */
+    private function viewMarkdown(TaskAttachment $attachment): Response
+    {
+        $source = $this->readBytes($attachment);
+        $html = \Sgrjr\Dispatch\Support\Markdown::render($source);
+
+        $page = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+            .'<style>body{font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;max-width:860px;margin:2rem auto;padding:0 1.25rem;color:#1a1a1a}'
+            .'pre{white-space:pre-wrap;word-wrap:break-word;background:#f5f5f5;padding:.75rem;border-radius:6px;overflow-x:auto}'
+            .'code{background:#f5f5f5;padding:.1rem .3rem;border-radius:3px}pre code{background:none;padding:0}'
+            .'table{border-collapse:collapse}td,th{border:1px solid #ddd;padding:.4rem .6rem}'
+            .'blockquote{border-left:3px solid #ddd;margin:0;padding-left:1rem;color:#555}'
+            .'img{max-width:100%}</style>'
+            .$html;
+
+        $response = response($page, 200, ['Content-Type' => 'text/html; charset=UTF-8']);
+        $response->headers->set('X-Content-Type-Options', 'nosniff');
+        // default-src 'none' means an embedded remote image simply fails to
+        // load (a broken-image icon) rather than firing a tracking request —
+        // a deliberate trade-off, not an oversight.
+        $response->headers->set('Content-Security-Policy', "sandbox; default-src 'none'; style-src 'unsafe-inline'");
+
+        return $response;
+    }
+
+    /**
+     * The bound store only speaks HTTP responses ({@see AttachmentStore}), so
+     * this captures whatever it streams into a string — the same technique
+     * `dispatch:attachment`'s local mode already uses to pull bytes out of an
+     * opaque store. Store-agnostic: works for a local disk, S3, anything.
+     */
+    private function readBytes(TaskAttachment $attachment): string
+    {
+        $response = $this->store->response($attachment, true);
+
+        ob_start();
+        $response->sendContent();
+
+        return (string) ob_get_clean();
     }
 
     /**
