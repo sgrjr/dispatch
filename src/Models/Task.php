@@ -145,6 +145,31 @@ class Task extends Model
         $this->kindWritten = true;
     }
 
+    /** The `title` column's width (varchar). */
+    public const TITLE_MAX = 255;
+
+    /**
+     * Every write path — service create, batch add/update, `dispatch:edit`,
+     * sync, import, raw assignment — lands a title that FITS the column:
+     * trimmed, and past {@see TITLE_MAX} cut to TITLE_MAX−1 characters plus
+     * `…`. (`Str::limit($t, 255, '…')` appends AFTER 255 → 256 chars → 1406.)
+     */
+    public function setTitleAttribute(mixed $value): void
+    {
+        if ($value === null) {
+            $this->attributes['title'] = null;
+
+            return;
+        }
+
+        $value = trim((string) $value);
+        if (mb_strlen($value, 'UTF-8') > self::TITLE_MAX) {
+            $value = rtrim(mb_substr($value, 0, self::TITLE_MAX - 1, 'UTF-8')).'…';
+        }
+
+        $this->attributes['title'] = $value;
+    }
+
     /** The kind among these label names, or null. */
     public static function kindOf(array $labelNames): ?string
     {

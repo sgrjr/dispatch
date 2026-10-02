@@ -2,7 +2,6 @@
 
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Support\Facades\Artisan;
-use Illuminate\Support\Str;
 use Sgrjr\Dispatch\Contracts\DispatchNotifier;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
@@ -124,8 +123,8 @@ test('a long title is truncated on the update path (matching create())', functio
     ]])]))->toBe(0);
 
     $stored = Task::where('code', 'TASK-950')->value('title');
-    expect($stored)->toBe(Str::limit($long, 255, '…'))   // update path truncated
-        ->and(mb_strlen($stored))->toBeLessThanOrEqual(256);
+    expect($stored)->toBe(str_repeat('x', 254).'…')   // update path truncated
+        ->and(mb_strlen($stored))->toBe(255);              // fits varchar(255) (TASK-1402)
 });
 
 // --- M2: --no-notify suppresses the create receipt on a bulk backfill ------

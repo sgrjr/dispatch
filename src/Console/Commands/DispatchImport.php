@@ -114,10 +114,10 @@ class DispatchImport extends Command
                 }
 
                 $payload = [
-                    // Truncate on BOTH branches to match create()'s 255-cap: the
+                    // Truncate on BOTH branches to match create()'s 255-cap (254 + the ellipsis): the
                     // update path fills the model directly (bypassing the service),
                     // so without this a long-titled re-import overflows the column.
-                    'title' => Str::limit(trim((string) ($t['title'] ?? '(untitled)')), 255, '…'),
+                    'title' => Str::limit(trim((string) ($t['title'] ?? '(untitled)')), 254, '…'),
                     'description' => $t['description'] ?? null,
                     'type' => in_array($t['type'] ?? null, Task::TYPES, true) ? $t['type'] : 'feature',
                     'priority' => in_array($t['priority'] ?? null, Task::PRIORITIES, true) ? $t['priority'] : 'medium',

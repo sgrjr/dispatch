@@ -82,7 +82,7 @@ class DispatchTaskService
     {
         $actor ??= Auth::user();
 
-        $attributes['title'] = Str::limit(trim((string) ($attributes['title'] ?? '')), 255, '…');
+        $attributes['title'] = Str::limit(trim((string) ($attributes['title'] ?? '')), 254, '…');
         // No default kind (TASK-1018): a task has one only when someone chose it.
         $attributes['priority'] ??= 'medium';
         $attributes['status'] ??= 'triage';
