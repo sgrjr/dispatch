@@ -343,8 +343,15 @@ test('handoff ASK always mints a linked task, even within the SAME lane, and blo
 
     expect($task->fresh()->blockedBy->pluck('code')->all())->toBe([$askTask->code]);
 
-    $event = $task->fresh()->comments()->where('event_type', TaskComment::EVENT_ASKED)->firstOrFail();
-    expect($event->meta['blocked_by'])->toBe($askTask->code);
+    // The ask is memorialized as an INTERNAL change-history comment (so it
+    // shows wherever comments do, including comment-only views), carrying the
+    // blocked-by link in its meta.
+    $event = $task->fresh()->comments()
+        ->where('event_type', TaskComment::EVENT_COMMENT)
+        ->where('is_internal', true)
+        ->firstOrFail();
+    expect($event->meta['blocked_by'])->toBe($askTask->code)
+        ->and($event->body)->toContain('Asked');
 });
 
 test('handoff ASK carries the topic but not the labels — a question ABOUT the work is not the work', function () {

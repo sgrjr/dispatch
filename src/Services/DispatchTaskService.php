@@ -1205,11 +1205,21 @@ class DispatchTaskService
             // $task at close time.
             $this->linkBlockedBy($task, $askTask, $actorId);
 
+            // Memorialize the ask as an internal change-history COMMENT
+            // (event_type=comment), not a bespoke `asked` system event: the
+            // question then reads as part of the task's history in EVERY
+            // comment view — including surfaces that list only comments (the
+            // chat canvas) — right where a reader looks for what happened,
+            // instead of living only on the blocked-by link under "Waiting on".
+            // The link still drives "Waiting on"; returnTheBall() is unchanged
+            // (it keys off the ask task, not this row). INTERNAL: an ask is
+            // staff-to-staff and must never be emailed to the submitter.
             $task->recordEvent(
-                TaskComment::EVENT_ASKED,
+                TaskComment::EVENT_COMMENT,
                 $actorId,
-                array_filter(['to' => $to->getAuthIdentifier(), 'blocked_by' => $askTask->code, 'note' => $note], fn ($v) => $v !== null),
-                "Asked {$this->userLabel($to)} — blocked by {$askTask->code}.".($note ? " {$note}" : ''),
+                array_filter(['asked' => $to->getAuthIdentifier(), 'blocked_by' => $askTask->code, 'note' => $note], fn ($v) => $v !== null),
+                "❓ Asked {$this->userLabel($to)} — blocked by {$askTask->code}.".($note ? " {$note}" : ''),
+                isInternal: true,
             );
 
             return $task->refresh();
