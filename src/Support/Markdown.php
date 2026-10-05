@@ -10,6 +10,12 @@ namespace Sgrjr\Dispatch\Support;
  * link schemes. `dispatch.markdown.enabled` false (or empty/null $text)
  * skips markdown parsing entirely and falls back to a plain
  * nl2br(e($text)) render.
+ *
+ * GitHub-Flavored, not base CommonMark: task/comment bodies routinely carry
+ * PIPE TABLES (the stale-order / health reports build them), which base
+ * CommonMark does not parse — the table would collapse into one run-on
+ * paragraph. GFM adds tables, strikethrough, autolinks and task lists while
+ * keeping the same safe config (html_input escaped, unsafe links disallowed).
  */
 class Markdown
 {
@@ -20,7 +26,7 @@ class Markdown
         }
 
         try {
-            $converter = new \League\CommonMark\CommonMarkConverter([
+            $converter = new \League\CommonMark\GithubFlavoredMarkdownConverter([
                 'html_input' => 'escape',
                 'allow_unsafe_links' => false,
             ]);

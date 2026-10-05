@@ -10,6 +10,12 @@
         .dispatch-thread-item.is-system { background: var(--dispatch-surface-muted); color: var(--dispatch-text-muted); }
         .dispatch-thread-item-head { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.02em; }
         .dispatch-thread-body { margin-top: 0.4rem; white-space: pre-wrap; }
+        /* GFM pipe tables in a comment. `white-space: normal` on the table keeps
+           the body's pre-wrap (system rows rely on it) from treating the
+           markdown source's newlines as blank cells/rows. */
+        .dispatch-thread-body table { white-space: normal; display: block; width: max-content; max-width: 100%; overflow-x: auto; border-collapse: collapse; font-size: 0.78rem; margin: 0.4rem 0; }
+        .dispatch-thread-body th, .dispatch-thread-body td { border: 1px solid var(--dispatch-border); padding: 0.25rem 0.5rem; text-align: left; vertical-align: top; white-space: nowrap; }
+        .dispatch-thread-body thead th { background: var(--dispatch-surface-muted); font-weight: 600; }
         .dispatch-thread-attachments { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.5rem; }
         .dispatch-thread-attachments img { width: 4rem; height: 4rem; object-fit: cover; border-radius: var(--dispatch-radius-sm); border: 1px solid var(--dispatch-border); }
     </style>

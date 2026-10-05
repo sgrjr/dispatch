@@ -64,6 +64,12 @@
         .dispatch-show-desc :first-child { margin-top: 0; }
         .dispatch-show-desc :last-child { margin-bottom: 0; }
         .dispatch-show-desc pre { background: var(--dispatch-surface-muted); border: 1px solid var(--dispatch-border); border-radius: var(--dispatch-radius-sm); padding: 0.7rem; overflow-x: auto; font-size: 0.8rem; }
+        /* GFM pipe tables (stale-order / health reports). Scroll horizontally
+           rather than crush the page on a wide table. */
+        .dispatch-show-desc table { display: block; width: max-content; max-width: 100%; overflow-x: auto; border-collapse: collapse; font-size: 0.82rem; margin: 0.6rem 0; }
+        .dispatch-show-desc th, .dispatch-show-desc td { border: 1px solid var(--dispatch-border); padding: 0.3rem 0.55rem; text-align: left; vertical-align: top; white-space: nowrap; }
+        .dispatch-show-desc thead th { background: var(--dispatch-surface-muted); font-weight: 600; }
+        .dispatch-show-desc tbody tr:nth-child(even) { background: var(--dispatch-surface-muted); }
         .dispatch-show-desc-empty { color: var(--dispatch-text-muted); font-style: italic; margin: 0; }
 
         .dispatch-disclosure { margin-top: 1rem; }
