@@ -1,5 +1,28 @@
 # Upgrading `sgrjr/dispatch`
 
+## Asks keep their back-reference and read as questions (TASK-1525)
+
+A task minted by an ASK used to copy the asker's title verbatim and, when
+the ask carried a note, store the note AS the description — dropping the
+only pointer back to the task being asked about. On every list the
+question and the work it was about were the same row (TASK-1524 looked
+identical to TASK-1479/1480).
+
+- The minted description now ALWAYS opens with the origin line —
+  `Asked from TASK-042.` for an ask, `Passed from TASK-042.` for a
+  cross-lane pass — and the note follows as its own paragraph.
+- An ask's title is prefixed `Question: ` (`DispatchTaskService::ASK_TITLE_PREFIX`);
+  asking about an ask does not stack it. A pass-continuation keeps the
+  title as is — it IS the same work. The 255-character title clamp still
+  applies after the prefix.
+
+No migration, no config. Existing ask tasks are not rewritten.
+
+```bash
+composer update sgrjr/dispatch
+php artisan optimize:clear
+```
+
 ## New agent verb: `attach` (TASK-1328)
 
 The upload counterpart to `attachment` (TASK-1242's download): an agent — or

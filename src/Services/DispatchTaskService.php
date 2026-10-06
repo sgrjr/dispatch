@@ -35,6 +35,14 @@ use Sgrjr\Dispatch\Support\Lane;
  */
 class DispatchTaskService
 {
+    /**
+     * Title marker on a task minted by an ASK (TASK-1525): the ask copies the
+     * asker's title, so without it the question and the work it is about are
+     * indistinguishable on a list. Checked before prefixing, so an ask about
+     * an ask does not stack it.
+     */
+    public const ASK_TITLE_PREFIX = 'Question: ';
+
     public function __construct(
         protected SubmitterResolver $submitters,
         protected TenantResolver $tenants,
@@ -1192,7 +1200,7 @@ class DispatchTaskService
         $actorId = $actor?->getAuthIdentifier();
 
         return DB::transaction(function () use ($task, $to, $actor, $actorId, $note, $opts, $lane) {
-            $askTask = $this->mintHandoffTask($task, $to, $actor, $lane, $note, 'Requested via', continuation: false);
+            $askTask = $this->mintHandoffTask($task, $to, $actor, $lane, $note, 'Asked from', continuation: false);
 
             if (array_key_exists('due', $opts) && $opts['due'] !== null) {
                 $askTask->due_at = DueDate::resolve($opts['due']);
@@ -1244,16 +1252,35 @@ class DispatchTaskService
      * same work under a new holder. An ask is a new task — a question about
      * that work — and labels such as `source:widget` or `kind:investigate`
      * describe the original, not the question.
+     *
+     * The DESCRIPTION always opens with the back-reference ("Asked from
+     * TASK-X." / "Passed from TASK-X.") and the note, when there is one,
+     * follows as its own paragraph — a note used to REPLACE the origin line,
+     * so every surface that renders the description (the web board, the
+     * emails, the CLI) lost the only pointer back to the task being asked
+     * about. `origin_type`/`origin_id` still carry the machine link; the
+     * line is for the reader. An ASK also prefixes its title with
+     * {@see ASK_TITLE_PREFIX}: it copies the asker's title, and without the
+     * marker a question about TASK-1479 and TASK-1479 itself read as the
+     * same row on every list (TASK-1525). Asking about a task that is itself
+     * an ask does not stack the prefix.
      */
     protected function mintHandoffTask(Task $task, Authenticatable $to, ?Authenticatable $actor, ?string $lane, ?string $note, string $verb, bool $continuation): Task
     {
+        $origin = "{$verb} {$task->code}.";
+        $note = trim((string) $note);
+
+        $title = (string) $task->title;
+        if (! $continuation && ! Str::startsWith($title, self::ASK_TITLE_PREFIX)) {
+            $title = self::ASK_TITLE_PREFIX.$title;
+        }
 
         $attributes = [
-            'title' => $task->title,
+            'title' => $title,
             'type' => $task->type,
             'priority' => $task->priority,
             'status' => 'open',
-            'description' => $note ?? "{$verb} {$task->code}.",
+            'description' => $note === '' ? $origin : "{$origin}\n\n{$note}",
             'submitter_user_id' => $task->submitter_user_id,
             'assignee_user_id' => (int) $to->getAuthIdentifier(),
             'is_public' => (bool) $task->is_public,

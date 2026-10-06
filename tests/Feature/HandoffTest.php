@@ -243,7 +243,8 @@ test('handoff PASS across lanes mints exactly ONE new task in the recipient\'s l
         ->and($result->conversation_id)->toBe(555)
         ->and($result->origin_type)->toBe('task')
         ->and($result->origin_id)->toBe($task->code)
-        ->and($result->description)->toBe('over to you')
+        ->and($result->title)->toBe('cross-lane work')
+        ->and($result->description)->toBe("Passed from {$task->code}.\n\nover to you")
         ->and($result->status)->toBe('open');
 
     $original = $task->fresh();
@@ -339,7 +340,8 @@ test('handoff ASK always mints a linked task, even within the SAME lane, and blo
     $askTask = Task::query()->where('origin_type', 'task')->where('origin_id', $task->code)->firstOrFail();
     expect($askTask->lane)->toBe('ops')
         ->and($askTask->assignee_user_id)->toBe(251)
-        ->and($askTask->description)->toBe('what\'s the status?');
+        ->and($askTask->title)->toBe('Question: x')
+        ->and($askTask->description)->toBe("Asked from {$task->code}.\n\nwhat's the status?");
 
     expect($task->fresh()->blockedBy->pluck('code')->all())->toBe([$askTask->code]);
 
@@ -352,6 +354,63 @@ test('handoff ASK always mints a linked task, even within the SAME lane, and blo
         ->firstOrFail();
     expect($event->meta['blocked_by'])->toBe($askTask->code)
         ->and($event->body)->toContain('Asked');
+});
+
+test('handoff ASK keeps the "Asked from" back-reference in the description even with a note, and marks the title as a question (TASK-1525)', function () {
+    bindHandoffLaneResolver(lanesByUser: [254 => ['ops'], 255 => ['support']]);
+    $asker = dispatchMakeUser(254);
+    $recipient = dispatchMakeUser(255);
+    $svc = app(DispatchTaskService::class);
+    $task = $svc->create(['title' => 'Reprice the spring catalog', 'lane' => 'ops', 'assignee_user_id' => $asker->id]);
+
+    // Without a note: the origin line alone.
+    $svc->handoff($task, $recipient, $asker, ['ask' => true]);
+    $bare = Task::query()->where('origin_type', 'task')->where('origin_id', $task->code)->firstOrFail();
+    expect($bare->title)->toBe('Question: Reprice the spring catalog')
+        ->and($bare->description)->toBe("Asked from {$task->code}.");
+
+    // With a note: the origin line still leads; the note is its own paragraph.
+    // (A note used to REPLACE the line, so the web board, emails and CLI
+    // showed a task that looked identical to the one it asked about.)
+    $svc->handoff($task, $recipient, $asker, ['ask' => true, 'note' => '  Which discount tier applies?  ']);
+    $noted = Task::query()->where('origin_type', 'task')->where('origin_id', $task->code)->orderByDesc('id')->firstOrFail();
+    expect($noted->id)->not->toBe($bare->id)
+        ->and($noted->title)->toBe('Question: Reprice the spring catalog')
+        ->and($noted->description)->toBe("Asked from {$task->code}.\n\nWhich discount tier applies?");
+
+    // Asking about an ask does not stack the prefix.
+    $svc->handoff($bare, $asker, $recipient, ['ask' => true, 'note' => 'which catalog?']);
+    $nested = Task::query()->where('origin_type', 'task')->where('origin_id', $bare->code)->firstOrFail();
+    expect($nested->title)->toBe('Question: Reprice the spring catalog')
+        ->and($nested->description)->toBe("Asked from {$bare->code}.\n\nwhich catalog?");
+});
+
+test('handoff ASK on a title at the 255 limit still stores a 255-character question title', function () {
+    bindHandoffLaneResolver(lanesByUser: [256 => ['ops'], 257 => ['support']]);
+    $asker = dispatchMakeUser(256);
+    $recipient = dispatchMakeUser(257);
+    $svc = app(DispatchTaskService::class);
+    $task = $svc->create(['title' => str_repeat('t', 255), 'lane' => 'ops', 'assignee_user_id' => $asker->id]);
+
+    $svc->handoff($task, $recipient, $asker, ['ask' => true]);
+
+    $askTask = Task::query()->where('origin_type', 'task')->where('origin_id', $task->code)->firstOrFail();
+    expect(mb_strlen($askTask->title))->toBe(255)
+        ->and($askTask->title)->toStartWith('Question: ')
+        ->and($askTask->title)->toEndWith('…');
+});
+
+test('handoff PASS across lanes keeps the "Passed from" back-reference and never marks the title as a question', function () {
+    bindHandoffLaneResolver(lanesByUser: [258 => ['ops'], 259 => ['support']]);
+    $from = dispatchMakeUser(258);
+    $to = dispatchMakeUser(259);
+    $svc = app(DispatchTaskService::class);
+    $task = $svc->create(['title' => 'the work', 'lane' => 'ops', 'assignee_user_id' => $from->id]);
+
+    $result = $svc->handoff($task, $to, $from);
+
+    expect($result->title)->toBe('the work')
+        ->and($result->description)->toBe("Passed from {$task->code}.");
 });
 
 test('handoff ASK carries the topic but not the labels — a question ABOUT the work is not the work', function () {

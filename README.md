@@ -1424,6 +1424,10 @@ $tasks->handoff($task, $recipient, $actor, ['note' => 'over to you']);
 
 // Ask: ALWAYS mints a linked task, even within the same lane, and blocks
 // $task with it. $task keeps its holder untouched until the ask closes.
+// The minted task is titled "Question: <the asker's title>" and its
+// description opens with "Asked from TASK-042." — the note, if any,
+// follows as its own paragraph (a pass-continuation opens with
+// "Passed from TASK-042." the same way, title unchanged).
 $tasks->handoff($task, $recipient, $actor, ['ask' => true, 'note' => 'what\'s the status on this?']);
 
 // Disambiguate which of the recipient's lanes gets a minted task, when
