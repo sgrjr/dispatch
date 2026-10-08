@@ -49,6 +49,10 @@ class DispatchServiceProvider extends ServiceProvider
         // file system when it binds one) — same fallback for older configs.
         $this->app->singleton(\Sgrjr\Dispatch\Contracts\AttachmentStore::class, fn ($app) => $app->make(config('dispatch.contracts.attachment_store', \Sgrjr\Dispatch\Services\DiskAttachmentStore::class)));
 
+        // TASK-1059 — the agent holder (`dispatch.agent.holder`), resolved at
+        // most once per request/job.
+        $this->app->scoped(\Sgrjr\Dispatch\Support\AgentHolder::class);
+
         // Backs the DispatchTask facade (programmatic reporting).
         $this->app->singleton(DispatchManager::class);
     }

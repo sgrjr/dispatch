@@ -570,6 +570,20 @@ return [
         // require a human to route work into a lane before any agent claims it.
         'lane_includes_unrouted' => (bool) env('DISPATCH_AGENT_LANE_INCLUDES_UNROUTED', true),
 
+        // TASK-1059 — the AGENT HOLDER: one user (an id or an email) whose name
+        // on a task means "waiting for an agent". Null (the default) = off.
+        // When set:
+        //   - `handoff --to=<holder>` moves the ball on the SAME task and never
+        //     re-lanes it (a CS reply drafted by an agent is still CS's work);
+        //     an ASK to the holder is refused.
+        //   - `next`/`claim` serve holder-held tasks to EVERY session, whatever
+        //     its lane, and offer them before the general backlog.
+        //   - an agent claim keeps the holder as assignee (attribution rides
+        //     the claimed event's agent_name / agent_session_id).
+        //   - `queue --held-by-agent` lists the holder's inbox.
+        // ⛔ Routing only: the holder is never a login and never an authority.
+        'holder' => env('DISPATCH_AGENT_HOLDER'),
+
         // Explicit denylist — the supported way to WITHHOLD a shipped verb. The
         // grant ceiling for an explicitly-requested scope is the UNION of `verbs`
         // and the package's known verbs (AgentSessionService::KNOWN_VERBS), so a

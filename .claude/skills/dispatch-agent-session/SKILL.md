@@ -137,6 +137,14 @@ Notes on the loop:
   any lane — that is how a human hands you work outside your lane. A `--lane=`
   filter only narrows WITHIN what you are served, so you cannot use it to
   reach another department's work.
+- **Tasks held by the agent holder reach every session.** When the host
+  configures `dispatch.agent.holder`, a task handed to it
+  (`dispatch:handoff <CODE> --to=<holder>`) means "waiting for an agent":
+  `next`/`claim` serve it to you whatever your lane, AHEAD of the general
+  backlog, and its lane never changes. Claiming it keeps the holder as
+  assignee; your session is named on the claimed event.
+  `dispatch:queue --held-by-agent` lists that inbox. ⛔ Never re-lane a
+  task to get an agent onto it: hand it to the holder.
 <!-- dispatch:endif -->
 - **Filing new work mid-run** (a bug you tripped over, a follow-up the work
   surfaced): `dispatch:add "<title>" --label=kind:… --description-file=body.md`.

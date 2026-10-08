@@ -1495,6 +1495,29 @@ agent/handoff`, gated by the `handoff` scope.
 > scope, or the verb 403s "not scoped" — the identical trap `batch` hit;
 > see UPGRADING.md and "Enabling the batch verb" below.
 
+**Handing the ball to an agent (TASK-1059).** Set `dispatch.agent.holder`
+(`DISPATCH_AGENT_HOLDER`) to one user (an id or an email) that means "waiting
+for an agent". Off by default (null).
+
+- `handoff` to the holder always moves the ball on the SAME task and keeps
+  its lane. An `in_progress` task goes back to `open` so an agent can claim
+  it. An `--ask` to the holder, or a `--lane` other than the task's own, is
+  refused.
+- `next`/`claim` serve holder-held tasks to every session, whatever its
+  granted lane, and offer unstarted ones before the rest of the backlog.
+- An agent claim keeps the holder as assignee. The claimed event records
+  which session took it.
+- `dispatch:queue --held-by-agent` (`?held_by_agent=1`) lists the holder's
+  inbox, and the census honors it too.
+
+```bash
+php artisan dispatch:handoff TASK-042 --to=agent@example.test --note="draft the reply"
+php artisan dispatch:queue --held-by-agent
+```
+
+⛔ The holder is for routing only. It is not a login and it never grants
+authority: a session still acts as the human who approved it.
+
 **Batch.** `dispatch:batch` / `POST agent/batch` accept `blocked_by` on
 both `add` and `update` — an array of task codes and/or `@ref` entries (an
 in-batch reference to an EARLIER op's `ref` in the same manifest). This is

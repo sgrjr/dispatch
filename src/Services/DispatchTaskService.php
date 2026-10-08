@@ -19,6 +19,7 @@ use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
 use Sgrjr\Dispatch\Models\TaskLink;
 use Sgrjr\Dispatch\Models\TaskRead;
+use Sgrjr\Dispatch\Support\AgentHolder;
 use Sgrjr\Dispatch\Support\AgentMetrics;
 use Sgrjr\Dispatch\Support\Anchor;
 use Sgrjr\Dispatch\Support\DueDate;
@@ -352,9 +353,12 @@ class DispatchTaskService
             return $q;
         }
 
+        // TASK-1059 — tasks held by the agent holder are served to every
+        // laned session, whatever their lane (see Task::scopeServedByLanes()).
         return $q->servedByLanes(
             $served,
             (bool) config('dispatch.agent.lane_includes_unrouted', true),
+            app(AgentHolder::class)->id(),
         );
     }
 
@@ -364,9 +368,22 @@ class DispatchTaskService
      * (config-aware) rather than a hardcoded priority CASE — identical ordering
      * under the default vocab (relative order is what matters, not the rank
      * values), and correct under a custom priority vocab too.
+     *
+     * TASK-1059 — with an agent holder configured, an UNSTARTED task it holds
+     * (open/triage) comes before everything else: a task explicitly handed to
+     * an agent outranks the general backlog. Only unstarted ones, so `next`
+     * never leads with a held task another session has already claimed (which
+     * `claim` could not give it anyway).
      */
     public function orderForNext(Builder $q): Builder
     {
+        if (($holderId = app(AgentHolder::class)->id()) !== null) {
+            $q->orderByRaw(
+                "CASE WHEN assignee_user_id = ? AND status IN ('open', 'triage') THEN 0 ELSE 1 END",
+                [$holderId],
+            );
+        }
+
         return $q
             ->orderByRaw(Task::actionableFirstSql())
             ->orderByRaw(Task::prioritySql())
@@ -522,6 +539,18 @@ class DispatchTaskService
     {
         $type = $filters['type'] ?? null;
         $label = $filters['label'] ?? null;
+
+        // TASK-1059 — `held_by_agent`: the agent holder's inbox. Refused (not
+        // silently ignored) when no holder is configured, for the same reason
+        // the census must honor every filter: a filter that quietly answers
+        // for the whole board is worse than an error.
+        if (! empty($filters['held_by_agent'])) {
+            $holderId = app(AgentHolder::class)->id();
+            if ($holderId === null) {
+                throw new \InvalidArgumentException('No agent holder is configured (dispatch.agent.holder), so nothing can be held by an agent.');
+            }
+            $q->where('assignee_user_id', $holderId);
+        }
 
         return $this->applyLaneFilter($this->applyAnchorFilters(
             $q->when($type, fn ($qq, $type) => $qq->ofKind($type))
@@ -725,7 +754,13 @@ class DispatchTaskService
             }
 
             $task->status = 'in_progress';
-            $task->assignee_user_id = $assigneeUserId;
+            // TASK-1059 — an agent claiming a task handed to the agent holder
+            // keeps the holder on it: the ball stays with "an agent" (the
+            // claimed event below names WHICH one). Clearing it would drop
+            // the ball the moment it was picked up.
+            if ($assigneeUserId !== null || ! app(AgentHolder::class)->is($task->assignee_user_id)) {
+                $task->assignee_user_id = $assigneeUserId;
+            }
             $task->save();
 
             $task->recordEvent(
@@ -952,6 +987,10 @@ class DispatchTaskService
     public function handoff(Task $task, Authenticatable $to, ?Authenticatable $actor, array $opts = []): Task
     {
         $ask = (bool) ($opts['ask'] ?? false);
+
+        if (app(AgentHolder::class)->is($to->getAuthIdentifier())) {
+            return $this->passToAgentHolder($task, $to, $actor, $opts, $ask);
+        }
         $recipientLanes = app(LaneResolver::class)->lanesFor($to);
         $sameLane = $this->sameLane($task->lane, $recipientLanes);
 
@@ -1021,20 +1060,65 @@ class DispatchTaskService
     }
 
     /**
+     * TASK-1059 — a hand-off TO the agent holder ("waiting for an agent").
+     * The holder works no lane, so the ordinary rules would mint a
+     * continuation in the no-department lane: a re-lane, which makes the
+     * owning department's board and every lane-keyed monitor lie (R14/R20).
+     * Instead the ball always moves on THIS task and the lane stays put;
+     * `next`/`claim` reach it through the holder, not the lane.
+     *
+     * Refused: an ASK (it would block this task on a shared inbox's task —
+     * there is nobody in particular to answer it), and a `lane` other than
+     * the task's own (it would be the re-lane this path exists to avoid).
+     *
+     * An `in_progress` task goes back to `open`: nobody is working it until
+     * an agent claims it, and claim only takes unstarted work.
+     *
+     * @param  array{lane?:?string,note?:?string,due?:?string}  $opts
+     */
+    protected function passToAgentHolder(Task $task, Authenticatable $to, ?Authenticatable $actor, array $opts, bool $ask): Task
+    {
+        if ($ask) {
+            throw new \InvalidArgumentException(
+                'An ask cannot go to the agent holder: it would block this task on a shared agent inbox. Pass the task to the agent instead (drop --ask), or ask a person.'
+            );
+        }
+
+        $requested = $opts['lane'] ?? null;
+        if ($requested !== null && $requested !== '' && $requested !== $task->lane) {
+            throw new \InvalidArgumentException(
+                'A hand-off to the agent holder never re-lanes the task: the lane says whose work it is, and that does not change when an agent does it. Drop --lane.'
+            );
+        }
+
+        return $this->passWithinLane($task, $to, $actor, $opts, reopen: true);
+    }
+
+    /**
      * PASS, same lane (or both unrouted): the ball moves on THIS task. ONE
      * assignee_change event carries the note; a given `due` is applied
      * tri-state, same posture as every other due-date write surface.
      *
+     * $reopen (TASK-1059, the agent-holder pass only): an `in_progress` task
+     * returns to `open`, with its own status_change event.
+     *
      * @param  array{note?:?string,due?:?string}  $opts
      */
-    protected function passWithinLane(Task $task, Authenticatable $to, ?Authenticatable $actor, array $opts): Task
+    protected function passWithinLane(Task $task, Authenticatable $to, ?Authenticatable $actor, array $opts, bool $reopen = false): Task
     {
         $note = $opts['note'] ?? null;
         $actorId = $actor?->getAuthIdentifier();
 
-        return DB::transaction(function () use ($task, $to, $actor, $actorId, $note, $opts) {
+        return DB::transaction(function () use ($task, $to, $actor, $actorId, $note, $opts, $reopen) {
             $fromId = $task->assignee_user_id;
             $toId = $to->getAuthIdentifier();
+
+            $statusFrom = null;
+            // A kind that locks its status moves only by its own actions — leave it.
+            if ($reopen && $task->status === 'in_progress' && ! ($task->kind()?->locksStatus($task) ?? false)) {
+                $statusFrom = $task->status;
+                $task->status = 'open';
+            }
 
             $dueChanged = false;
             $dueFrom = null;
@@ -1063,6 +1147,15 @@ class DispatchTaskService
                     $actorId,
                     ['due_at' => ['from' => $dueFrom, 'to' => $dueTo]],
                     $dueTo ? "Due date set to {$dueTo}." : 'Due date cleared.',
+                );
+            }
+
+            if ($statusFrom !== null) {
+                $task->recordEvent(
+                    TaskComment::EVENT_STATUS_CHANGE,
+                    $actorId,
+                    ['from' => $statusFrom, 'to' => $task->status],
+                    "Status changed from `{$statusFrom}` to `{$task->status}` (waiting for an agent to claim it).",
                 );
             }
 

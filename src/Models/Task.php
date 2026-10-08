@@ -643,24 +643,34 @@ class Task extends Model
      * candidates `next`/`claim` OFFER; it does not decide who may read a
      * task (see VisibilityGates) and it never applies to claim-by-code.
      *
+     * TASK-1059 — $holderId (the configured agent holder, see
+     * {@see \Sgrjr\Dispatch\Support\AgentHolder}) widens the set by the tasks
+     * that holder holds, IN ANY LANE: a task handed to "an agent" is served
+     * to every session, which is how the ball reaches an agent without the
+     * task ever being re-laned.
+     *
      * @param  array<int,string>  $lanes
      */
-    public function scopeServedByLanes(Builder $query, array $lanes, bool $includeUnrouted = true): Builder
+    public function scopeServedByLanes(Builder $query, array $lanes, bool $includeUnrouted = true, ?int $holderId = null): Builder
     {
         // Serving nothing must match NOTHING. An empty closure would add no
         // constraints and silently widen to the whole board — the exact
         // failure this scope exists to prevent.
-        if ($lanes === [] && ! $includeUnrouted) {
+        if ($lanes === [] && ! $includeUnrouted && $holderId === null) {
             return $query->whereRaw('1 = 0');
         }
 
-        return $query->where(function (Builder $q) use ($lanes, $includeUnrouted) {
+        return $query->where(function (Builder $q) use ($lanes, $includeUnrouted, $holderId) {
             if ($lanes !== []) {
                 $q->whereIn('lane', $lanes);
             }
 
             if ($includeUnrouted) {
                 $q->orWhereNull('lane');
+            }
+
+            if ($holderId !== null) {
+                $q->orWhere('assignee_user_id', $holderId);
             }
         });
     }

@@ -72,6 +72,8 @@ class AgentController extends Controller
         $filters = $this->anchorQueryFilters($request, [
             'type' => $request->query('type'),
             'label' => $request->query('label'),
+            // TASK-1059 — the agent holder's inbox (refused when no holder is configured).
+            'held_by_agent' => $request->boolean('held_by_agent'),
         ]);
 
         // ?count — return {total, by_status} instead of the task list, so an

@@ -1,5 +1,37 @@
 # Upgrading `sgrjr/dispatch`
 
+## Hand the ball to an agent: `dispatch.agent.holder` (TASK-1059)
+
+New optional config key `agent.holder` (env `DISPATCH_AGENT_HOLDER`): a user
+id or email whose name on a task means "waiting for an agent". Null (the
+default) leaves every path unchanged.
+
+When it is set:
+
+- `handoff --to=<holder>` keeps the task and its lane (no continuation task
+  is minted in the no-department lane). An `in_progress` task returns to
+  `open`. `--ask` to the holder, or a `--lane` other than the task's own,
+  is refused with a 422.
+- `next`/`claim` serve holder-held tasks to every session, whatever its
+  lane, and rank unstarted ones first.
+- An agent claim keeps `assignee_user_id` = holder.
+- `dispatch:queue --held-by-agent` / `?held_by_agent=1` filters to the
+  holder's inbox. It is refused when no holder is configured.
+
+A host that published `config/dispatch.php` has no `holder` key, so the
+feature stays off until you add one under `agent`:
+
+```php
+'holder' => env('DISPATCH_AGENT_HOLDER'),
+```
+
+```bash
+composer update sgrjr/dispatch
+php artisan config:cache   # or optimize:clear locally
+```
+
+No migration.
+
 ## Asks keep their back-reference and read as questions (TASK-1525)
 
 A task minted by an ASK used to copy the asker's title verbatim and, when
