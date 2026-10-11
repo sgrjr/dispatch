@@ -114,6 +114,75 @@ test('update labels ATTACH additively — existing labels survive', function () 
         ->toBe(['added-by-batch', 'keep-me']);
 });
 
+// --- remove_labels (TASK-1721) ----------------------------------------------
+
+test('remove_labels DETACHES the named labels, keeps the rest, and records the removal', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'two areas', 'status' => 'open'], ['area:orders', 'area:platform', 'kind:bug']);
+
+    app(DispatchBatchService::class)->apply([
+        ['op' => 'update', 'code' => $task->code, 'labels' => ['area:dbf'], 'remove_labels' => ['area:platform']],
+    ]);
+
+    $fresh = $task->fresh();
+    expect($fresh->labels->pluck('name')->sort()->values()->all())->toBe(['area:dbf', 'area:orders', 'kind:bug']);
+
+    $event = $fresh->comments()->where('event_type', TaskComment::EVENT_LABEL_REMOVED)->sole();
+    expect($event->meta['labels'])->toBe(['area:platform'])
+        ->and($event->is_internal)->toBeTrue()
+        ->and($event->body)->toBe('Label `area:platform` removed.');
+});
+
+test('remove_labels by an old alias name removes the label it was folded into', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'aliased', 'status' => 'open'], ['area:time-clock']);
+    $canonical = $task->labels()->sole();
+    \Sgrjr\Dispatch\Models\LabelAlias::query()->create(['name' => 'area:timeclock', 'label_id' => $canonical->id]);
+
+    app(DispatchBatchService::class)->apply([
+        ['op' => 'update', 'code' => $task->code, 'remove_labels' => ['area:timeclock']],
+    ]);
+
+    expect($task->fresh()->labels)->toBeEmpty();
+});
+
+test('removing a label the task does not carry is a no-op — no event, so a re-submit is safe', function () {
+    $task = app(DispatchTaskService::class)->create(['title' => 'nothing to remove', 'status' => 'open'], ['keep-me']);
+    $op = ['op' => 'update', 'code' => $task->code, 'remove_labels' => ['never-had-it']];
+
+    app(DispatchBatchService::class)->apply([$op]);
+    app(DispatchBatchService::class)->apply([$op]);
+
+    expect($task->fresh()->labels->pluck('name')->all())->toBe(['keep-me'])
+        ->and($task->fresh()->comments()->where('event_type', TaskComment::EVENT_LABEL_REMOVED)->count())->toBe(0);
+});
+
+test('remove_labels is refused up front on an add, as a non-array, and when it overlaps labels', function (array $op) {
+    $task = app(DispatchTaskService::class)->create(['title' => 'target', 'status' => 'open'], ['area:x']);
+    $op = $op['op'] === 'update' ? $op + ['code' => $task->code] : $op;
+
+    expect(fn () => app(DispatchBatchService::class)->apply([$op]))->toThrow(InvalidArgumentException::class);
+    expect($task->fresh()->labels->pluck('name')->all())->toBe(['area:x']);
+})->with([
+    'on an add' => [['op' => 'add', 'title' => 'new', 'remove_labels' => ['area:x']]],
+    'not an array' => [['op' => 'update', 'remove_labels' => 'area:x']],
+    'a blank name' => [['op' => 'update', 'remove_labels' => ['  ']]],
+    'also in labels' => [['op' => 'update', 'labels' => ['Area:X'], 'remove_labels' => ['area:x']]],
+]);
+
+test('relabel() adds and removes in one call, one event per direction, and reports only real changes', function () {
+    $svc = app(DispatchTaskService::class);
+    $task = $svc->create(['title' => 'relabel me', 'status' => 'open'], ['area:platform', 'arc:a']);
+
+    $out = $svc->relabel($task, ['area:dbf', 'arc:a'], ['area:platform', 'not-there'], null, ['via' => 'test']);
+
+    expect($out)->toBe(['added' => ['area:dbf'], 'removed' => ['area:platform']])
+        ->and($task->fresh()->labels->pluck('name')->sort()->values()->all())->toBe(['arc:a', 'area:dbf']);
+
+    $added = $task->comments()->where('event_type', TaskComment::EVENT_LABEL_ADDED)->sole();
+    expect($added->meta)->toMatchArray(['via' => 'test', 'labels' => ['area:dbf']]);
+
+    expect(fn () => $svc->relabel($task, ['x'], ['X']))->toThrow(InvalidArgumentException::class);
+});
+
 test('an update op that only appends a comment records no status_change', function () {
     $task = app(DispatchTaskService::class)->create(['title' => 'no status move', 'status' => 'open']);
 

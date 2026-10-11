@@ -26,7 +26,9 @@ use Sgrjr\Dispatch\Support\DueDate;
  *     task, matched by `code`). There is NO delete, and `update` never creates —
  *     an agent can't inject a chosen code onto production.
  *   - Labels ATTACH additively (syncWithoutDetaching) — never replace-all, so a
- *     batch can't strip a task's existing labels.
+ *     batch can't strip a task's existing labels. Taking one OFF takes an
+ *     `update`'s `remove_labels`, which names each label and records the
+ *     removal on the task's timeline (TASK-1721).
  *   - Status is whatever the manifest sets (new tasks default to `triage`) — the
  *     batch NEVER assumes `done`, so partially-completed work memorializes as the
  *     status it actually reached.
@@ -217,6 +219,7 @@ class DispatchBatchService
             $this->assertConversationId($i, $op);
             $this->assertLaneInput($i, $op);
             $this->assertBlockedByInput($i, $op);
+            $this->assertRemoveLabelsInput($i, $op, $kind);
 
             foreach (($op['comments'] ?? []) as $c) {
                 if (! is_array($c)) {
@@ -414,6 +417,43 @@ class DispatchBatchService
             if (! is_string($v) || trim($v) === '') {
                 throw new \InvalidArgumentException("Operation {$i}: every `blocked_by` entry must be a non-empty string (a task code or `@ref`).");
             }
+        }
+    }
+
+    /**
+     * TASK-1721 — `remove_labels`, up front: `update` only (a new task has
+     * nothing to remove), an array of non-empty label names, none of them
+     * also in `labels`. A name the task doesn't carry is not an error. It's
+     * skipped at apply time, so a re-submit stays safe.
+     *
+     * @param  array<string,mixed>  $op
+     */
+    protected function assertRemoveLabelsInput(int $i, array $op, string $kind): void
+    {
+        if (! array_key_exists('remove_labels', $op) || $op['remove_labels'] === null) {
+            return;
+        }
+
+        if ($kind !== 'update') {
+            throw new \InvalidArgumentException("Operation {$i} (add): `remove_labels` is only valid on an update — a new task has no labels to remove.");
+        }
+
+        if (! is_array($op['remove_labels'])) {
+            throw new \InvalidArgumentException("Operation {$i}: `remove_labels` must be an array of label names.");
+        }
+
+        foreach ($op['remove_labels'] as $v) {
+            if (! is_string($v) || trim($v) === '') {
+                throw new \InvalidArgumentException("Operation {$i}: every `remove_labels` entry must be a non-empty label name.");
+            }
+        }
+
+        $both = array_intersect(
+            array_map(fn ($n) => mb_strtolower(trim((string) $n)), (array) ($op['labels'] ?? [])),
+            array_map(fn ($n) => mb_strtolower(trim($n)), $op['remove_labels']),
+        );
+        if ($both !== []) {
+            throw new \InvalidArgumentException("Operation {$i}: `".implode('`, `', array_unique($both)).'` is in both `labels` and `remove_labels`.');
         }
     }
 
@@ -757,6 +797,12 @@ class DispatchBatchService
         }
 
         $this->tasks->attachLabels($task, $this->labelNames($op['labels'] ?? []));
+        // TASK-1721 — the one way a batch takes a label OFF: each name explicit,
+        // each removal on the task's timeline. Still never a replace-all.
+        $remove = $this->labelNames($op['remove_labels'] ?? []);
+        if ($remove !== []) {
+            $this->tasks->relabel($task, [], $remove, $actorUserId, $actorMeta);
+        }
         $summary['comments_added'] += $this->appendComments($task, $op['comments'] ?? [], $actorUserId, $actorMeta);
         $this->recordResultIfAny($task, $op);
 

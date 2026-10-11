@@ -222,6 +222,60 @@ class DispatchTaskService
     }
 
     /**
+     * Add and remove a task's labels in one call, and record each direction on
+     * its timeline (TASK-1721): one internal `label_added` / `label_removed`
+     * event naming the labels, so a chip that appears or vanishes always says
+     * who moved it. Internal because label upkeep is not news for a submitter.
+     *
+     * Removal is by NAME and always explicit: there is no replace-all. Both
+     * lists resolve aliases first (LabelAlias::canonicalize), so removing an
+     * old name removes the label it was folded into. A label the task already
+     * carries is not re-added, and one it does not carry is not "removed", so
+     * a re-submit records nothing. A name in both lists is refused.
+     *
+     * @param  array<int,string>  $add
+     * @param  array<int,string>  $remove
+     * @param  array<string,mixed>  $meta  extra event meta (an agent's identity, say)
+     * @return array{added: array<int,string>, removed: array<int,string>}  what actually changed
+     *
+     * @throws \InvalidArgumentException when a label is both added and removed
+     */
+    public function relabel(Task $task, array $add, array $remove, ?int $actorId = null, array $meta = []): array
+    {
+        $add = LabelAlias::canonicalize($add);
+        $remove = LabelAlias::canonicalize($remove);
+
+        $both = array_intersect(array_map('mb_strtolower', $add), array_map('mb_strtolower', $remove));
+        if ($both !== []) {
+            throw new \InvalidArgumentException('Label `'.implode('`, `', $both).'` is both added and removed.');
+        }
+
+        // Keyed case-folded, like canonicalize(): MySQL's default collation
+        // already treats `Area:X` and `area:x` as one label.
+        // toBase(): an Eloquent collection's only() filters by primary KEY.
+        $carried = $task->labels()->get()->toBase()->keyBy(fn ($label) => mb_strtolower($label->name));
+
+        $added = array_values(array_filter($add, fn ($name) => ! $carried->has(mb_strtolower($name))));
+        $removed = $carried->only(array_map('mb_strtolower', $remove));
+
+        $this->attachLabels($task, $added);
+        if ($removed->isNotEmpty()) {
+            $task->labels()->detach($removed->map(fn ($label) => $label->getKey())->values()->all());
+        }
+        $task->unsetRelation('labels');
+
+        $removedNames = $removed->pluck('name')->values()->all();
+        foreach ([[TaskComment::EVENT_LABEL_ADDED, $added, 'added'], [TaskComment::EVENT_LABEL_REMOVED, $removedNames, 'removed']] as [$event, $names, $word]) {
+            if ($names !== []) {
+                $task->recordEvent($event, $actorId, $meta + ['labels' => $names],
+                    (count($names) === 1 ? 'Label' : 'Labels').' `'.implode('`, `', $names)."` {$word}.", true);
+            }
+        }
+
+        return ['added' => $added, 'removed' => $removedNames];
+    }
+
+    /**
      * Merge $loser into $winner: reparent the loser's comments and
      * attachments onto the winner, union labels, memorialize the merge on
      * both tasks, then soft-delete the loser (marked `duplicate_of` the

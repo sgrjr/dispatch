@@ -195,7 +195,8 @@ Notes on the loop:
   board, write a batch manifest `update` op
   (`{"op":"update","code":"TASK-042","description":"…"}`) and apply it with
   `dispatch:batch` — that op carries `title`, `type`, `priority`, `description`,
-  `labels`, `due_at`, and comments. `--due` and `--label` also ride
+  `labels`, `remove_labels` (takes labels off, each recorded on the timeline),
+  `due_at`, and comments. `--due` and `--label` also ride
   `dispatch:done` for a single task.
 <!-- dispatch:slot loop -->
 

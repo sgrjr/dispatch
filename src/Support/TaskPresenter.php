@@ -236,6 +236,7 @@ class TaskPresenter
                     'description' => 'string|null',
                     'public' => 'bool (optional)',
                     'labels' => 'string[] (ATTACHED additively — never replaces existing labels)',
+                    'remove_labels' => 'string[] (update only) — DETACH these labels by name (an old alias name removes the label it now points to); each removal is an internal label_removed timeline event; a label the task lacks is skipped; a name also in `labels` is refused',
                     'commit' => 'string|null (stored under context.result.commit)',
                     'result' => 'object|null (stored under context.result)',
                     'comments' => '[{body:string, public?:bool (default false: an internal, staff-only note; true = the submitter sees it and is emailed), internal?:bool (legacy inverse of public)}]',

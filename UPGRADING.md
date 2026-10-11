@@ -1,5 +1,25 @@
 # Upgrading `sgrjr/dispatch`
 
+## A batch can take labels off: `remove_labels` (TASK-1721)
+
+A batch `update` op accepts `remove_labels: string[]`. Each named label is
+detached from the task and recorded as an internal `label_removed` timeline
+event. An alias name resolves to its canonical label. A label the task doesn't
+carry is skipped. A name also listed in `labels` is refused up front, and so is
+`remove_labels` on an `add`. `labels` itself is unchanged: it still only
+attaches.
+
+New `DispatchTaskService::relabel(Task $task, array $add, array $remove, ?int
+$actorId = null, array $meta = [])` adds and removes in one call and records
+each direction on the timeline. Use it from a host surface (a chat canvas, a
+console) so every label edit leaves the same record.
+
+```bash
+composer update sgrjr/dispatch
+```
+
+No migration, no config.
+
 ## Hand the ball to an agent: `dispatch.agent.holder` (TASK-1059)
 
 New optional config key `agent.holder` (env `DISPATCH_AGENT_HOLDER`): a user

@@ -794,7 +794,13 @@ package↔package snapshot `apply`):
   actually reached; leave it out and the status doesn't move. This is how
   **partially-completed** work is memorialized honestly.
 - **Labels attach additively** (never replace-all), so a batch can't strip a
-  task's existing labels.
+  task's existing labels. To take labels **off**, an `update` names them in
+  `remove_labels` (`"remove_labels": ["area:timeclock"]`). Each name is
+  explicit, an old alias name removes the label it now points to, a label the
+  task doesn't carry is skipped, and every removal is an internal
+  `label_removed` event on the task's timeline. A name in both `labels` and
+  `remove_labels` is refused. Hosts use the same path through
+  `DispatchTaskService::relabel($task, $add, $remove, $actorId)`.
 - **`due_at` is tri-state** on both op kinds: **omit** the key and the due date
   is untouched; send **`null` or `""`** to clear it (on an `add`, nothing to
   clear — a no-op); send any parseable date (`"2026-08-15"`) to set it — so a
