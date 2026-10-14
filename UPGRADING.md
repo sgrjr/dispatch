@@ -1,5 +1,29 @@
 # Upgrading `sgrjr/dispatch`
 
+## Search is word-by-word and reads labels
+
+`DispatchTaskService::searchQuery()` (behind `dispatch:find`, the agent
+`queue?q=` endpoint, and any host search built on it) used to match the
+whole term as ONE substring of title, code or description. Labels were not
+searched, and a multi-word term found only that exact phrase.
+
+Now each word must match the title, code, description or a label name,
+in any order. A label also matches by an alias name. A
+`"double-quoted phrase"` still matches as written. Filler words (`the`,
+`of`, `for`, …) are dropped, and a term made only of filler falls back to
+the whole phrase. Results whose title holds the whole term come first,
+then newest-first as before. `DispatchTaskService::searchTokens()` exposes
+the tokenizer.
+
+A search returns a superset of what it used to: a phrase that matched
+before still matches, since all its words are present.
+
+```bash
+composer update sgrjr/dispatch
+```
+
+No migration, no config.
+
 ## Exception occurrences say which error they were (TASK-949)
 
 An `exception_occurrence` event used to store only `{"at": "<timestamp>"}`,

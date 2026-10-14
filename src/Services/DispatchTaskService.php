@@ -741,19 +741,30 @@ class DispatchTaskService
         // reads `'\\'` differently depending on standard_conforming_strings. An
         // explicit ESCAPE with a character that is inert in every dialect's
         // string literals behaves identically on all three.
-        $escaped = str_replace(['!', '%', '_'], ['!!', '!%', '!_'], trim($term));
-        $like = '%'.$escaped.'%';
+        $like = fn (string $text): string => '%'.str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $text).'%';
 
         $table = (new $taskModel)->getTable();
 
+        // Word by word: every word must turn up SOMEWHERE on the task — title,
+        // code, description or a label name — but not as one contiguous
+        // phrase, so "orders printing bug" finds the task titled "Printing
+        // breaks" labelled area:orders + kind:bug. A label also matches by an
+        // alias name it absorbed. See searchTokens() for quoting and filler.
+        $query = $taskModel::query();
+        foreach (self::searchTokens($term) as $token) {
+            $query->where(function (Builder $q) use ($like, $table, $token) {
+                $q->whereRaw("{$table}.title LIKE ? ESCAPE '!'", [$like($token)])
+                    ->orWhereRaw("{$table}.code LIKE ? ESCAPE '!'", [$like($token)])
+                    ->orWhereRaw("{$table}.description LIKE ? ESCAPE '!'", [$like($token)])
+                    ->orWhereHas('labels', fn (Builder $lq) => $lq->where(fn (Builder $w) => $w
+                        ->whereRaw($lq->getModel()->qualifyColumn('name')." LIKE ? ESCAPE '!'", [$like($token)])
+                        ->orWhereIn($lq->getModel()->qualifyColumn('name'), LabelAlias::canonicalize([$token]))));
+            });
+        }
+
         return $this->eagerForRead(
             $this->applyLaneFilter($this->applyAnchorFilters(
-                $taskModel::query()
-                    ->where(function (Builder $q) use ($like, $table) {
-                        $q->whereRaw("{$table}.title LIKE ? ESCAPE '!'", [$like])
-                            ->orWhereRaw("{$table}.code LIKE ? ESCAPE '!'", [$like])
-                            ->orWhereRaw("{$table}.description LIKE ? ESCAPE '!'", [$like]);
-                    })
+                $query
                     ->when($status, fn ($q, $s) => $q->where('status', $s))
                     ->when($type, fn ($q, $type) => $q->ofKind($type))
                     ->when($label, fn ($q, $label) => $q->whereHas(
@@ -762,7 +773,39 @@ class DispatchTaskService
                     )),
                 $filters,
             ), $filters)
-        )->orderByDesc('updated_at')->orderByDesc('id');
+        )
+            // A title carrying the whole query reads as THE match; it leads.
+            ->orderByRaw("CASE WHEN {$table}.title LIKE ? ESCAPE '!' THEN 0 ELSE 1 END", [$like(trim($term))])
+            ->orderByDesc('updated_at')->orderByDesc('id');
+    }
+
+    /** Words that would match nearly every task and narrow nothing. */
+    private const SEARCH_FILLER = ['a', 'an', 'and', 'about', 'for', 'in', 'is', 'of', 'on', 'or', 'the', 'to', 'with'];
+
+    /**
+     * The words a search must all match. A "double-quoted phrase" stays one
+     * token; filler words are dropped; and a search made only of filler (or
+     * nothing tokenizable) falls back to the whole trimmed term, so a query
+     * never widens to the entire board.
+     *
+     * @return array<int,string>
+     */
+    public static function searchTokens(string $term): array
+    {
+        $term = trim($term);
+        preg_match_all('/"([^"]+)"|(\S+)/u', $term, $matches, PREG_SET_ORDER);
+
+        $tokens = [];
+        foreach ($matches as $m) {
+            $quoted = isset($m[1]) && $m[1] !== '';
+            $token = trim($quoted ? $m[1] : $m[2]);
+            if ($token === '' || (! $quoted && in_array(mb_strtolower($token), self::SEARCH_FILLER, true))) {
+                continue;
+            }
+            $tokens[] = $token;
+        }
+
+        return $tokens !== [] ? array_values(array_unique($tokens)) : [$term];
     }
 
     /**

@@ -632,12 +632,19 @@ dispatch:done   {code} {--status=} {--commit=} {--result=} {--result-file=}
 dispatch:find   {term} {--status=} {--type=} {--label=*} {--topic=} {--origin=}
                 {--conversation=} {--topic-account=} {--limit=}
                 {--json} {--remote} {--local}
-                → text search across title, code, and description — the "does
-                  this already exist?" verb. Spans ALL statuses by default,
-                  the INVERSE of queue: the answers to "was this already
-                  built?" live in done/declined/backburner, exactly what the
-                  actionable queue hides. Newest-first (for a duplicate check
-                  recency beats priority); --limit defaults to 50. Remotely it
+                → word-by-word search across title, code, description and
+                  label names — the "does this already exist?" verb. Every
+                  word must match somewhere on the task, in any field and in
+                  any order ("orders printing bug" finds a "Printing breaks"
+                  task labelled area:orders + kind:bug); a label also matches
+                  by an alias name; a "double-quoted phrase" matches as
+                  written; filler words (the, of, for, …) are ignored. Spans
+                  ALL statuses by default, the INVERSE of queue: the answers
+                  to "was this already built?" live in done/declined/
+                  backburner, exactly what the actionable queue hides. A
+                  title holding the whole term ranks first, then newest-first
+                  (for a duplicate check recency beats priority); --limit
+                  defaults to 50. Remotely it
                   rides the existing `queue` scope via ?q=, so a session
                   commissioned before this verb shipped can still use it
 

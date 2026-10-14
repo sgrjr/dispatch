@@ -160,3 +160,60 @@ test('find treats an underscore as literal text too (W9-7)', function () {
 
     expect(json_decode(Artisan::output(), true))->toHaveCount(1);
 });
+
+/*
+ * Word-by-word search with labels (the chat board's search box): every word
+ * must match somewhere on the task, a label name counts, and the words need
+ * not sit together as one phrase.
+ */
+
+test('search matches a label name, whole or in part', function () {
+    $svc = app(DispatchTaskService::class);
+    $labelled = $svc->create(['title' => 'Printing breaks on the hub'], ['area:orders', 'kind:bug']);
+    $svc->create(['title' => 'Unrelated chore'], ['area:royalties']);
+
+    expect($svc->searchQuery('area:orders')->pluck('id')->all())->toBe([$labelled->id])
+        ->and($svc->searchQuery('orders')->pluck('id')->all())->toBe([$labelled->id]);
+});
+
+test('every word must match, but not as one phrase - title words and labels mix', function () {
+    $svc = app(DispatchTaskService::class);
+    $hit = $svc->create(['title' => 'Printing breaks on the hub'], ['area:orders', 'kind:bug']);
+    $svc->create(['title' => 'Printing is slow'], ['area:royalties', 'kind:bug']);
+    $svc->create(['title' => 'Orders hub tidy-up'], ['area:orders', 'kind:chore']);
+
+    expect($svc->searchQuery('orders printing bug')->pluck('id')->all())->toBe([$hit->id]);
+});
+
+test('a label alias finds the task carrying the canonical label', function () {
+    $svc = app(DispatchTaskService::class);
+    $task = $svc->create(['title' => 'Clock drift'], ['area:time-clock']);
+    $canonical = \Sgrjr\Dispatch\Models\Label::query()->where('name', 'area:time-clock')->firstOrFail();
+    \Sgrjr\Dispatch\Models\LabelAlias::query()->create(['name' => 'area:timeclock', 'label_id' => $canonical->id]);
+
+    expect($svc->searchQuery('area:timeclock')->pluck('id')->all())->toBe([$task->id]);
+});
+
+test('a quoted phrase must match as written; filler words narrow nothing', function () {
+    $svc = app(DispatchTaskService::class);
+    $phrase = $svc->create(['title' => 'Coupon allocator rounds down']);
+    $scattered = $svc->create(['title' => 'Allocator for the coupon screen']);
+
+    expect($svc->searchQuery('"coupon allocator"')->pluck('id')->all())->toBe([$phrase->id])
+        ->and($svc->searchQuery('the coupon allocator')->pluck('id')->sort()->values()->all())
+        ->toBe(collect([$phrase->id, $scattered->id])->sort()->values()->all());
+});
+
+test('a title holding the whole query ranks ahead of a newer scattered match', function () {
+    $svc = app(DispatchTaskService::class);
+    $exact = $svc->create(['title' => 'Coupon allocator rounds down']);
+    $newer = $svc->create(['title' => 'Allocator note', 'description' => 'see the coupon screen']);
+    $newer->forceFill(['updated_at' => now()->addHour()])->save();
+
+    expect($svc->searchQuery('coupon allocator')->pluck('id')->all())->toBe([$exact->id, $newer->id]);
+});
+
+test('searchTokens keeps quoted phrases, drops filler, and never returns nothing', function () {
+    expect(DispatchTaskService::searchTokens('the "print queue" for orders'))->toBe(['print queue', 'orders'])
+        ->and(DispatchTaskService::searchTokens('the of'))->toBe(['the of']);
+});
