@@ -2,6 +2,7 @@
 
 namespace Sgrjr\Dispatch\Console\Commands;
 
+use Sgrjr\Dispatch\Console\Commands\Concerns\WritesRawLines;
 use Illuminate\Console\Command;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Auth;
@@ -34,6 +35,7 @@ use Sgrjr\Dispatch\Services\AttachmentService;
  */
 class DispatchAttach extends Command
 {
+    use WritesRawLines;
     use ResolvesTextInput;
     use TalksToAgentApi;
 
@@ -100,7 +102,7 @@ class DispatchAttach extends Command
         }
 
         if ($this->option('json')) {
-            $this->line(json_encode($r, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $this->rawLine(json_encode($r, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             return self::SUCCESS;
         }
@@ -155,7 +157,7 @@ class DispatchAttach extends Command
         }
 
         if ($this->option('json')) {
-            $this->line(json_encode([
+            $this->rawLine(json_encode([
                 'task' => $task->code,
                 'attachment' => [
                     'id' => $result['attachment']->id,

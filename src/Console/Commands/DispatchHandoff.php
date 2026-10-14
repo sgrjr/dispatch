@@ -2,6 +2,7 @@
 
 namespace Sgrjr\Dispatch\Console\Commands;
 
+use Sgrjr\Dispatch\Console\Commands\Concerns\WritesRawLines;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Auth;
 use Sgrjr\Dispatch\Console\Commands\Concerns\ResolvesTextInput;
@@ -24,6 +25,7 @@ use Sgrjr\Dispatch\Support\TaskPresenter;
  */
 class DispatchHandoff extends Command
 {
+    use WritesRawLines;
     use ResolvesTextInput;
     use TalksToAgentApi;
 
@@ -80,7 +82,7 @@ class DispatchHandoff extends Command
                 return self::FAILURE;
             }
 
-            $this->line(json_encode($r['task'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $this->rawLine(json_encode($r['task'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             return self::SUCCESS;
         }
@@ -116,7 +118,7 @@ class DispatchHandoff extends Command
         }
 
         if ($this->option('json')) {
-            $this->line(json_encode(TaskPresenter::toArray($result, true), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $this->rawLine(json_encode(TaskPresenter::toArray($result, true), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             return self::SUCCESS;
         }

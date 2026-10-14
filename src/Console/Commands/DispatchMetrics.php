@@ -2,6 +2,7 @@
 
 namespace Sgrjr\Dispatch\Console\Commands;
 
+use Sgrjr\Dispatch\Console\Commands\Concerns\WritesRawLines;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
@@ -24,6 +25,7 @@ use Sgrjr\Dispatch\Support\TranscriptLocator;
  */
 class DispatchMetrics extends Command
 {
+    use WritesRawLines;
     protected $signature = 'dispatch:metrics
         {code : The task code, e.g. TASK-042}
         {--since= : ISO-8601 window start (default: the task\'s latest claim time)}
@@ -119,7 +121,7 @@ class DispatchMetrics extends Command
         }
 
         if ($json) {
-            $this->line(json_encode($metrics, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $this->rawLine(json_encode($metrics, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             return self::SUCCESS;
         }

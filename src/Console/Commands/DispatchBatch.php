@@ -2,6 +2,7 @@
 
 namespace Sgrjr\Dispatch\Console\Commands;
 
+use Sgrjr\Dispatch\Console\Commands\Concerns\WritesRawLines;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Auth;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
@@ -34,6 +35,7 @@ use Sgrjr\Dispatch\Services\DispatchBatchService;
  */
 class DispatchBatch extends Command
 {
+    use WritesRawLines;
     use TalksToAgentApi;
 
     protected $signature = 'dispatch:batch
@@ -141,7 +143,7 @@ class DispatchBatch extends Command
     protected function report(array $r): int
     {
         if ($this->option('json')) {
-            $this->line(json_encode($r, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $this->rawLine(json_encode($r, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             return self::SUCCESS;
         }

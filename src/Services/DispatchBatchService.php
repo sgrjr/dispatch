@@ -2,7 +2,9 @@
 
 namespace Sgrjr\Dispatch\Services;
 
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Sgrjr\Dispatch\Contracts\DispatchNotifier;
 use Sgrjr\Dispatch\Contracts\LaneResolver;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
@@ -92,6 +94,14 @@ class DispatchBatchService
         return (int) $raw;
     }
 
+    /**
+     * Status moves made by the current apply(), told to the notifier only once
+     * the transaction commits (TASK-1748).
+     *
+     * @var array<int,array{0:Task,1:string,2:string}>
+     */
+    protected array $statusMoves = [];
+
     public function __construct(protected DispatchTaskService $tasks) {}
 
     /**
@@ -130,6 +140,7 @@ class DispatchBatchService
         // manifest; a forward reference is simply unresolvable (the "unknown
         // ref" error names it as such).
         $refMap = [];
+        $this->statusMoves = [];
 
         $run = function () use ($normalized, $actorMeta, $actorUserId, &$summary, &$results, &$refMap) {
             foreach ($normalized as $i => $op) {
@@ -160,9 +171,35 @@ class DispatchBatchService
             }
         } else {
             DB::transaction($exec);
+
+            // TASK-1748 — a status an op changed is announced like any other
+            // status change, after the commit (a rolled-back manifest moved
+            // nothing). A quiet memorialize/backfill stays quiet.
+            if (! $quiet) {
+                $this->announceStatusMoves();
+            }
         }
+        $this->statusMoves = [];
 
         return ['summary' => $summary, 'results' => $results];
+    }
+
+    /**
+     * Each committed status move through the bound notifier: the same hook a
+     * human's status change calls. The actor is the signed-in user, or null for
+     * an agent session or the CLI (an agent's identity is on the event meta).
+     * A notifier failure is reported, never thrown: the manifest is committed.
+     */
+    protected function announceStatusMoves(): void
+    {
+        $notifier = app(DispatchNotifier::class);
+        foreach ($this->statusMoves as [$task, $from, $to]) {
+            try {
+                $notifier->taskStatusChanged($task, $from, $to, Auth::user());
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        }
     }
 
     /**
@@ -765,6 +802,7 @@ class DispatchBatchService
                 $task->statusChangeBody("Status changed from {$from} to {$to}."),
             );
             $summary['statuses_changed']++;
+            $this->statusMoves[] = [$task, (string) $from, (string) $to];
 
             // TASK-997 part B — "closing a blocker notifies the next
             // holder." A no-op unless $task just went terminal AND has

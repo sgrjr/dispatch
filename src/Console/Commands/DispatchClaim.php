@@ -2,6 +2,7 @@
 
 namespace Sgrjr\Dispatch\Console\Commands;
 
+use Sgrjr\Dispatch\Console\Commands\Concerns\WritesRawLines;
 use Illuminate\Console\Command;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 use Sgrjr\Dispatch\Models\TaskComment;
@@ -18,6 +19,7 @@ use Sgrjr\Dispatch\Support\TaskPresenter;
  */
 class DispatchClaim extends Command
 {
+    use WritesRawLines;
     use TalksToAgentApi;
 
     protected $signature = 'dispatch:claim
@@ -78,7 +80,7 @@ class DispatchClaim extends Command
             // Full shape on claim (description + context + comments) — same as the
             // remote `claim` verb — so a claiming agent sees the human's direction,
             // not just the summary fields. Mirrors AgentController::claim.
-            $this->line(json_encode(
+            $this->rawLine(json_encode(
                 TaskPresenter::toArray($task, true),
                 JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES,
             ));
@@ -147,7 +149,7 @@ class DispatchClaim extends Command
 
         $task = $response['task'] ?? null;
 
-        $this->line(json_encode($task, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        $this->rawLine(json_encode($task, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
         if ($task !== null) {
             // claimed_at rides the claim envelope top-level (beside `task`) for

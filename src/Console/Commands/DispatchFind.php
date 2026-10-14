@@ -2,6 +2,7 @@
 
 namespace Sgrjr\Dispatch\Console\Commands;
 
+use Sgrjr\Dispatch\Console\Commands\Concerns\WritesRawLines;
 use Illuminate\Console\Command;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 use Sgrjr\Dispatch\Services\DispatchTaskService;
@@ -26,6 +27,7 @@ use Sgrjr\Dispatch\Support\TaskPresenter;
  */
 class DispatchFind extends Command
 {
+    use WritesRawLines;
     use TalksToAgentApi;
 
     protected $signature = 'dispatch:find
@@ -117,7 +119,7 @@ class DispatchFind extends Command
     private function render(array $tasks, string $term): int
     {
         if ($this->option('json')) {
-            $this->line(json_encode($tasks, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $this->rawLine(json_encode($tasks, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             return self::SUCCESS;
         }

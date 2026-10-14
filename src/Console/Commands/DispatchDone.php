@@ -2,6 +2,7 @@
 
 namespace Sgrjr\Dispatch\Console\Commands;
 
+use Sgrjr\Dispatch\Console\Commands\Concerns\WritesRawLines;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
@@ -20,6 +21,7 @@ use Sgrjr\Dispatch\Support\TranscriptLocator;
  */
 class DispatchDone extends Command
 {
+    use WritesRawLines;
     use ResolvesTextInput;
     use TalksToAgentApi;
 
@@ -179,7 +181,7 @@ class DispatchDone extends Command
                 return self::FAILURE;
             }
 
-            $this->line(json_encode($r['task'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $this->rawLine(json_encode($r['task'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             // Point-of-need reminder replacing memorized doctrine: per-task
             // metrics ride EVERY done (the claim bridge pre-fills the flags);
@@ -266,7 +268,7 @@ class DispatchDone extends Command
         $this->emitMetricsReceipt($metrics);
 
         if ($this->option('json')) {
-            $this->line(json_encode(TaskPresenter::toArray($task->fresh(), false), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $this->rawLine(json_encode(TaskPresenter::toArray($task->fresh(), false), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             return self::SUCCESS;
         }

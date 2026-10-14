@@ -2,6 +2,7 @@
 
 namespace Sgrjr\Dispatch\Console\Commands;
 
+use Sgrjr\Dispatch\Console\Commands\Concerns\WritesRawLines;
 use Illuminate\Console\Command;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 use Sgrjr\Dispatch\Models\Task;
@@ -16,6 +17,7 @@ use Sgrjr\Dispatch\Support\TaskPresenter;
  */
 class DispatchShow extends Command
 {
+    use WritesRawLines;
     use TalksToAgentApi;
 
     /**
@@ -42,7 +44,7 @@ class DispatchShow extends Command
                 return self::FAILURE;
             }
 
-            $this->line(json_encode($r['task'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $this->rawLine(json_encode($r['task'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             return self::SUCCESS;
         }
@@ -65,7 +67,7 @@ class DispatchShow extends Command
 
         if ($this->option('json')) {
             // TASK-1188 — the same `kind` block the agent API's show carries.
-            $this->line(json_encode(TaskPresenter::toArray($task, true) + [
+            $this->rawLine(json_encode(TaskPresenter::toArray($task, true) + [
                 'kind' => app(\Sgrjr\Dispatch\Services\TaskActions::class)->describe($task, null, true),
             ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 

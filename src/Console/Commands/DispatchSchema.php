@@ -2,6 +2,7 @@
 
 namespace Sgrjr\Dispatch\Console\Commands;
 
+use Sgrjr\Dispatch\Console\Commands\Concerns\WritesRawLines;
 use Illuminate\Console\Command;
 use Sgrjr\Dispatch\Support\TaskPresenter;
 
@@ -12,13 +13,14 @@ use Sgrjr\Dispatch\Support\TaskPresenter;
  */
 class DispatchSchema extends Command
 {
+    use WritesRawLines;
     protected $signature = 'dispatch:schema';
 
     protected $description = "Print the JSON schema of a task's --json shape (for agent consumption).";
 
     public function handle(): int
     {
-        $this->line(json_encode(TaskPresenter::schema(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        $this->rawLine(json_encode(TaskPresenter::schema(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
         return self::SUCCESS;
     }

@@ -2,6 +2,7 @@
 
 namespace Sgrjr\Dispatch\Console\Commands;
 
+use Sgrjr\Dispatch\Console\Commands\Concerns\WritesRawLines;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Auth;
 use Sgrjr\Dispatch\Console\Commands\Concerns\ResolvesTextInput;
@@ -16,6 +17,7 @@ use Sgrjr\Dispatch\Support\TaskPresenter;
  */
 class DispatchNote extends Command
 {
+    use WritesRawLines;
     use ResolvesTextInput;
     use TalksToAgentApi;
 
@@ -59,7 +61,7 @@ class DispatchNote extends Command
                 return self::FAILURE;
             }
 
-            $this->line(json_encode([
+            $this->rawLine(json_encode([
                 'task' => $r['task'] ?? null,
                 'comment_id' => $r['comment_id'] ?? null,
             ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
@@ -88,7 +90,7 @@ class DispatchNote extends Command
         // Same {task, comment_id} shape the remote path emits, so `--json` reads
         // identically whichever DB answered (W9-3).
         if ($this->option('json')) {
-            $this->line(json_encode([
+            $this->rawLine(json_encode([
                 'task' => TaskPresenter::toArray($task->fresh(), false),
                 'comment_id' => $comment->id,
             ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));

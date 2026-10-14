@@ -2,6 +2,7 @@
 
 namespace Sgrjr\Dispatch\Console\Commands;
 
+use Sgrjr\Dispatch\Console\Commands\Concerns\WritesRawLines;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Auth;
 use Sgrjr\Dispatch\Console\Commands\Concerns\GuardsLocalOnlyWrites;
@@ -22,6 +23,7 @@ use Sgrjr\Dispatch\Services\DispatchTaskService;
  */
 class DispatchMerge extends Command
 {
+    use WritesRawLines;
     use GuardsLocalOnlyWrites;
 
     protected $signature = 'dispatch:merge
@@ -77,7 +79,7 @@ class DispatchMerge extends Command
         $merged = $tasks->merge($loser, $winner, Auth::id());
 
         if ($this->option('json')) {
-            $this->line(json_encode([
+            $this->rawLine(json_encode([
                 'loser' => $loserCode,
                 'winner' => $merged->code,
                 'title' => $merged->title,

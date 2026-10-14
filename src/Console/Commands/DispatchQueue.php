@@ -2,6 +2,7 @@
 
 namespace Sgrjr\Dispatch\Console\Commands;
 
+use Sgrjr\Dispatch\Console\Commands\Concerns\WritesRawLines;
 use Illuminate\Console\Command;
 use Illuminate\Support\Str;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
@@ -15,6 +16,7 @@ use Sgrjr\Dispatch\Support\TaskPresenter;
  */
 class DispatchQueue extends Command
 {
+    use WritesRawLines;
     use TalksToAgentApi;
 
     protected $signature = 'dispatch:queue
@@ -74,7 +76,7 @@ class DispatchQueue extends Command
                 return self::SUCCESS;
             }
 
-            $this->line(json_encode($r['tasks'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $this->rawLine(json_encode($r['tasks'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             return self::SUCCESS;
         }
@@ -122,7 +124,7 @@ class DispatchQueue extends Command
             ->get();
 
         if ($this->option('json')) {
-            $this->line(json_encode(TaskPresenter::collection($tasks), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $this->rawLine(json_encode(TaskPresenter::collection($tasks), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             return self::SUCCESS;
         }
@@ -156,7 +158,7 @@ class DispatchQueue extends Command
     private function renderCount(int $total, array $byStatus): void
     {
         if ($this->option('json')) {
-            $this->line(json_encode(['total' => $total, 'by_status' => $byStatus], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $this->rawLine(json_encode(['total' => $total, 'by_status' => $byStatus], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             return;
         }

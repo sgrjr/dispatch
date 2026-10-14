@@ -2,6 +2,7 @@
 
 namespace Sgrjr\Dispatch\Console\Commands;
 
+use Sgrjr\Dispatch\Console\Commands\Concerns\WritesRawLines;
 use Illuminate\Console\Command;
 use Sgrjr\Dispatch\Services\AgentSessionService;
 
@@ -13,6 +14,7 @@ use Sgrjr\Dispatch\Services\AgentSessionService;
  */
 class DispatchSessionsPrune extends Command
 {
+    use WritesRawLines;
     protected $signature = 'dispatch:sessions:prune {--json : Emit machine-readable JSON instead of human text}';
 
     protected $description = 'Expire stale pending/approved agent sessions.';
@@ -22,7 +24,7 @@ class DispatchSessionsPrune extends Command
         $n = $sessions->prune();
 
         if ($this->option('json')) {
-            $this->line(json_encode(['expired' => $n], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $this->rawLine(json_encode(['expired' => $n], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             return self::SUCCESS;
         }

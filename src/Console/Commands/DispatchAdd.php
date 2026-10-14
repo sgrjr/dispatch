@@ -2,6 +2,7 @@
 
 namespace Sgrjr\Dispatch\Console\Commands;
 
+use Sgrjr\Dispatch\Console\Commands\Concerns\WritesRawLines;
 use Illuminate\Console\Command;
 use Sgrjr\Dispatch\Console\Commands\Concerns\ResolvesTextInput;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
@@ -22,6 +23,7 @@ use Sgrjr\Dispatch\Support\TaskPresenter;
  */
 class DispatchAdd extends Command
 {
+    use WritesRawLines;
     use ResolvesTextInput;
     use TalksToAgentApi;
 
@@ -168,7 +170,7 @@ class DispatchAdd extends Command
                 return self::FAILURE;
             }
 
-            $this->line(json_encode($r['task'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $this->rawLine(json_encode($r['task'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             return self::SUCCESS;
         }
@@ -207,7 +209,7 @@ class DispatchAdd extends Command
             : $tasks->create($attributes, $labelNames);
 
         if ($this->option('json')) {
-            $this->line(json_encode(TaskPresenter::toArray($task, false), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $this->rawLine(json_encode(TaskPresenter::toArray($task, false), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             return self::SUCCESS;
         }

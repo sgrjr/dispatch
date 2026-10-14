@@ -6,6 +6,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Validation\ValidationException;
+use Sgrjr\Dispatch\Contracts\DispatchNotifier;
 use Sgrjr\Dispatch\Contracts\LaneResolver;
 use Sgrjr\Dispatch\Http\Middleware\AuthenticateAgentSession;
 use Sgrjr\Dispatch\Models\AgentSession;
@@ -668,6 +669,12 @@ class AgentController extends Controller
         // A no-op unless $task just went terminal AND has dependents.
         if ($from !== $to) {
             app(DispatchTaskService::class)->notifyDependentsOfClosure($task);
+            // TASK-1748 — the same hook every human status change calls, so the
+            // host hears an agent's move too (rings, release protocols). The
+            // actor is null: an AgentSession is not an Authenticatable, and
+            // its identity is on the event's meta. A host that needs the
+            // session reads it off the request (AuthenticateAgentSession::ATTRIBUTE).
+            $this->notifyStatusChanged($task, $from, $to);
         }
 
         // Memorialized in the SAME words the Livewire editor uses, so the
@@ -862,6 +869,20 @@ class AgentController extends Controller
             ($s->agent_name ?: 'An agent').' downloaded '.$attachment->original_name.'.',
             true,
         );
+    }
+
+    /**
+     * The status change is already saved and on the timeline; a host notifier
+     * that throws must not turn that into a failed response the agent would
+     * read as "not done".
+     */
+    private function notifyStatusChanged(Task $task, string $from, string $to): void
+    {
+        try {
+            app(DispatchNotifier::class)->taskStatusChanged($task, $from, $to, null);
+        } catch (\Throwable $e) {
+            report($e);
+        }
     }
 
     private function agentMeta(AgentSession $s, array $extra = []): array

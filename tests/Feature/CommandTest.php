@@ -54,3 +54,29 @@ test('dispatch:next --json surfaces the task dispatch:add just created', functio
     expect($decoded['code'] ?? null)->toBe($task->code);
     expect($decoded['title'] ?? null)->toBe($task->title);
 });
+
+/*
+ * TASK-1754: --json output is written RAW. Through the console formatter, a
+ * Windows path before a placeholder (`C:\Users\<account>`) lost a backslash
+ * (`\<` read as an escaped tag), so the printed JSON was invalid, and an
+ * `<info>`-like string inside task text vanished.
+ */
+test('--json output round-trips a backslash before "<" and tag-like text byte for byte', function () {
+    dispatchFakeUsers();
+    $description = "Runbook: copy C:\Users\<account>\.claude, then read <info>this</info> as text.";
+    $task = app(\Sgrjr\Dispatch\Services\DispatchTaskService::class)->create([
+        'title' => 'Paths like C:\Users\<account> survive',
+        'description' => $description,
+    ]);
+
+    Artisan::call('dispatch:show', ['code' => $task->code, '--json' => true]);
+    $shown = json_decode(Artisan::output(), true);
+
+    Artisan::call('dispatch:find', ['term' => 'survive', '--json' => true]);
+    $found = json_decode(Artisan::output(), true);
+
+    expect($shown)->toBeArray()
+        ->and($shown['description'])->toBe($description)
+        ->and($found)->toBeArray()
+        ->and($found[0]['title'])->toBe('Paths like C:\Users\<account> survive');
+});

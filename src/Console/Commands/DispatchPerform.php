@@ -2,6 +2,7 @@
 
 namespace Sgrjr\Dispatch\Console\Commands;
 
+use Sgrjr\Dispatch\Console\Commands\Concerns\WritesRawLines;
 use Illuminate\Console\Command;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 use Sgrjr\Dispatch\Models\Task;
@@ -16,6 +17,7 @@ use Sgrjr\Dispatch\Services\TaskActions;
  */
 class DispatchPerform extends Command
 {
+    use WritesRawLines;
     use TalksToAgentApi;
 
     protected $signature = 'dispatch:perform
@@ -52,7 +54,7 @@ class DispatchPerform extends Command
                 return self::FAILURE;
             }
 
-            $this->line(json_encode($r, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $this->rawLine(json_encode($r, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             return self::SUCCESS;
         }
@@ -75,7 +77,7 @@ class DispatchPerform extends Command
         }
 
         if ($this->option('json')) {
-            $this->line(json_encode(['message' => $message, 'status' => $task->fresh()->status], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $this->rawLine(json_encode(['message' => $message, 'status' => $task->fresh()->status], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
         } else {
             $this->info($message ?: "Ran `{$this->argument('action')}` on {$task->code}.");
         }

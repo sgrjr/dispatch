@@ -2,6 +2,7 @@
 
 namespace Sgrjr\Dispatch\Console\Commands;
 
+use Sgrjr\Dispatch\Console\Commands\Concerns\WritesRawLines;
 use Illuminate\Console\Command;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 use Sgrjr\Dispatch\Contracts\AttachmentStore;
@@ -28,6 +29,7 @@ use Sgrjr\Dispatch\Support\TaskPresenter;
  */
 class DispatchAttachment extends Command
 {
+    use WritesRawLines;
     use TalksToAgentApi;
 
     /** Workbook extensions converted to per-sheet CSVs. */
@@ -295,7 +297,7 @@ class DispatchAttachment extends Command
     private function emit(string $code, ?string $dir, array $saved, ?string $message): void
     {
         if ($this->option('json')) {
-            $this->line(json_encode([
+            $this->rawLine(json_encode([
                 'task' => $code,
                 'directory' => $dir,
                 'files' => array_map(fn (array $f) => [

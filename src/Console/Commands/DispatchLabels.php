@@ -2,6 +2,7 @@
 
 namespace Sgrjr\Dispatch\Console\Commands;
 
+use Sgrjr\Dispatch\Console\Commands\Concerns\WritesRawLines;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
 use Sgrjr\Dispatch\Services\LabelCleanupService;
@@ -14,6 +15,7 @@ use Sgrjr\Dispatch\Services\LabelCleanupService;
  */
 class DispatchLabels extends Command
 {
+    use WritesRawLines;
     protected $signature = 'dispatch:labels
         {--unused : Only labels no live task carries}
         {--max-uses= : Only labels on at most this many tasks (e.g. 1 for one-off labels)}
@@ -43,7 +45,7 @@ class DispatchLabels extends Command
         ];
 
         if ($this->option('json')) {
-            $this->line(json_encode($totals + [
+            $this->rawLine(json_encode($totals + [
                 'labels' => $rows->map(fn ($l) => [
                     'name' => $l->name,
                     'kind' => $l->effectiveKind() ?? 'plain',

@@ -2,6 +2,7 @@
 
 namespace Sgrjr\Dispatch\Console\Commands;
 
+use Sgrjr\Dispatch\Console\Commands\Concerns\WritesRawLines;
 use Illuminate\Console\Command;
 use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
 use Sgrjr\Dispatch\Services\AgentSessionService;
@@ -25,6 +26,7 @@ use Sgrjr\Dispatch\Support\SkillPublisher;
  */
 class DispatchDoctor extends Command
 {
+    use WritesRawLines;
     use TalksToAgentApi;
 
     protected $signature = 'dispatch:doctor
@@ -507,7 +509,7 @@ class DispatchDoctor extends Command
     {
         $counts = $this->counts();
 
-        $this->line(json_encode([
+        $this->rawLine(json_encode([
             'ok' => $counts['error'] === 0 && ! ($this->option('strict') && $counts['warn'] > 0),
             'environment' => $env,
             'agent_enabled' => $enabled,

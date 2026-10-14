@@ -1,5 +1,37 @@
 # Upgrading `sgrjr/dispatch`
 
+## Agent status changes reach the notifier; --json is raw; edit --assignee (TASK-1748, 1754, 1530)
+
+**Agent status changes are announced (TASK-1748).** `POST agent/done` and
+batch `update` ops that change a status now call
+`DispatchNotifier::taskStatusChanged()`, like every human status change.
+Before, they saved the status and wrote the timeline event but told the
+host nothing, so host reactions (rings, release protocols) never ran for an
+agent's move. The actor is `null`: an agent session is not an
+Authenticatable, and its identity is on the event's meta. A host that needs
+the session reads it off the request
+(`AuthenticateAgentSession::ATTRIBUTE`). Batch moves are announced after the
+transaction commits, never for a `quiet` or dry-run apply. A notifier that
+throws is reported, not rethrown. **Expect new notifications** for statuses
+agents change, routed by your notifier's own policy.
+
+**`--json` output is written raw (TASK-1754).** Every `dispatch:* --json`
+now writes past Symfony's console formatter (new
+`Concerns\WritesRawLines::rawLine()`). Through the formatter, text holding
+`C:\Users\<account>` lost a backslash (`\\<` read as an escaped tag), which
+printed invalid JSON, and `<info>`-like text inside a task vanished.
+
+**`dispatch:edit --assignee=<id|email|none>` (TASK-1530).** A plain
+reassign of the same task in any status: no lane move and no new task.
+Records an `assignee_change` event and calls `taskAssigned`. Still
+local-only, like the rest of `edit`.
+
+```bash
+composer update sgrjr/dispatch
+```
+
+No migration, no config.
+
 ## Search is word-by-word and reads labels
 
 `DispatchTaskService::searchQuery()` (behind `dispatch:find`, the agent

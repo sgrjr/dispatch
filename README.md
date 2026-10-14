@@ -343,8 +343,12 @@ dispatch:done   <code> [--status=done|resolved|declined|verifying|backburner] [-
                   now — or code-done but blocked on an external date) without
                   declining; unpark later with --status=open (or triage/verifying)
 
-dispatch:edit   <code> [--title=] [--description=] [--description-file=] [--due=] [--local] [--json]
-                → edit a task's title / description / due date. The OLD description is
+dispatch:edit   <code> [--title=] [--description=] [--description-file=] [--due=] [--assignee=] [--local] [--json]
+                → edit a task's title / description / due date / assignee.
+                  --assignee=<id|email|none> reassigns the SAME task in any status:
+                  no lane move, no new task (handoff mints one across lanes; claim
+                  refuses past open/triage); records an assignee_change event and
+                  calls the notifier's taskAssigned. The OLD description is
                   memorialized as an internal timeline comment before the new one is
                   applied, so an edit never loses history. --description-file=PATH
                   (or `-` for stdin) reads a long body from a file instead of inline —

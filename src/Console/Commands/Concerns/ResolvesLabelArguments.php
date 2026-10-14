@@ -12,6 +12,8 @@ use Sgrjr\Dispatch\Services\LabelCleanupService;
  */
 trait ResolvesLabelArguments
 {
+    use WritesRawLines;
+
     /**
      * The named labels, or null (after printing why) when any name is unknown.
      * A name that is already an alias says where it points — "not found" would
@@ -49,7 +51,7 @@ trait ResolvesLabelArguments
     protected function report(array $payload, string $message): int
     {
         if ($this->option('json')) {
-            $this->line(json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+            $this->rawLine(json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
         } else {
             $this->info($message);
         }
