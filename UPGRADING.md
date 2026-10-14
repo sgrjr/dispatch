@@ -1,5 +1,26 @@
 # Upgrading `sgrjr/dispatch`
 
+## Exception occurrences say which error they were (TASK-949)
+
+An `exception_occurrence` event used to store only `{"at": "<timestamp>"}`,
+so a task that collected repeats could not tell them apart. Each new
+occurrence from `fromException()` now records `meta.class`, `meta.message`
+(clipped to 300 chars) and `meta.frame`, the first application frame as a
+relative `path:line`. It also gets a short Markdown body, so the timeline
+shows it. A keyed `report()` repeat carries no exception and still records
+only `at` with an empty body. Rows written before this change keep their
+bare `at`.
+
+The first-filed context gains `context.exception.app_frame`: the throw site,
+or for a throw inside `vendor/` the first frame outside vendor/ and the entry
+scripts.
+
+```bash
+composer update sgrjr/dispatch
+```
+
+No migration, no config.
+
 ## A batch can take labels off: `remove_labels` (TASK-1721)
 
 A batch `update` op accepts `remove_labels: string[]`. Each named label is

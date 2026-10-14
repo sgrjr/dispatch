@@ -312,6 +312,7 @@ class DispatchManager
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
                 'code' => $e->getCode(),
+                'app_frame' => $this->appFrame($e),
             ],
             'trace' => collect($e->getTrace())
                 ->take($frames)
@@ -406,6 +407,38 @@ class DispatchManager
                     .'  '.$call;
             })
             ->all();
+    }
+
+    /**
+     * The first application frame as a relative "path:line" — the throw site
+     * when it is the app's own code, otherwise the first frame outside
+     * vendor/ and the entry scripts (artisan, public/index.php), which every
+     * trace ends in. That is the call site that led into a framework funnel:
+     * every QueryException is thrown from the same Connection.php line, and the
+     * frame that tells two of them apart is the app's. Falls back to the throw
+     * site when no frame qualifies.
+     */
+    protected function appFrame(Throwable $e): string
+    {
+        $isFunnel = function (string $path): bool {
+            return str_starts_with($path, 'vendor/')
+                || $path === 'artisan'
+                || $path === 'public/index.php';
+        };
+
+        $site = $this->relativePath($e->getFile());
+        if (! $isFunnel($site)) {
+            return $site.':'.$e->getLine();
+        }
+
+        foreach ($e->getTrace() as $frame) {
+            $path = $this->relativePath((string) ($frame['file'] ?? ''));
+            if ($path !== '' && ! $isFunnel($path)) {
+                return $path.':'.($frame['line'] ?? '?');
+            }
+        }
+
+        return $site.':'.$e->getLine();
     }
 
     /**

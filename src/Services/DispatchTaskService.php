@@ -175,10 +175,17 @@ class DispatchTaskService
             ->first();
 
         if ($existing !== null) {
+            // Each occurrence says WHICH error it was, not just when: a task
+            // that accretes repeats (or, before a signature fix, unrelated
+            // errors sharing a throw site) is otherwise unreadable after the
+            // fact (TASK-949).
+            $facts = $this->occurrenceFacts($attributes['context']['exception'] ?? null);
+
             $existing->recordEvent(
                 TaskComment::EVENT_EXCEPTION,
                 null,
-                ['at' => now()->toIso8601String()],
+                ['at' => now()->toIso8601String()] + $facts,
+                $this->occurrenceBody($facts),
             );
 
             // Occurrence tracking: bump the counters in the stored context so a
@@ -196,6 +203,50 @@ class DispatchTaskService
         $attributes['status'] ??= 'triage';
 
         return $this->create($attributes, $labelNames);
+    }
+
+    /**
+     * The identifying facts of one occurrence, from the capture's
+     * `context.exception`: class, message (clipped — a timeline entry, not a
+     * second description) and the first application frame. Empty for a
+     * capture that carries no exception (a keyed report()).
+     *
+     * @return array<string,string>
+     */
+    protected function occurrenceFacts(mixed $exception): array
+    {
+        if (! is_array($exception) || empty($exception['class'])) {
+            return [];
+        }
+
+        $frame = $exception['app_frame']
+            ?? (isset($exception['file']) ? $exception['file'].':'.($exception['line'] ?? '?') : null);
+
+        return array_filter([
+            'class' => (string) $exception['class'],
+            'message' => Str::limit(trim((string) ($exception['message'] ?? '')), 300),
+            'frame' => $frame !== null ? (string) $frame : null,
+        ], fn ($v) => $v !== null && $v !== '');
+    }
+
+    /**
+     * @param  array<string,string>  $facts
+     */
+    protected function occurrenceBody(array $facts): ?string
+    {
+        if ($facts === []) {
+            return null;
+        }
+
+        $body = '**'.class_basename($facts['class']).'**'
+            .(isset($facts['frame']) ? ' at `'.$facts['frame'].'`' : '');
+
+        // Fenced: a raw message is full of characters markdown would eat.
+        if (isset($facts['message'])) {
+            $body .= "\n```\n".$facts['message']."\n```";
+        }
+
+        return $body;
     }
 
     /**

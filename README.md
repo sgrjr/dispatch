@@ -1607,7 +1607,10 @@ use Sgrjr\Dispatch\Facades\DispatchTask;
 
 `fromException()` derives a title, a stable signature (recurring errors dedupe onto
 one task and bump `times_seen` / `last_seen`), captures request/console context, and
-labels it `source:exception`. It **never throws** and returns `null` when gated,
+labels it `source:exception`. Each recurrence appends an `exception_occurrence`
+timeline event that says which error it was: the exception class, its message
+(clipped to 300 chars) and the first application frame (`context.exception.app_frame`:
+the throw site, or for a throw inside `vendor/` the first frame outside it). It **never throws** and returns `null` when gated,
 throttled, or on failure — safe to call inside an exception handler.
 
 ### Config (`config/dispatch.php` → `reporter`)

@@ -56,6 +56,72 @@ test('fromException derives title, signature, context and dedupes with occurrenc
     expect(Task::count())->toBe(1);
 });
 
+/**
+ * An exception whose throw site and trace are set by hand, so a test can stand
+ * it inside vendor/ the way a framework funnel (QueryException) is.
+ *
+ * @param  array<int,array<string,mixed>>  $trace
+ */
+function exceptionAt(string $message, string $file, int $line, array $trace): RuntimeException
+{
+    $e = new RuntimeException($message);
+    foreach (['file' => $file, 'line' => $line, 'trace' => $trace] as $prop => $value) {
+        (new ReflectionProperty(Exception::class, $prop))->setValue($e, $value);
+    }
+
+    return $e;
+}
+
+test('each occurrence records which error it was: class, message and app frame (TASK-949)', function () {
+    config(['dispatch.reporter.throttle_seconds' => 0]);
+
+    $first = DispatchTask::fromException(new RuntimeException('Kaboom for account 1'), ['signature' => 'shared-site']);
+    DispatchTask::fromException(new LogicException('A different failure'), ['signature' => 'shared-site']);
+
+    $occurrence = $first->comments()->where('event_type', 'exception_occurrence')->sole();
+
+    expect($occurrence->meta['class'])->toBe(LogicException::class)
+        ->and($occurrence->meta['message'])->toBe('A different failure')
+        ->and($occurrence->meta['frame'])->toContain('ReporterTest.php:')
+        ->and($occurrence->meta['at'])->not->toBeEmpty()
+        ->and($occurrence->body)->toContain('**LogicException** at `')
+        ->and($occurrence->body)->toContain("```\nA different failure\n```");
+});
+
+test('a throw inside vendor/ is placed at the first app frame, past vendor and the entry script', function () {
+    config(['dispatch.reporter.throttle_seconds' => 0]);
+
+    $make = fn () => exceptionAt(
+        'SQLSTATE[42S22]: Unknown column',
+        base_path('vendor/laravel/framework/src/Illuminate/Database/Connection.php'),
+        838,
+        [
+            ['file' => base_path('vendor/laravel/framework/src/Illuminate/Database/Query/Builder.php'), 'line' => 3100],
+            ['file' => base_path('app/Http/Controllers/OrdersController.php'), 'line' => 42],
+            ['file' => base_path('artisan'), 'line' => 13],
+        ],
+    );
+
+    $first = DispatchTask::fromException($make());
+    DispatchTask::fromException($make());
+
+    expect($first->context['exception']['app_frame'])->toBe('app/Http/Controllers/OrdersController.php:42')
+        ->and($first->comments()->where('event_type', 'exception_occurrence')->sole()->meta['frame'])
+        ->toBe('app/Http/Controllers/OrdersController.php:42');
+});
+
+test('a keyed report() repeat still records a bare timestamped occurrence', function () {
+    config(['dispatch.reporter.throttle_seconds' => 0]);
+
+    $first = DispatchTask::report('Nightly import drifted', ['signature' => 'nightly-drift']);
+    DispatchTask::report('Nightly import drifted', ['signature' => 'nightly-drift']);
+
+    $occurrence = $first->comments()->where('event_type', 'exception_occurrence')->sole();
+
+    expect(array_keys($occurrence->meta))->toBe(['at'])
+        ->and($occurrence->body)->toBe('');
+});
+
 test('throttle suppresses a rapid repeat of the same signature', function () {
     config(['dispatch.reporter.throttle_seconds' => 60]);
     Cache::flush();
