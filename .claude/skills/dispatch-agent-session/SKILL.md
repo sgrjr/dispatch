@@ -1,6 +1,6 @@
 ---
 name: dispatch-agent-session
-description: "Work {{ app_name }}'s REAL production Dispatch backlog from this checkout - \"work the production backlog\", \"pick up real dispatch tasks\", \"run as a remote dispatch agent\", \"work prod tickets\". Drives the commissioned-session protocol (session:request -> user_code -> session:status --wait) and the claim -> work -> note -> done loop; also stale/401 sessions. Not for local dev-DB tasks (plain dispatch:* --local)."
+description: "Work {{ app_name }}'s REAL production Dispatch backlog from this checkout - \"work the production backlog\", \"pick up real dispatch tasks\", \"run as a remote dispatch agent\", \"work prod tickets\". Drives the commissioned-session protocol (session:request -> user_code -> session:status --wait) and the claim -> work -> note -> done loop; also searching the production board (\"is there already a task for X\" = dispatch:find) and stale/401 sessions. Not for local dev-DB tasks (plain dispatch:* --local)."
 ---
 
 <!-- dispatch:template
@@ -62,6 +62,7 @@ php artisan dispatch:session:status --wait
 #    default (each call announces "→ remote: <host>"; --local overrides).
 php artisan dispatch:queue --count            # zero-filled census of the non-terminal board
 php artisan dispatch:queue --limit=20 --json  # top of the priority order (summary shape)
+php artisan dispatch:find "<words>"           # TEXT SEARCH across ALL statuses, closed included
 
 # 4. Claim ONE task, only when you start it. The response is the FULL brief —
 #    description + comments[], where the human's direction lives — READ IT
@@ -84,6 +85,18 @@ php artisan dispatch:session:end
 
 Notes on the loop:
 
+- **There IS text search: `dispatch:find "<words>"`.** It is the "does this
+  already exist — filed, or already built?" verb, and it spans **every** status
+  (done / resolved / declined / backburner included) unless `--status=` narrows
+  it. Every word must match somewhere — title, code, description or a label
+  name (`"quoted phrase"` stays one word) — so for several separate topics run
+  one `find` per topic (`find onboarding`, then `find roles`, then `find
+  permission`), not one call with all of them. `--json`, `--type=`, `--label=`,
+  `--lane=` and `--limit=` (default 50) work as on `queue`. ⛔ Never dump
+  `dispatch:queue --json` (or a status-by-status sweep of it) and grep titles
+  locally: it is slower, it misses the description and the labels, and `queue`
+  hides closed work unless you ask — which is exactly how already-shipped work
+  gets refiled or rebuilt.
 - `dispatch:next` / `dispatch:queue` return the SUMMARY shape; `comment_count > 0`
   flags waiting human direction — `dispatch:show <CODE> --json` reads the full
   brief before you commit to a claim. `dispatch:schema` prints the frozen JSON
@@ -230,7 +243,9 @@ outside the default queue view; the `--count` census always shows its size).
 the whole non-done backlog. `dispatch:queue --count` shows every bucket's size
 — state which reading you're using (or ask) before planning a whole-queue run.
 
-**Vet before you plan or build.** Read the brief (claim/show). Then confirm the
+**Vet before you plan or build.** Read the brief (claim/show). Then
+`dispatch:find` its key words for a sibling or duplicate task (closed ones
+count — a `done` twin means it shipped), and confirm the
 described change isn't ALREADY in the tree — imported/backfilled tasks are often
 pre-resolved. Grep by the identifier the wiring actually uses (route name,
 config/registry key, event name), never the feature's display/component name — a
