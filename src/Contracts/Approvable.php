@@ -65,8 +65,9 @@ interface Approvable
 
     /**
      * Grant it. `$options` carries kind-specific choices the approver made
-     * (for an agent session: ttl, scopes, lane). The implementation MUST close
-     * the approval task through ApprovalTasks::resolve(): one closer, whether
+     * (for an agent session: ttl, scopes, lane). The implementation MUST end
+     * the request through ApprovalTasks::decided() (it closes the task, if
+     * there is one, and fires Events\ApprovalDecided): one closer, whether
      * the decision came from the task or from the kind's own screen.
      *
      * @param  array<string, mixed>  $options

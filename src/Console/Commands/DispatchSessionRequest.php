@@ -151,6 +151,10 @@ class DispatchSessionRequest extends Command
         // visiting the Agent Sessions page.
         if (! empty($data['approval_task'])) {
             $this->line('Approval task: <fg=cyan;options=bold>'.$data['approval_task'].'</> (Approve or Deny it in chat; it expires on its own)');
+        } elseif (($data['approval_channel'] ?? null) === 'event') {
+            // TASK-1950: no task on this channel — the host delivered the
+            // request to its approvers itself (Centerpoint: a chat message).
+            $this->line('Approval: sent to the approvers — they Approve or Deny it in chat (or on the Agent Sessions page); it expires on its own.');
         }
         $this->line($scopes === []
             ? 'Requested: the full grantable verb set (narrow next time with --scope=… if needed).'

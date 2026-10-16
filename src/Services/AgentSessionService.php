@@ -66,16 +66,19 @@ class AgentSessionService
             'ip' => $ip,
         ]);
 
-        // TASK-1021: the request is a TASK a human acts on, routed to the
-        // approvers' lane and due when the request lapses. It rings like any
-        // new lane work, so nobody has to go looking for /it/agent-sessions.
-        $approvalTask = app(ApprovalTasks::class)->file($session);
+        // TASK-1021: the request reaches a human. On the task channel it is a
+        // TASK routed to the approvers' lane, due when the request lapses; on
+        // the event channel (TASK-1950) no task is filed and the host delivers
+        // it (Events\ApprovalRequested). Nobody has to go looking for
+        // /it/agent-sessions either way.
+        $approvalTask = app(ApprovalTasks::class)->request($session);
 
         return [
             'public_id' => $session->public_id,
             'device_code' => $deviceCode, // returned ONCE
             'user_code' => $session->user_code,
             'approval_task' => $approvalTask?->code,
+            'approval_channel' => ApprovalTasks::channel(),
             'poll_interval' => (int) config('dispatch.agent.poll_interval', 5),
             'expires_at' => optional($session->expires_at)->toIso8601String(),
         ];
@@ -104,7 +107,7 @@ class AgentSessionService
         // One closer (TASK-1021): approving from /it/agent-sessions or from the
         // approval task both land here, and the task closes as approved.
         if ($session->status === AgentSession::STATUS_APPROVED) {
-            app(ApprovalTasks::class)->resolve(AgentSession::approvalKind(), $session->approvalId(), ApprovalTasks::APPROVED, $userId);
+            app(ApprovalTasks::class)->decided(AgentSession::approvalKind(), $session->approvalId(), ApprovalTasks::APPROVED, $userId);
         }
 
         return $session;
@@ -223,7 +226,7 @@ class AgentSessionService
         $session->deny();
 
         if ($session->status === AgentSession::STATUS_DENIED) {
-            app(ApprovalTasks::class)->resolve(AgentSession::approvalKind(), $session->approvalId(), ApprovalTasks::DENIED, $userId);
+            app(ApprovalTasks::class)->decided(AgentSession::approvalKind(), $session->approvalId(), ApprovalTasks::DENIED, $userId);
         }
 
         return $session;
@@ -237,7 +240,7 @@ class AgentSessionService
         // Revoking a request nobody approved yet is a refusal as far as its
         // approval task goes. (An approved session's task is already closed.)
         if ($wasPending) {
-            app(ApprovalTasks::class)->resolve(AgentSession::approvalKind(), $session->approvalId(), ApprovalTasks::DENIED);
+            app(ApprovalTasks::class)->decided(AgentSession::approvalKind(), $session->approvalId(), ApprovalTasks::DENIED);
         }
 
         return $session;
@@ -322,6 +325,15 @@ class AgentSessionService
     {
         $now = now();
 
+        // Requests nobody decided are about to lapse: remember them, so each
+        // ending is announced (TASK-1950) — the event channel has no task for
+        // expireDue() to find.
+        $lapsing = AgentSession::query()
+            ->where('status', AgentSession::STATUS_PENDING)
+            ->whereNotNull('expires_at')
+            ->where('expires_at', '<', $now)
+            ->pluck('public_id');
+
         $count = AgentSession::query()
             ->whereIn('status', [AgentSession::STATUS_APPROVED, AgentSession::STATUS_PENDING])
             ->whereNotNull('expires_at')
@@ -330,6 +342,9 @@ class AgentSessionService
 
         // The approval tasks' timeout (TASK-1021) rides the same schedule:
         // requests nobody decided close as EXPIRED, never as a refusal.
+        foreach ($lapsing as $publicId) {
+            app(ApprovalTasks::class)->decided(AgentSession::approvalKind(), (string) $publicId, ApprovalTasks::EXPIRED);
+        }
         app(ApprovalTasks::class)->expireDue();
 
         return (int) $count;

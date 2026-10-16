@@ -726,8 +726,17 @@ return [
     | Approve / Deny / expiry closes such a task: done, batch, board and agent
     | verbs are refused.
     |
+    | `channel` (TASK-1950) picks how a new request reaches its approvers:
+    |   'task'  — the "Approval requested" task above (the default);
+    |   'event' — NO task. The host delivers it from Events\ApprovalRequested
+    |             (e.g. a chat message with Approve / Deny buttons) and decides
+    |             it with ApprovalTasks::approveItem() / denyItem().
+    | Either way Events\ApprovalRequested and Events\ApprovalDecided fire, and
+    | the kind's own screen (agent sessions) keeps working.
+    |
     */
     'approvals' => [
+        'channel' => env('DISPATCH_APPROVAL_CHANNEL', 'task'),
         'kinds' => [
             'agent_session' => \Sgrjr\Dispatch\Models\AgentSession::class,
         ],

@@ -7,6 +7,8 @@ use Illuminate\Support\Facades\Log;
 use Sgrjr\Dispatch\Contracts\Approvable;
 use Sgrjr\Dispatch\Contracts\DispatchGate;
 use Sgrjr\Dispatch\Contracts\DispatchNotifier;
+use Sgrjr\Dispatch\Events\ApprovalDecided;
+use Sgrjr\Dispatch\Events\ApprovalRequested;
 use Sgrjr\Dispatch\Exceptions\ApprovalTaskLocked;
 use Sgrjr\Dispatch\Models\Task;
 use Sgrjr\Dispatch\Models\TaskComment;
@@ -38,6 +40,13 @@ use Sgrjr\Dispatch\Models\TaskComment;
  * drags, claims, closing passes and every agent verb are refused
  * (ApprovalTaskLocked). Only a staff human, through approve()/deny() below, can
  * decide. An agent never holds a web session, so it can never be that human.
+ *
+ * The task is a CARRIER, not the record (TASK-1950): the approvable holds the
+ * decision. `dispatch.approvals.channel = event` files no task at all — the
+ * host delivers the request from Events\ApprovalRequested and decides it with
+ * approveItem()/denyItem(), the same guards without a task. Every request
+ * enters through request() and every ending leaves through decided(), so both
+ * events fire whichever carrier is in use.
  */
 final class ApprovalTasks
 {
@@ -48,6 +57,81 @@ final class ApprovalTasks
     public const DENIED = 'denied';
 
     public const EXPIRED = 'expired';
+
+    public const CHANNEL_TASK = 'task';
+
+    public const CHANNEL_EVENT = 'event';
+
+    /** How new requests reach their approvers: CHANNEL_TASK (default) or CHANNEL_EVENT. */
+    public static function channel(): string
+    {
+        return config('dispatch.approvals.channel') === self::CHANNEL_EVENT ? self::CHANNEL_EVENT : self::CHANNEL_TASK;
+    }
+
+    /**
+     * A new request: file its task (task channel only), then announce it. The
+     * returned task is null on the event channel, or when filing failed. Never
+     * throws: a request nobody could be told about still stands on its kind's
+     * own screen.
+     */
+    public function request(Approvable $item): ?Task
+    {
+        $task = self::channel() === self::CHANNEL_TASK ? $this->file($item) : null;
+
+        try {
+            event(new ApprovalRequested($item, $task));
+        } catch (\Throwable $e) {
+            Log::warning('Approval request could not be announced; it stands on its own screen', [
+                'kind' => $item::approvalKind(),
+                'id' => $item->approvalId(),
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        return $task;
+    }
+
+    /**
+     * A request stopped waiting: announce how it ended, and close its task if
+     * it has one. The approvable calls this when it is approved, denied or
+     * expires — from ANY screen (one closer). Never throws for a listener.
+     */
+    public function decided(string $kind, string $id, string $outcome, ?int $userId = null): void
+    {
+        $this->resolve($kind, $id, $outcome, $userId);
+
+        try {
+            event(new ApprovalDecided($kind, $id, $outcome, $userId));
+        } catch (\Throwable $e) {
+            Log::warning('Approval decision could not be announced', ['kind' => $kind, 'id' => $id, 'outcome' => $outcome, 'error' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * A staff human approves an approvable directly — no task needed (the
+     * event channel's buttons). Same guards as approve(): staff only, still
+     * pending, and a select input's value must be one the approvable offers
+     * (an agent session cannot be approved for a length it never listed).
+     *
+     * @param  array<string, mixed>  $options
+     */
+    public function approveItem(Approvable $item, Authenticatable $user, array $options = []): Approvable
+    {
+        $this->guardDecidable($item, $user);
+        $this->guardOfferedInputs($item, $options);
+        $item->approveBy($user, $options);
+
+        return $item;
+    }
+
+    /** A staff human denies an approvable directly. Same guards as deny(). */
+    public function denyItem(Approvable $item, Authenticatable $user): Approvable
+    {
+        $this->guardDecidable($item, $user);
+        $item->denyBy($user);
+
+        return $item;
+    }
 
     /** Is this service (or any kind's own service) writing right now? The Task lock lets only that through. */
     public static function resolving(): bool
@@ -247,13 +331,44 @@ final class ApprovalTasks
         if (! $item) {
             throw new ApprovalTaskLocked(($task->code ?? 'This task').' is not an open approval request.');
         }
+        $this->guardDecidable($item, $user);
+
+        return $item;
+    }
+
+    /** Staff only, and only while the request still waits. A late click settles the carrier and is refused. */
+    private function guardDecidable(Approvable $item, Authenticatable $user): void
+    {
+        if (! app(DispatchGate::class)->isStaff($user)) {
+            throw new ApprovalTaskLocked('Only staff can decide an approval request.');
+        }
         if (! $item->approvalIsPending()) {
-            // Decided elsewhere, or lapsed: settle the task and say so.
+            // Decided elsewhere, or lapsed: settle the task (if any) and say so.
             $this->resolve($item::approvalKind(), $item->approvalId(), $this->decidedOutcome($item));
             throw new ApprovalTaskLocked('That request is no longer waiting on a decision.');
         }
+    }
 
-        return $item;
+    /**
+     * A chosen value for a select input must be one of the options the
+     * approvable offered; blank means "the default". Guards the buttons a host
+     * draws from approvalInputs() against a hand-crafted POST.
+     *
+     * @param  array<string, mixed>  $options
+     */
+    private function guardOfferedInputs(Approvable $item, array $options): void
+    {
+        foreach ($item->approvalInputs() as $input) {
+            $key = $input['key'] ?? null;
+            if ($key === null || ($input['type'] ?? null) !== 'select' || ! array_key_exists($key, $options)) {
+                continue;
+            }
+            $value = (string) ($options[$key] ?? '');
+            $offered = array_map(fn ($o) => (string) ($o['value'] ?? ''), $input['options'] ?? []);
+            if ($value !== '' && ! in_array($value, $offered, true)) {
+                throw new ApprovalTaskLocked("That {$key} is not one this request offers.");
+            }
+        }
     }
 
     /** How a no-longer-pending approvable ended, for its task's resolution. */

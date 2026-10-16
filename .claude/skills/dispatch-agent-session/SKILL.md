@@ -44,13 +44,15 @@ boundaries.
 <!-- dispatch:endif -->
 php artisan dispatch:session:request --name="<agent>" --purpose="<why>"
 
-# 2. Show the operator the user_code verbatim AND the "Approval task: TASK-…"
-#    line the request printed. The request filed an "Approval requested" task
-#    that rang the approvers' lane. The operator approves it from that task
-#    (Approve / Deny); {{ agent_sessions_path }} still works too.
+# 2. Show the operator the user_code verbatim AND the approval line the
+#    request printed. Either "Approval task: TASK-…" (the request filed an
+#    "Approval requested" task that rang the approvers' lane; they approve it
+#    from that task) or "Approval: sent to the approvers" (no task: the host
+#    sent the approvers a message with Approve / Deny buttons, e.g. in chat).
+#    {{ agent_sessions_path }} works either way.
 #    Then collect the token. The poll blocks until the human decides (most land
 #    in ~10s), so don't ask them to come back and say "approved":
-#    "Approve TASK-… (or at {{ remote_url }}{{ agent_sessions_path }})
+#    "Approve TASK-… / the request in chat (or at {{ remote_url }}{{ agent_sessions_path }})
 #     — confirm the code reads <user_code>."
 #    ⛔ Never try to close an approval task yourself (done / batch / status):
 #    it is refused with a 422, by design. Only a human's Approve/Deny decides it.
