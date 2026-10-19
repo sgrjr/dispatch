@@ -5,6 +5,7 @@ namespace Sgrjr\Dispatch\Services;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Sgrjr\Dispatch\Contracts\LaneResolver;
+use Sgrjr\Dispatch\Events\AgentSessionEnded;
 use Sgrjr\Dispatch\Models\AgentSession;
 
 /**
@@ -232,15 +233,31 @@ class AgentSessionService
         return $session;
     }
 
-    public function revoke(AgentSession $session): AgentSession
+    /**
+     * End a session on purpose. $endedBy is who closed it — the agent itself
+     * (`session:end`) or a staff member's Revoke — and rides the
+     * AgentSessionEnded event, fired only when the row really moved (an
+     * already-ended or expired session ends nothing).
+     */
+    public function revoke(AgentSession $session, string $endedBy = AgentSessionEnded::BY_STAFF, ?int $userId = null): AgentSession
     {
         $wasPending = $session->status === AgentSession::STATUS_PENDING;
+        $wasOpen = in_array($session->status, [AgentSession::STATUS_PENDING, AgentSession::STATUS_APPROVED], true);
         $session->revoke();
 
         // Revoking a request nobody approved yet is a refusal as far as its
         // approval task goes. (An approved session's task is already closed.)
         if ($wasPending) {
             app(ApprovalTasks::class)->decided(AgentSession::approvalKind(), $session->approvalId(), ApprovalTasks::DENIED);
+        }
+
+        if ($wasOpen && $session->status === AgentSession::STATUS_REVOKED) {
+            try {
+                event(new AgentSessionEnded($session, $endedBy, $userId, $wasPending));
+            } catch (\Throwable $e) {
+                // A listener's failure never undoes the end of a session.
+                \Illuminate\Support\Facades\Log::warning('AgentSessionEnded listener failed', ['session' => $session->public_id, 'error' => $e->getMessage()]);
+            }
         }
 
         return $session;

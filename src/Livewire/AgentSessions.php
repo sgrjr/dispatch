@@ -97,7 +97,7 @@ class AgentSessions extends Component
 
         $session = AgentSession::query()->findOrFail($id);
 
-        app(AgentSessionService::class)->revoke($session);
+        app(AgentSessionService::class)->revoke($session, \Sgrjr\Dispatch\Events\AgentSessionEnded::BY_STAFF, (int) Auth::id());
     }
 
     /**

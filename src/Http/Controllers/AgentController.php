@@ -790,7 +790,7 @@ class AgentController extends Controller
             $s->metrics = $metrics;   // persisted by revoke()'s save below
         }
 
-        app(AgentSessionService::class)->revoke($s);
+        app(AgentSessionService::class)->revoke($s, \Sgrjr\Dispatch\Events\AgentSessionEnded::BY_AGENT);
 
         return response()->json([
             'ended' => true,
