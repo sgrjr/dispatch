@@ -645,3 +645,72 @@ test('dispatch:session:request --code-file warns but still succeeds when the pat
         ->and($output)->toContain('Could not write --code-file');
     expect(is_file($unwritable))->toBeFalse();
 });
+/*
+ * The approval wait vs the session endpoint's per-IP throttle (owner,
+ * 2026-10-22): a 5s cadence against a 10/min limit tripped a 429 on every
+ * long wait, and the loop ABORTED on it — so the agent re-ran the command and
+ * spent more of the same budget. Now: bare --wait is 5 minutes, the cadence is
+ * the server's poll_interval (default 15s), and a 429 mid-wait is a pause.
+ */
+
+test('a 429 mid --wait is a pause, not an exit: the loop honors Retry-After and still collects the token', function () {
+    file_put_contents($this->tokenPath, json_encode([
+        'public_id' => 'pub-throttled-1',
+        'device_code' => str_repeat('f', 64),
+    ]));
+
+    Http::fake(['*' => Http::sequence()
+        ->push(['status' => 'pending', 'poll_interval' => 1], 200)
+        ->push('Too Many Attempts.', 429, ['Retry-After' => '1'])
+        ->push(['status' => 'approved', 'token' => 'after-throttle-token', 'poll_interval' => 1], 200),
+    ]);
+
+    $exit = Artisan::call('dispatch:session:status', ['--wait' => '10']);
+    $output = Artisan::output();
+
+    expect($exit)->toBe(0)
+        ->and($output)->toContain('Throttled by the session endpoint')
+        ->and($output)->toContain('resuming the wait')
+        ->and($output)->toContain('Approved');
+
+    $stored = json_decode((string) file_get_contents($this->tokenPath), true);
+    expect($stored['token'])->toBe('after-throttle-token');
+});
+
+test('a single poll (no --wait) meeting a 429 still reports it and exits non-zero — nothing to resume', function () {
+    file_put_contents($this->tokenPath, json_encode([
+        'public_id' => 'pub-throttled-2',
+        'device_code' => str_repeat('f', 64),
+    ]));
+    Http::fake(['*' => Http::response('Too Many Attempts.', 429)]);
+
+    $exit = Artisan::call('dispatch:session:status');
+    $output = Artisan::output();
+
+    expect($exit)->toBe(1)
+        ->and($output)->toContain('rate-limited')
+        ->and($output)->not->toContain('resuming the wait');
+
+    // The pending request is untouched — the next poll can still collect it.
+    $stored = json_decode((string) file_get_contents($this->tokenPath), true);
+    expect($stored['public_id'])->toBe('pub-throttled-2');
+});
+
+test('bare --wait budgets five minutes and announces the server-decided cadence', function () {
+    file_put_contents($this->tokenPath, json_encode([
+        'public_id' => 'pub-budget-1',
+        'device_code' => str_repeat('f', 64),
+    ]));
+    config(['dispatch.agent.poll_interval' => 15]);
+
+    Http::fake(['*' => Http::sequence()
+        ->push(['status' => 'pending', 'poll_interval' => 1], 200)
+        ->push(['status' => 'approved', 'token' => 'budget-token', 'poll_interval' => 1], 200),
+    ]);
+
+    Artisan::call('dispatch:session:status --wait');
+    $output = Artisan::output();
+
+    expect($output)->toContain('waiting up to 300s')
+        ->and($output)->toContain('re-checking every ~1s'); // the body's poll_interval wins over the local default
+});

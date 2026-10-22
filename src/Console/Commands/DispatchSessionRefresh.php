@@ -23,7 +23,7 @@ class DispatchSessionRefresh extends Command
     use TalksToAgentApi;
 
     protected $signature = 'dispatch:session:refresh
-        {--wait= : Approval wait budget in seconds (default 60 — refresh is meant to return holding the new token; --wait=0 for the two-step flow)}
+        {--wait= : Approval wait budget in seconds (default 300 — refresh is meant to return holding the new token; --wait=0 for the two-step flow)}
         {--secret= : Bootstrap secret; falls back to dispatch.agent.bootstrap_secret}';
 
     protected $description = 'Renew a dropped or expiring agent session — re-request with the same identity/scopes for a human to approve.';
@@ -76,7 +76,7 @@ class DispatchSessionRefresh extends Command
             '--purpose' => $purpose,
             '--scope' => $scopes,
             '--lane' => $lane,
-            '--wait' => $wait === null ? '60' : (string) $wait,
+            '--wait' => $wait === null ? '300' : (string) $wait,
             '--secret' => $this->option('secret'),
         ], fn ($v) => $v !== null && $v !== []));
     }

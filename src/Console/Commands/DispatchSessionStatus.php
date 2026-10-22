@@ -25,15 +25,20 @@ use Sgrjr\Dispatch\Console\Commands\Concerns\TalksToAgentApi;
  * By default it polls ONCE and exits (re-run it, or wire it to a cron). Pass
  * `--wait[=secs]` to poll IN-PROCESS — sleep + retry while `pending`, up to the
  * budget — so the driving agent can show the user_code once and then block on a
- * single call that returns the moment a human approves (most land in ~10s),
- * instead of the operator having to come back and say "approved."
+ * single call that returns the moment a human approves, instead of the
+ * operator having to come back and say "approved." Bare --wait is 5 minutes:
+ * a human's time to notice and click. The cadence is the SERVER's
+ * `poll_interval` (handed down in every body), sized under the session
+ * endpoint's per-IP throttle; a 429 mid-wait is a pause (Retry-After, else a
+ * doubled interval), never an exit — aborting on it made the agent re-run the
+ * command, which spent more of the same throttle budget.
  */
 class DispatchSessionStatus extends Command
 {
     use TalksToAgentApi;
 
     protected $signature = 'dispatch:session:status
-        {--wait=0 : Poll in-process for up to N seconds (sleep+retry while pending). Bare --wait waits ~60s; omit for a single poll.}';
+        {--wait=0 : Poll in-process for up to N seconds (sleep+retry while pending). Bare --wait waits 300s (5 min); omit for a single poll.}';
 
     protected $description = 'Check (and, once approved, collect) the pending agent session token.';
 
@@ -115,16 +120,26 @@ class DispatchSessionStatus extends Command
         $deadline = microtime(true) + $budget;
         $announced = false;
 
+        $interval = max(1, (int) config('dispatch.agent.poll_interval', 15));
+
         while (true) {
-            $body = $this->pollOnce($base, $publicId, $deviceCode);
+            $body = $this->pollOnce($base, $publicId, $deviceCode, $budget > 0);
             if ($body === null) {
                 return self::FAILURE; // pollOnce already reported the failure
             }
 
             $status = $body['status'] ?? null;
 
-            if ($status !== 'pending') {
+            // Throttled mid-wait (429). The request is intact — the server just
+            // wants a pause. Honor Retry-After when it says one, else double the
+            // cadence; then carry on until the budget is spent.
+            $throttled = $status === self::THROTTLED;
+            if ($throttled) {
+                $interval = max($interval * 2, (int) ($body['retry_after'] ?? 0));
+            } elseif ($status !== 'pending') {
                 return $this->settle($status, $body, $data);
+            } else {
+                $interval = max(1, (int) ($body['poll_interval'] ?? $interval));
             }
 
             // Pending. Stop if the wait budget is spent (budget 0 = single poll).
@@ -136,13 +151,15 @@ class DispatchSessionStatus extends Command
                 return self::SUCCESS;
             }
 
-            $interval = max(1, (int) ($body['poll_interval'] ?? config('dispatch.agent.poll_interval', 5)));
             $remaining = (int) ceil($deadline - microtime(true));
             $sleep = max(0, min($interval, $remaining));
 
             if (! $announced) {
                 $this->line("Pending — waiting up to {$budget}s for approval (re-checking every ~{$interval}s)…");
                 $announced = true;
+            }
+            if ($throttled) {
+                $this->line("Throttled by the session endpoint (429) — pausing {$sleep}s, then resuming the wait.");
             }
 
             if ($sleep > 0) {
@@ -151,13 +168,18 @@ class DispatchSessionStatus extends Command
         }
     }
 
+    /** pollOnce()'s stand-in status for a 429 inside a wait loop. */
+    private const THROTTLED = 'throttled';
+
     /**
      * One device_code-authed poll. Returns the decoded body, or null after
-     * emitting a human error (transport/TLS failure or non-2xx).
+     * emitting a human error (transport/TLS failure or non-2xx). Inside a wait
+     * loop ($waiting) a 429 is not a failure: it comes back as
+     * ['status' => THROTTLED, 'retry_after' => s] for the loop to pause on.
      *
      * @return array<string,mixed>|null
      */
-    private function pollOnce(string $base, string $publicId, string $deviceCode): ?array
+    private function pollOnce(string $base, string $publicId, string $deviceCode, bool $waiting = false): ?array
     {
         try {
             $response = Http::acceptJson()
@@ -170,6 +192,10 @@ class DispatchSessionStatus extends Command
         }
 
         if (! $response->successful()) {
+            if ($waiting && $response->status() === 429) {
+                return ['status' => self::THROTTLED, 'retry_after' => (int) $response->header('Retry-After')];
+            }
+
             $this->error("Agent API HTTP {$response->status()}: ".substr($response->body(), 0, 300));
 
             // Throttled ≠ dead: a 429 on the poll endpoint invalidates nothing.

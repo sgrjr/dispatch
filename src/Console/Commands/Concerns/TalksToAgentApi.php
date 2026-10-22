@@ -283,12 +283,18 @@ trait TalksToAgentApi
      *   bare `--wait`         -> 60  (VALUE_OPTIONAL yields null with no value)
      *   `--wait=N`            -> N
      */
+    /**
+     * Bare `--wait` = 5 minutes: the budget is a HUMAN's time to notice the
+     * approval task and click, not a network timeout. 60s expired before most
+     * operators had read the code, and the re-runs it forced were what tripped
+     * the session endpoint's per-IP throttle.
+     */
     protected function resolveWaitBudget(): int
     {
         $opt = $this->option('wait');
 
         if ($opt === null) {
-            return 60;
+            return 300;
         }
 
         return max(0, (int) $opt);

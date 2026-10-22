@@ -531,7 +531,13 @@ return [
         // loses the session's stamped metrics, so keep this generous.
         'session_ttl' => (int) env('DISPATCH_AGENT_SESSION_TTL', 10800),
         'request_ttl' => (int) env('DISPATCH_AGENT_REQUEST_TTL', 900),   // pending-approval window (s)
-        'poll_interval' => (int) env('DISPATCH_AGENT_POLL_INTERVAL', 5),
+        // How often an agent's `session:status --wait` re-asks whether a human
+        // has approved (s). The SERVER hands this down in every poll body, so
+        // this value — on the authoritative instance — is the cadence. Keep it
+        // under `request_throttle` with room to spare: at 5s a 60s wait made 12
+        // calls against a 10/min limit and tripped a 429 on every long wait.
+        'poll_interval' => (int) env('DISPATCH_AGENT_POLL_INTERVAL', 15),
+        // Per-IP limit on the un-authed session endpoints (request + poll).
         'request_throttle' => env('DISPATCH_AGENT_REQUEST_THROTTLE', '10,1'),
         'verb_throttle' => env('DISPATCH_AGENT_VERB_THROTTLE', '120,1'),
         // TASK-1328 — 'attach' uploads a local file onto a task (or one of its

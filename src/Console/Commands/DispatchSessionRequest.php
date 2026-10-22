@@ -26,7 +26,7 @@ class DispatchSessionRequest extends Command
         {--purpose= : Short human-readable purpose for the session}
         {--lane= : The lane this session asks to SERVE — next/claim then offer only that lane, the departments above it, and (by config) the no-department lane. Omit for the host default; pass an empty value to ask for an unrestricted session. Claim-by-code is always exempt.}
         {--scope=* : Narrow the requested verb set. Repeatable. OMIT to request the full grantable allowlist (the recommended default — the approver sees and controls the grant).}
-        {--wait=0 : After showing the user_code, block in-process for approval for up to N seconds (bare --wait ≈60s) and collect the token — the whole commissioning in ONE command. Omit for the two-step flow (poll with dispatch:session:status).}
+        {--wait=0 : After showing the user_code, block in-process for approval for up to N seconds (bare --wait = 300s, 5 min) and collect the token — the whole commissioning in ONE command. Omit for the two-step flow (poll with dispatch:session:status).}
         {--code-file= : Write the user_code (JSON: user_code/public_id/expires_at) to this file the moment it is known — lets a blocked/buffered harness read the code from another process}
         {--secret= : Bootstrap secret; falls back to dispatch.agent.bootstrap_secret}';
 

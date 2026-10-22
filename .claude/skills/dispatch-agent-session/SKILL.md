@@ -317,12 +317,17 @@ converts any checklist-style markdown into a manifest.
 - **`denied`** — a human said no. **Stop and report** — a refresh would just
   re-ask them; don't.
 - **`429`** — rate-limited, NOT a dead session: the token (or pending request)
-  is still valid. Back off and retry the SAME call once; never re-request or
-  refresh a session over a 429 (that cascade is how tokens get orphaned).
+  is still valid. Inside `session:status --wait` a 429 is a PAUSE — the loop
+  honors Retry-After and keeps waiting on its own, so let it run. On any other
+  verb, back off and retry the SAME call once; never re-request or refresh a
+  session over a 429 (that cascade is how tokens get orphaned).
 - **`403` "not scoped"** — the error message itself carries the recovery paths.
   Follow it.
-- **Still `pending` after `--wait`** — re-run `dispatch:session:status --wait`
-  once or twice, widening the budget; then surface it and ask. Never spin.
+- **Still `pending` after `--wait`** (bare `--wait` is 5 minutes; the cadence
+  is the server's `poll_interval`, sized under its throttle) — re-run
+  `dispatch:session:status --wait` once or twice, widening the budget
+  (`--wait=900`); then surface it and ask. Never spin, and never poll by hand
+  faster than the loop does.
 - **Transport / TLS / secret errors** — the CLI prints the exact fix (CA
   bundle, stale config cache). `php artisan dispatch:doctor` diagnoses agent
   config drift: locally it confirms `remote.url` points at

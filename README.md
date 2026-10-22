@@ -1051,7 +1051,10 @@ somewhere else — a laptop, a different CI job, another project entirely —
    acknowledge the drop and restore local-by-default. (A token past its
    stored `expires_at` also warns and names `session:refresh` *before* the
    401 interrupts the loop; a `429` is called out as rate-limiting — the
-   token is still valid, back off, never re-request over a throttle.)
+   token is still valid, back off, never re-request over a throttle. Inside
+   `session:status --wait` a 429 is only a pause: the loop honors Retry-After
+   and resumes. Bare `--wait` is 5 minutes, and the server's `poll_interval`
+   sets the cadence under its own `request_throttle`.)
 5. When the work is done, the agent ends its session with
    `dispatch:session:end` — a bearer-authed call that revokes its **own**
    session server-side (no id param, so it can only ever end itself) and
