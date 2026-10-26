@@ -1,5 +1,28 @@
 # Upgrading `sgrjr/dispatch`
 
+## Every task is staff-visible by default; "Limit access" replaces "Visible to all staff"
+
+**The visibility default flipped.** `DispatchTaskService::create()` now
+defaults `visibility` to `staff` for every actor. Before (W13-5), a staff
+creator's task started `participants`, so a task routed to a department
+stayed invisible to that department until someone was assigned. An explicit
+`visibility` still wins, and an invalid value now falls back to `staff`.
+
+**`participants` is the opt-in limit.** The `/dispatch/new` checkbox is now
+**Limit access** (`TaskCreate::$limit_access`, unchecked by default; it
+replaces `$share_with_staff`). On the task page the select is **Access:
+All staff / Limited**, and the badge reads "limited access". The gates are
+unchanged: a `participants` task is still visible to its submitter,
+assignee, group and watchers, and a host's `DispatchGate::scopeVisible()`
+may widen that circle (Centerpoint adds the task's lane and department).
+
+**Existing rows are not touched.** Tasks already saved as `participants`
+stay limited. A host that wants them open must migrate its own rows.
+
+```bash
+composer update sgrjr/dispatch
+```
+
 ## Agent status changes reach the notifier; --json is raw; edit --assignee (TASK-1748, 1754, 1530)
 
 **Agent status changes are announced (TASK-1748).** `POST agent/done` and

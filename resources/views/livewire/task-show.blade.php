@@ -222,7 +222,7 @@
                 <span class="dispatch-badge is-success">public</span>
             @endif
             @if (($task->visibility ?? '') === $taskClass::VISIBILITY_PARTICIPANTS)
-                <span class="dispatch-badge is-warning" title="Visible only to the submitter, assignee, and watchers">participants only</span>
+                <span class="dispatch-badge is-warning" title="Access limited to the people connected to this task">limited access</span>
             @endif
             {{-- TASK-997 part A: the lane badge, shown only when a real
                  LaneResolver is bound (see TaskShow::render()'s $laneActive) —
@@ -636,10 +636,10 @@
                             @error('due_at') <p class="dispatch-error">{{ $message }}</p> @enderror
                         </div>
                         <div class="dispatch-field">
-                            <label class="dispatch-label">Staff visibility</label>
+                            <label class="dispatch-label">Access</label>
                             <select wire:model="visibility" class="dispatch-select">
-                                <option value="participants">Participants only</option>
                                 <option value="staff">All staff</option>
+                                <option value="participants">Limited — only the people connected to it</option>
                             </select>
                         </div>
                     </div>

@@ -81,12 +81,11 @@
                 <label for="is_public" class="dispatch-label" style="margin:0; cursor:pointer;">Visible to submitter/customer</label>
             </div>
 
-            {{-- W13-5: unchecked = participants-only (submitter + assignee +
-                 watchers — the default circle); checked = every staff member
-                 sees it on the board/list from the start. --}}
+            {{-- Every task is visible to all staff; Limit access is the rare,
+                 deliberate restriction to the people on the task. --}}
             <div style="display:flex; align-items:center; gap:0.5rem;">
-                <input type="checkbox" id="share_with_staff" wire:model="share_with_staff">
-                <label for="share_with_staff" class="dispatch-label" style="margin:0; cursor:pointer;">Visible to all staff (otherwise only you, the assignee, and watchers)</label>
+                <input type="checkbox" id="limit_access" wire:model="limit_access">
+                <label for="limit_access" class="dispatch-label" style="margin:0; cursor:pointer;">Limit access (only the people connected to this task can see it)</label>
             </div>
 
             <div>

@@ -105,17 +105,14 @@ class DispatchTaskService
             $attributes['submitter_user_id'] = $this->submitters->currentUserId() ?? $this->submitters->defaultUserId();
         }
 
-        // W13-5 visibility default, keyed on the ACTOR, not the submitter: a
-        // staff creator IS the task's circle, so their task starts
-        // participants-only (the operator's opt-in-to-staff ruling); a task
-        // with no staff actor behind it — customer widget submit, exception
-        // reporter, CLI/agent/import with no auth — has no circle yet and
-        // MUST land staff-visible or nobody would ever triage it. An explicit
-        // valid value always wins; garbage falls through to the default.
+        // Visibility default: every task is visible to all staff (operator
+        // ruling, superseding W13-5's participants-only default for staff
+        // creators). `participants` is the rare, deliberate "limit access"
+        // a creator opts into — the host gate decides who is still
+        // connected (DispatchGate::scopeVisible). An explicit valid value
+        // always wins; garbage falls through to the default.
         if (! in_array($attributes['visibility'] ?? null, Task::VISIBILITIES, true)) {
-            $attributes['visibility'] = app(\Sgrjr\Dispatch\Contracts\DispatchGate::class)->isStaff($actor)
-                ? Task::VISIBILITY_PARTICIPANTS
-                : Task::VISIBILITY_STAFF;
+            $attributes['visibility'] = Task::VISIBILITY_STAFF;
         }
 
         // TASK-1193 — the note a task filed straight into a note-required

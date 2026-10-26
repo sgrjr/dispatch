@@ -25,12 +25,11 @@ class TaskCreate extends Component
     public bool $is_public = false;
 
     /**
-     * W13-5: unchecked (default) = the participants-only circle; checked =
-     * share with all staff at creation. The service's actor-based default
-     * would land 'participants' for a staff creator anyway — this just
-     * surfaces the opt-in at the moment of creation.
+     * Limit access: unchecked (default) = visible to all staff; checked =
+     * participants-only — the rare, deliberate restriction (who else stays
+     * connected is the host gate's call).
      */
-    public bool $share_with_staff = false;
+    public bool $limit_access = false;
 
     /** @var array<int,string> Label names attached on create (existing or new). */
     public array $labelNames = [];
@@ -55,7 +54,7 @@ class TaskCreate extends Component
             'type' => 'required|in:'.implode(',', $taskClass::types()),
             'priority' => 'required|in:'.implode(',', $taskClass::priorities()),
             'is_public' => 'boolean',
-            'share_with_staff' => 'boolean',
+            'limit_access' => 'boolean',
             'newAttachments.*' => 'nullable|file',
         ];
     }
@@ -115,9 +114,9 @@ class TaskCreate extends Component
             'type' => $this->type,
             'priority' => $this->priority,
             'is_public' => $this->is_public,
-            'visibility' => $this->share_with_staff
-                ? \Sgrjr\Dispatch\Models\Task::VISIBILITY_STAFF
-                : \Sgrjr\Dispatch\Models\Task::VISIBILITY_PARTICIPANTS,
+            'visibility' => $this->limit_access
+                ? \Sgrjr\Dispatch\Models\Task::VISIBILITY_PARTICIPANTS
+                : \Sgrjr\Dispatch\Models\Task::VISIBILITY_STAFF,
         ], $this->labelNames);
 
         foreach ($this->newAttachments as $file) {

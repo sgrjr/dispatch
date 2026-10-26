@@ -134,25 +134,23 @@ test('a host gate composes VisibilityGates with its own staff test and canSeeAll
         ->toEqualCanonicalizing([$circle->id, $shared->id]);
 });
 
-test('the create default is actor-keyed: staff creator → participants; no/non-staff actor → staff (W13-5)', function () {
+test('the create default is staff-visible for every actor; participants is an explicit limit', function () {
     $tasks = app(DispatchTaskService::class);
 
-    // No acting user (CLI/system/reporter path): lands staff-visible so the
-    // team can triage it — an invisible auto-filed task would be the exact
-    // wrong failure.
+    // No acting user (CLI/system/reporter path).
     $system = $tasks->create(['title' => 'System-filed']);
     expect($system->visibility)->toBe(Task::VISIBILITY_STAFF);
 
-    // A staff actor: their circle, participants-only.
+    // A staff actor: visible to all staff too — limiting access is opt-in.
     $staff = dispatchMakeUser(7);
     $this->actingAs($staff);
     $mine = $tasks->create(['title' => 'Staff-filed']);
-    expect($mine->visibility)->toBe(Task::VISIBILITY_PARTICIPANTS);
+    expect($mine->visibility)->toBe(Task::VISIBILITY_STAFF);
 
     // An explicit valid value always wins; garbage falls to the default.
-    $explicit = $tasks->create(['title' => 'Explicitly shared', 'visibility' => 'staff']);
-    expect($explicit->visibility)->toBe(Task::VISIBILITY_STAFF);
+    $limited = $tasks->create(['title' => 'Explicitly limited', 'visibility' => 'participants']);
+    expect($limited->visibility)->toBe(Task::VISIBILITY_PARTICIPANTS);
 
     $garbage = $tasks->create(['title' => 'Garbage visibility', 'visibility' => 'everyone']);
-    expect($garbage->visibility)->toBe(Task::VISIBILITY_PARTICIPANTS);
+    expect($garbage->visibility)->toBe(Task::VISIBILITY_STAFF);
 });
