@@ -413,6 +413,45 @@
                 @endif
             </section>
 
+            {{--
+                TASK-2299 — the agent's close-out (context.result): what was done,
+                the owner's walkthrough, what was NOT built. Open, not tucked into
+                the reference zone: an agent closing to verifying is asking a
+                person to run owner_check, so it must be on the page they open.
+            --}}
+            @php($closeOut = $canEdit ? $task->closeOut() : null)
+            @if ($closeOut)
+                <section class="dispatch-card" data-dispatch-close-out>
+                    <h2 class="dispatch-section-title">Agent close-out @if ($closeOut['resolution'])<span style="font-weight:600; text-transform:none; letter-spacing:0; color: var(--dispatch-text-faint);">· {{ $closeOut['resolution'] }}</span>@endif</h2>
+                    @if ($closeOut['summary'])
+                        <p style="margin:0 0 0.8rem; font-size:0.86rem; line-height:1.5; white-space:pre-wrap;">{{ $closeOut['summary'] }}</p>
+                    @endif
+                    @if ($closeOut['owner_check'] !== [])
+                        <label class="dispatch-label">Owner check</label>
+                        <ol style="margin:0.3rem 0 0.8rem; padding-left:1.3rem; font-size:0.84rem; line-height:1.5;" data-dispatch-owner-check>
+                            @foreach ($closeOut['owner_check'] as $step)
+                                <li style="margin-bottom:0.3rem;">{{ $step }}</li>
+                            @endforeach
+                        </ol>
+                    @endif
+                    @if ($closeOut['follow_ups_not_built'] !== [])
+                        <label class="dispatch-label">Follow-ups not built</label>
+                        <ul style="margin:0.3rem 0 0.8rem; padding-left:1.3rem; font-size:0.82rem; line-height:1.5; color: var(--dispatch-text-muted);">
+                            @foreach ($closeOut['follow_ups_not_built'] as $item)
+                                <li>{{ $item }}</li>
+                            @endforeach
+                        </ul>
+                    @endif
+                    <div class="dispatch-meta-grid">
+                        @foreach (['tests' => 'Tests', 'deploy' => 'Deploy', 'commit' => 'Commit'] as $closeOutKey => $closeOutLabel)
+                            @if ($closeOut[$closeOutKey])
+                                <div @if ($closeOutKey !== 'commit') style="grid-column: 1 / -1;" @endif><label class="dispatch-label">{{ $closeOutLabel }}</label><div style="font-size:0.78rem; word-break: break-word; @if ($closeOutKey === 'commit') font-family: ui-monospace, monospace; @endif">{{ $closeOut[$closeOutKey] }}</div></div>
+                            @endif
+                        @endforeach
+                    </div>
+                </section>
+            @endif
+
             {{-- Comment thread — the header's #comments link lands here. --}}
             <div id="comments" class="dispatch-comments-anchor">
                 <livewire:dispatch-thread :task="$task" :key="'task-thread-'.$task->id" />
@@ -420,7 +459,12 @@
 
             {{-- ═══ Reference: collapsed and quiet — there when you need it ═══ --}}
             @php($agentMetrics = \Sgrjr\Dispatch\Support\MetricsPresenter::present($task->context, $task->type))
-            @php($showDiagnostics = $canEdit && $task->hasDiagnostics())
+            {{-- TASK-2299: one shape (Support\ContextPresenter) for the exception, its
+                 trace and the browser capture — the chat card reads the same one. The
+                 panel shows for any capture; only real evidence (hasDiagnostics) is
+                 called "diagnostic context" elsewhere. --}}
+            @php($diagnostics = $canEdit ? \Sgrjr\Dispatch\Support\ContextPresenter::diagnostics($task->context) : null)
+            @php($showDiagnostics = $diagnostics !== null)
             @php($showMetrics = $canEdit && $agentMetrics !== null)
             @if ($showDiagnostics || $showMetrics)
                 <div class="dispatch-reference">
@@ -428,14 +472,51 @@
                     @if ($showDiagnostics)
                         @php($ctx = $task->context)
                         @php($consoleErrors = $ctx['console_errors'] ?? [])
-                        <details class="dispatch-reference-panel" wire:ignore.self>
+                        <details class="dispatch-reference-panel" wire:ignore.self data-dispatch-diagnostics @if ($diagnostics['exception']) open @endif>
                             <summary>
                                 <strong>Diagnostics</strong>
                                 <span class="dispatch-reference-gist">
-                                    {{ count($consoleErrors) }} console {{ \Illuminate\Support\Str::plural('error', count($consoleErrors)) }}@if (! empty($ctx['viewport'])) · {{ $ctx['viewport']['w'] ?? '?' }}×{{ $ctx['viewport']['h'] ?? '?' }}@endif
+                                    @if ($diagnostics['exception']){{ $diagnostics['exception']['class'] ?? 'exception' }}@if (! empty($diagnostics['occurrences']['times_seen'])) · seen {{ $diagnostics['occurrences']['times_seen'] }}×@endif · @endif{{ count($consoleErrors) }} console {{ \Illuminate\Support\Str::plural('error', count($consoleErrors)) }}@if (! empty($ctx['viewport'])) · {{ $ctx['viewport']['w'] ?? '?' }}×{{ $ctx['viewport']['h'] ?? '?' }}@endif
                                 </span>
                             </summary>
                             <div class="dispatch-reference-body">
+                                @if ($diagnostics['exception'])
+                                    @php($ex = $diagnostics['exception'])
+                                    <div style="margin-bottom:0.9rem;" data-dispatch-exception>
+                                        <label class="dispatch-label">Exception</label>
+                                        <div style="font-size:0.8rem;"><strong style="color: var(--dispatch-danger);">{{ $ex['class'] ?? 'Exception' }}</strong> <span style="white-space:pre-wrap; word-break: break-word;">{{ $ex['message'] }}</span></div>
+                                        @if ($ex['file'])
+                                            <div style="font-size:0.72rem; color: var(--dispatch-text-muted); word-break: break-all; font-family: ui-monospace, monospace;">{{ $ex['file'] }}@if ($ex['line']):{{ $ex['line'] }}@endif</div>
+                                        @endif
+                                        @if ($ex['app_frame'])
+                                            <div style="font-size:0.72rem; color: var(--dispatch-text-muted); word-break: break-all;">app frame: <span style="font-family: ui-monospace, monospace;">{{ $ex['app_frame'] }}</span></div>
+                                        @endif
+                                        @if ($diagnostics['occurrences'] !== [])
+                                            <div style="font-size:0.72rem; color: var(--dispatch-text-faint);">@if (isset($diagnostics['occurrences']['times_seen']))seen {{ $diagnostics['occurrences']['times_seen'] }}×@endif @if (isset($diagnostics['occurrences']['last_seen']))· last {{ $diagnostics['occurrences']['last_seen'] }}@endif</div>
+                                        @endif
+                                    </div>
+                                @endif
+                                @if ($diagnostics['client_error'])
+                                    @php($ce = $diagnostics['client_error'])
+                                    <div style="margin-bottom:0.9rem;" data-dispatch-client-error>
+                                        <label class="dispatch-label">Client error</label>
+                                        <div style="font-size:0.8rem;"><strong style="color: var(--dispatch-danger);">{{ $ce['error_type'] ?? 'Error' }}</strong>@if (! empty($ce['severity'])) <span style="color: var(--dispatch-text-muted);">· {{ $ce['severity'] }}</span>@endif @if (! empty($diagnostics['occurrences']['times_seen']))<span style="color: var(--dispatch-text-faint);">· seen {{ $diagnostics['occurrences']['times_seen'] }}×</span>@endif</div>
+                                        @foreach (['info' => 'caught by', 'inertia_page' => 'page', 'component' => 'component'] as $ceKey => $ceLabel)
+                                            @if (! empty($ce[$ceKey]))
+                                                <div style="font-size:0.72rem; color: var(--dispatch-text-muted); word-break: break-all;">{{ $ceLabel }}: <span style="font-family: ui-monospace, monospace;">{{ $ce[$ceKey] }}</span></div>
+                                            @endif
+                                        @endforeach
+                                        @if (! empty($ce['stack']))
+                                            <pre style="white-space:pre-wrap; word-break: break-all; margin:0.3rem 0 0; font-size:0.68rem; color: var(--dispatch-text-muted);">{{ implode("\n", $ce['stack']) }}</pre>
+                                        @endif
+                                    </div>
+                                @endif
+                                @if ($diagnostics['trace'] !== [])
+                                    <div style="margin-bottom:0.9rem;">
+                                        <label class="dispatch-label">Trace ({{ count($diagnostics['trace']) }} frames)</label>
+                                        <pre style="white-space:pre-wrap; word-break: break-all; margin:0.3rem 0 0; font-size:0.68rem; color: var(--dispatch-text-muted);">{{ implode("\n", $diagnostics['trace']) }}</pre>
+                                    </div>
+                                @endif
                                 <div class="dispatch-meta-grid">
                                     @if (! empty($ctx['url']))
                                         <div><label class="dispatch-label">URL</label><div style="font-size:0.78rem; word-break: break-all;">{{ $ctx['url'] }}</div></div>
@@ -448,6 +529,7 @@
                                     @endif
                                 </div>
 
+                                @if (array_key_exists('console_errors', $ctx) || (! $diagnostics['exception'] && ! $diagnostics['client_error']))
                                 <div style="margin-top: 0.9rem;">
                                     <label class="dispatch-label">Console errors ({{ count($consoleErrors) }})</label>
                                     @if (empty($consoleErrors))
@@ -469,6 +551,7 @@
                                         </ul>
                                     @endif
                                 </div>
+                                @endif
                             </div>
                         </details>
                     @endif

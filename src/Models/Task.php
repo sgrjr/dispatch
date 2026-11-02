@@ -342,12 +342,16 @@ class Task extends Model
     }
 
     /**
-     * The context keys that make it DIAGNOSTIC evidence: an exception (and its
-     * trace) or a browser capture (console errors, the user agent). A task
-     * kind's marker (a plan request's details) is context too, but not a
-     * diagnosis, so "this task carries diagnostic context" must not fire on it.
+     * The context keys that make it DIAGNOSTIC evidence: an exception, its
+     * trace, a client error (a host's browser-error capture: `error_type`, its
+     * `stack`), or at least one captured console error. A task kind's marker (a
+     * plan request's details) is context too, but not a diagnosis, so "this
+     * task carries diagnostic context" must not fire on it — and neither does
+     * a browser capture of a HEALTHY page (a url, a user agent, zero console
+     * errors: every widget-filed task has one). TASK-2299: the user agent used
+     * to count, so the notice promised evidence the task did not have.
      */
-    public const DIAGNOSTIC_CONTEXT_KEYS = ['exception', 'trace', 'console_errors', 'user_agent'];
+    public const DIAGNOSTIC_CONTEXT_KEYS = ['exception', 'trace', 'error_type', 'stack', 'console_errors'];
 
     public function hasDiagnostics(): bool
     {
@@ -360,6 +364,12 @@ class Task extends Model
         }
 
         return false;
+    }
+
+    /** TASK-2299 — the agent's close-out (`context.result`), display-ready, or null. */
+    public function closeOut(): ?array
+    {
+        return \Sgrjr\Dispatch\Support\ContextPresenter::closeOut(is_array($this->context) ? $this->context : null);
     }
 
     /** TASK-1188 — this task's registered kind, or null (the default controls). */

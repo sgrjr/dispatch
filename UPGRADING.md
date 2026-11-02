@@ -1,5 +1,32 @@
 # Upgrading `sgrjr/dispatch`
 
+## The task page renders the agent's close-out; "diagnostics" means evidence (TASK-2299)
+
+**`context.result` is rendered.** An agent's close-out (`summary`,
+`resolution`, `owner_check`, `follow_ups_not_built`, `tests`, `commit`,
+`deploy`) shows as an **Agent close-out** card on the task page, for anyone
+who may edit the task. Before, no view rendered it, so an owner was told to
+run walkthrough steps they could not see. The page's Diagnostics panel now
+also shows the **exception**, its **trace**, the occurrence counters and a
+host's **client error** (`error_type`, `stack`, `info`, `inertia_page`,
+`component_path`), not just the browser capture.
+
+**`Support\ContextPresenter`** is the one display shape for both:
+`closeOut(?array $context)` and `diagnostics(?array $context)` return plain
+strings and lists (null when there is nothing to show). Hosts that render a
+task elsewhere (a chat card) should read these instead of the raw blob.
+`Task::closeOut()` is the model shortcut.
+
+**`Task::hasDiagnostics()` is narrower.** `DIAGNOSTIC_CONTEXT_KEYS` is now
+`exception`, `trace`, `error_type`, `stack`, `console_errors` (non-empty).
+`user_agent` no longer counts: every widget-filed task captures one, so a
+"this task carries diagnostic context" notice fired on healthy pages with
+zero console errors. A capture still shows in the Diagnostics panel.
+
+```bash
+composer update sgrjr/dispatch
+```
+
 ## Every task is staff-visible by default; "Limit access" replaces "Visible to all staff"
 
 **The visibility default flipped.** `DispatchTaskService::create()` now
