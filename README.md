@@ -35,8 +35,8 @@ repository entry.
 ```
 
 ```bash
-# Recommended: a tagged release (stable; picks up 0.2.x patches)
-composer require sgrjr/dispatch:^0.2
+# Recommended: a tagged release (stable; picks up 0.10.x patches)
+composer require sgrjr/dispatch:^0.10
 
 # Or track the latest unreleased tip of the master branch (bleeding edge).
 # NOTE: "dev-master" is Composer's alias for the `master` branch — not a branch
@@ -44,7 +44,7 @@ composer require sgrjr/dispatch:^0.2
 # composer require sgrjr/dispatch:dev-master
 ```
 
-@dev is the latest-and-greatest lane. It stays unpinned, so every composer update floats to the newest available release (right now v0.4.2), and it'll automatically pick up v0.5.x, etc., as you tag them — no version bump in composer.json required.
+@dev is the latest-and-greatest lane. It stays unpinned, so every composer update floats to the newest available release, and it picks up each new tag automatically — no version bump in composer.json required.
 
 The one nuance: if prefer-stable is on in host application, @dev grabs the newest tagged release. If by "latest and greatest" you want the bleeding edge of untagged master commits, that'd be dev-master instead. But for tracking newest releases as they ship, @dev is correct.
 
