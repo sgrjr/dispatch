@@ -5,8 +5,8 @@ page (with screenshots), a Kanban board + list for staff, a submitter portal,
 and a CLI verb-loop that AI agents drive.
 
 Dispatch is a standalone package (`sgrjr/dispatch`) designed to be installed
-into any Laravel 11, 12 or 13 app (PHP 8.2+; Laravel 13 itself needs PHP
-8.3+), not just one project. Everything app-specific
+into any Laravel 11, 12 or 13 app with Livewire 3 or 4 (PHP 8.2+; Laravel
+13 itself needs PHP 8.3+), not just one project. Everything app-specific
 (who's staff, what "tenant" means, who submitted a task) is a config-bound
 seam — the package ships sane single-team defaults and lets you override
 exactly the three points where your app's rules matter.

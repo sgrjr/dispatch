@@ -84,7 +84,7 @@
             <label for="task-comment-body" class="dispatch-label">Add a comment</label>
             <textarea
                 id="task-comment-body"
-                wire:model.blur="body"
+                wire:model="body"
                 rows="3"
                 class="dispatch-textarea"
                 placeholder="What's the update?"

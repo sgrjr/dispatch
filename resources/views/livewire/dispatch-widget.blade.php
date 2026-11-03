@@ -145,14 +145,14 @@
                             </div>
                             <div>
                                 <label for="dispatch-widget-title" class="dispatch-label">Title</label>
-                                <input id="dispatch-widget-title" x-ref="dwFirstField" type="text" wire:model.blur="title" maxlength="255" class="dispatch-input" placeholder="Short summary…">
+                                <input id="dispatch-widget-title" x-ref="dwFirstField" type="text" wire:model="title" maxlength="255" class="dispatch-input" placeholder="Short summary…">
                                 @error('title') <p class="dispatch-error">{{ $message }}</p> @enderror
                             </div>
                             <div>
                                 <label for="dispatch-widget-description" class="dispatch-label">Description</label>
                                 <textarea
                                     id="dispatch-widget-description"
-                                    wire:model.blur="description"
+                                    wire:model="description"
                                     rows="4"
                                     class="dispatch-textarea"
                                     placeholder="What happened? What did you expect?"

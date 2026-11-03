@@ -22,13 +22,13 @@
         <form wire:submit="save" class="dispatch-form-grid">
             <div>
                 <label class="dispatch-label">Title</label>
-                <input type="text" wire:model.blur="title" maxlength="255" class="dispatch-input" placeholder="Short summary…">
+                <input type="text" wire:model="title" maxlength="255" class="dispatch-input" placeholder="Short summary…">
                 @error('title') <p class="dispatch-error">{{ $message }}</p> @enderror
             </div>
 
             <div>
                 <label class="dispatch-label">Description</label>
-                <textarea wire:model.blur="description" rows="6" class="dispatch-textarea" placeholder="Details, steps to reproduce, links…" data-dispatch-paste="newAttachments" data-dispatch-dropzone="newAttachments"></textarea>
+                <textarea wire:model="description" rows="6" class="dispatch-textarea" placeholder="Details, steps to reproduce, links…" data-dispatch-paste="newAttachments" data-dispatch-dropzone="newAttachments"></textarea>
                 @error('description') <p class="dispatch-error">{{ $message }}</p> @enderror
                 <p style="font-size:0.7rem; color: var(--dispatch-text-faint); margin-top:0.25rem;">
                     Paste or drag an image/file into the description box to attach it.

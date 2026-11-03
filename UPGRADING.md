@@ -1,5 +1,30 @@
 # Upgrading `sgrjr/dispatch`
 
+## Livewire 4 support
+
+**Dispatch now installs on Livewire 3 or 4.** The constraint is
+`^3.8.11 || ^4.0`; Composer keeps whichever the host already runs. The
+suite (950 tests) passes on Livewire 3.8.11 and 4.4.8.
+
+**The title, description and comment fields use plain `wire:model`**
+instead of `wire:model.blur` (the widget, `/dispatch/new` and the task
+thread). On Livewire 4, `.blur` also holds back the browser-side value
+until the field loses focus, so pressing Enter in the title could submit a
+stale or empty value. Plain `wire:model` keeps the value current as you
+type and sends it with the submit on both versions. Nothing read these
+fields before submit, so on Livewire 3 this only drops a pointless request
+on blur. **A host that published and overrode these views** should make
+the same change in its copies.
+
+**Host apps moving to Livewire 4 should check** Livewire's own upgrade
+guide; Dispatch needs nothing extra. The update endpoint moves from
+`/livewire/update` to `/livewire-{hash}/update`, so firewall or CDN rules
+that name the old path need updating.
+
+```bash
+composer update sgrjr/dispatch
+```
+
 ## Laravel 13 support
 
 **Dispatch now installs on Laravel 13.** The `illuminate/*` constraints
