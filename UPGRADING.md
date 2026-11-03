@@ -1,5 +1,35 @@
 # Upgrading `sgrjr/dispatch`
 
+## Laravel 13 support
+
+**Dispatch now installs on Laravel 13.** The `illuminate/*` constraints
+allow `^11.0 || ^12.0 || ^13.0`. Nothing changes for an app staying on 11
+or 12. The package's own PHP floor stays `^8.2`; Laravel 13 needs PHP 8.3+,
+so Composer only resolves 13 where the PHP is new enough.
+
+**Livewire minimum is now `^3.8.11`**, the first v3 release that allows
+Laravel 13. On 11/12 this is a patch-level bump.
+
+**No package code changed.** Every item in Laravel's 13.x upgrade guide was
+checked against `src/`: no CSRF middleware references, the only cache write
+stores an integer (unaffected by `cache.serializable_classes => false`), the
+one `upsert` passes an explicit `uniqueBy`, pagination uses Livewire's views,
+and every pivot table is named explicitly. The suite (950 tests) passes on
+Laravel 13.40 / PHP 8.5.
+
+**Host apps moving to Laravel 13 should check two framework defaults**, which
+are app concerns, not Dispatch's:
+
+- Cache prefix, Redis prefix and session cookie fallbacks switch from
+  underscores to hyphens. Set `CACHE_PREFIX`, `REDIS_PREFIX` and
+  `SESSION_COOKIE` explicitly, or every session is dropped on deploy.
+- A new skeleton's `config/session.php` sets `'serialization' => 'json'`.
+  Keep `php` on an existing app unless invalidating all sessions is fine.
+
+```bash
+composer update sgrjr/dispatch livewire/livewire -W
+```
+
 ## The task page renders the agent's close-out; "diagnostics" means evidence (TASK-2299)
 
 **`context.result` is rendered.** An agent's close-out (`summary`,
