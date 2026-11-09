@@ -252,6 +252,8 @@ test('R33: handoff PASS across lanes moves the SAME task into the recipient\'s l
     expect($event->meta['continued_as'])->toBe($task->code) // the ball continues on THIS task
         ->and($event->meta['from'])->toBe(220)
         ->and($event->meta['to'])->toBe(221)
+        ->and($event->meta['from_lane'])->toBe('ops')
+        ->and($event->meta['to_lane'])->toBe('support')
         ->and($event->meta['note'])->toBe('over to you')
         ->and($event->user_id)->toBe(220);
 });

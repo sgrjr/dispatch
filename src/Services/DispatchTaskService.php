@@ -1374,7 +1374,9 @@ class DispatchTaskService
             $task->recordEvent(
                 TaskComment::EVENT_HANDED_OFF,
                 $actorId,
-                array_filter(['from' => $fromId, 'to' => $toId, 'continued_as' => $task->code, 'note' => $note], fn ($v) => $v !== null),
+                // from_lane/to_lane: a lane-keyed report ("what did MY lane hand
+                // on?") must not depend on where the task sits today.
+                array_filter(['from' => $fromId, 'to' => $toId, 'from_lane' => $fromLane, 'to_lane' => $lane, 'continued_as' => $task->code, 'note' => $note], fn ($v) => $v !== null),
                 $note ? "Passed to {$this->userLabel($to)}: {$note}" : "Passed to {$this->userLabel($to)}.",
             );
 
