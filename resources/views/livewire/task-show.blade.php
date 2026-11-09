@@ -235,6 +235,13 @@
 
         <dl class="dispatch-show-facts">
             <div class="dispatch-show-fact"><dt>Assignee</dt><dd>{{ $task->assigneeLabel() ?? 'Unassigned' }}</dd></div>
+            @if ($task->starts_at)
+                {{-- PU-2.12 (TASK-1060) — not before: out of the personal views and the agent queue until then. --}}
+                <div class="dispatch-show-fact">
+                    <dt>Starts</dt>
+                    <dd>{{ $task->starts_at->toFormattedDateString() }} <span style="font-weight:400; color: var(--dispatch-text-muted);">({{ $task->isScheduled() ? 'scheduled, '.$task->starts_at->diffForHumans() : 'started' }})</span></dd>
+                </div>
+            @endif
             @if ($task->due_at)
                 <div class="dispatch-show-fact">
                     <dt>Due</dt>
@@ -652,7 +659,7 @@
                 <section class="dispatch-card dispatch-rail-card" id="dispatch-properties">
                     <div class="dispatch-card-head">
                         <h2 class="dispatch-section-title">Properties</h2>
-                        <span class="dispatch-dirty" wire:dirty wire:target="status,statusNote,type,priority,assignee_choice,due_at,visibility,is_public,label_ids,editDescription">Unsaved changes</span>
+                        <span class="dispatch-dirty" wire:dirty wire:target="status,statusNote,type,priority,assignee_choice,due_at,starts_at,visibility,is_public,label_ids,editDescription">Unsaved changes</span>
                     </div>
 
                     @if (in_array('status', $hiddenControls, true) && ! empty($kindView['lock_reason']))
@@ -717,6 +724,11 @@
                             <label class="dispatch-label">Due date</label>
                             <input type="date" wire:model="due_at" class="dispatch-input">
                             @error('due_at') <p class="dispatch-error">{{ $message }}</p> @enderror
+                        </div>
+                        <div class="dispatch-field">
+                            <label class="dispatch-label" title="Not before: kept out of the personal views and the agent queue until this date">Start date</label>
+                            <input type="date" wire:model="starts_at" class="dispatch-input">
+                            @error('starts_at') <p class="dispatch-error">{{ $message }}</p> @enderror
                         </div>
                         <div class="dispatch-field">
                             <label class="dispatch-label">Access</label>

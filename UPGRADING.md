@@ -1,5 +1,29 @@
 # Upgrading `sgrjr/dispatch`
 
+## A task has a start date (PU-2.12)
+
+**New column `dispatch_tasks.starts_at` (migration 000026) — run `php artisan
+migrate`.** It means "not before"; with `due_at` ("needed by") it makes
+scheduling honest.
+
+- **Agents never see work before its day.** `next`, `claim` and `queue` (and
+  the `queue --count` census) skip a task whose `starts_at` is still ahead.
+  Claim-by-code is exempt. `dispatch:queue --scheduled=only` (or `?scheduled=only`
+  on the agent API) lists what is waiting; `--scheduled=include` lists both.
+- **Settable everywhere `due_at` is:** `dispatch:add --start=`,
+  `dispatch:done --start=` (tri-state: a date sets it, `""` clears it, absent
+  leaves it), the batch op's `starts_at`, the agent API's `add`/`done`, and the
+  TaskShow Properties card. A change is memorialized ("Start date set to …").
+- **Hosts:** `Task::scopeStarted()` / `scopeScheduled()` / `isScheduled()` are
+  there for your own views. The board and search still list scheduled tasks,
+  with a "starts …" badge, so scheduled work is never invisible to everyone.
+- The summary JSON shape gains `starts_at`.
+
+```bash
+composer update sgrjr/dispatch
+php artisan migrate
+```
+
 ## A pass moves the same task (R33)
 
 **A cross-lane pass no longer mints a continuation task.** `handoff()`

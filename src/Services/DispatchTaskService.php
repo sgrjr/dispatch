@@ -590,7 +590,9 @@ class DispatchTaskService
                     ->when($label, fn ($q, $label) => $q->whereHas(
                         'labels',
                         fn ($lq) => $lq->whereIn('name', LabelAlias::canonicalize((array) $label))
-                    )),
+                    ))
+                    // PU-2.12 — `next` never offers what has not started yet.
+                    ->tap(fn ($q) => $this->applyStartFilter($q, $filters)),
                 $filters,
             ), $filters), $filters)
         ));
@@ -655,6 +657,8 @@ class DispatchTaskService
             $q->where('assignee_user_id', $holderId);
         }
 
+        $this->applyStartFilter($q, $filters);
+
         return $this->applyLaneFilter($this->applyAnchorFilters(
             $q->when($type, fn ($qq, $type) => $qq->ofKind($type))
                 ->when($label, fn ($qq, $label) => $qq->whereHas(
@@ -663,6 +667,28 @@ class DispatchTaskService
                 )),
             $filters,
         ), $filters);
+    }
+
+    /**
+     * PU-2.12 (TASK-1060) — the start date, read once for every queue path
+     * (list, census, claim). Default: only work that has STARTED — a task
+     * scheduled for later is not in anyone's pile yet (R30: it surfaces in
+     * the agent queue on its day). `scheduled=only` lists what is waiting to
+     * start; `scheduled=include` lists both. Claim-by-code never comes here,
+     * so handing someone a scheduled task by name still works.
+     *
+     * @param  array<string,mixed>  $filters
+     */
+    protected function applyStartFilter(Builder $q, array $filters): Builder
+    {
+        $mode = $filters['scheduled'] ?? null;
+        $mode = $mode === true ? 'only' : (is_string($mode) ? strtolower(trim($mode)) : null);
+
+        return match ($mode) {
+            'only' => $q->scheduled(),
+            'include', 'all' => $q,
+            default => $q->started(),
+        };
     }
 
     /**
@@ -868,6 +894,9 @@ class DispatchTaskService
                         $taskModel::query()
                             ->whereIn('status', ['open', 'triage'])
                             ->when($code, fn ($q, $c) => $q->where('code', $c))
+                            // PU-2.12 — a scheduled task is not up for grabs before its
+                            // day; naming it by code still hands it over (R30).
+                            ->when($code === null, fn ($q) => $this->applyStartFilter($q, []))
                             ->when($type, fn ($q, $type) => $q->ofKind($type))
                             ->when($label, fn ($q, $label) => $q->whereHas(
                                 'labels',

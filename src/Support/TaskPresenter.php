@@ -48,6 +48,9 @@ class TaskPresenter
             // transcription.
             'attachment_count' => self::attachmentCount($task),
             'due_at' => optional($task->due_at)->toIso8601String(),
+            // PU-2.12 (TASK-1060) — not before; a future value = scheduled, kept
+            // out of next/claim/queue until then.
+            'starts_at' => optional($task->starts_at)->toIso8601String(),
             'dedupe_key' => $task->dedupe_key,
             // Guard on the FK before touching the relation: an agent/CLI task has
             // a null submitter, and building the belongsTo instantiates the host
@@ -154,6 +157,7 @@ class TaskPresenter
                 'comment_count' => 'int',   // human comments (event_type=comment); >0 → run `show` for direction
                 'attachment_count' => 'int', // task-level; >0 = a human attached evidence — fetch it with `dispatch:attachment <CODE>`
                 'due_at' => 'iso8601|null',
+                'starts_at' => 'iso8601|null — not before: until then the task is not offered by next/claim/queue (queue --scheduled=only lists those)',
                 'dedupe_key' => 'string|null',
                 'submitter' => 'string|int|null',
                 'assignee' => 'string|int|null',
@@ -214,6 +218,7 @@ class TaskPresenter
                 'result' => 'object stored at context.result (a new close replaces it; metrics accumulate)',
                 'resolution' => 'recommended result key on close: result.resolution = built | already-implemented | obsolete (free-form allowed) — records HOW the task resolved, so the board can measure pre-resolved briefs',
                 'due_at' => 'iso8601|null (CLI --due) — set or clear the review-by date AT CLOSE, e.g. when handing back with status=verifying: a date sets it, null or "" clears it, absent leaves it untouched. A real change is memorialized on the timeline.',
+                'starts_at' => 'iso8601|null (CLI --start) — set or clear the start date (not before), tri-state like due_at.',
             ],
             // The `dispatch:batch` / POST agent/batch manifest — apply a whole
             // run of ops in one transaction. Additive + server-bounded: `add`
@@ -233,6 +238,7 @@ class TaskPresenter
                     'priority' => Task::priorities(),
                     'status' => Task::statuses(),
                     'due_at' => 'iso8601|null — set the due date; null or "" clears it; absent leaves it untouched',
+                    'starts_at' => 'iso8601|null — set the start date (not before; hidden from next/claim/queue until then); null or "" clears it; absent leaves it untouched',
                     'description' => 'string|null',
                     'public' => 'bool (optional)',
                     'labels' => 'string[] (ATTACHED additively — never replaces existing labels)',

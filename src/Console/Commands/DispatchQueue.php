@@ -29,6 +29,7 @@ class DispatchQueue extends Command
         {--topic-account= : Filter to tasks whose topic_account_key equals this value}
         {--lane= : Filter to tasks in this lane ("<department>" matches its sub-lanes too; "<department>:<role>" matches exactly; "none" = the no-department lane)}
         {--held-by-agent : Only tasks held by the agent holder (dispatch.agent.holder) — the shared "waiting for an agent" inbox}
+        {--scheduled= : Tasks scheduled for later (a start date not reached): --scheduled=only lists them, --scheduled=include lists them with the rest. Absent = started work only}
         {--limit= : Cap the number of tasks returned, top of the priority order (default: all). For the single-task case use dispatch:next.}
         {--count : Emit counts by status (total + by_status) instead of the task list. With no --status it censuses the actionable board (open/in_progress/triage/verifying; parked backburner and closed done/resolved/declined excluded), zero-filled — an empty bucket (e.g. verifying) still prints as 0.}
         {--remote : Act on the configured remote agent API (the default while an agent session token is active)}
@@ -64,6 +65,7 @@ class DispatchQueue extends Command
                 'topic_account' => $this->option('topic-account'),
                 'lane' => $this->option('lane'),
                 'held_by_agent' => $this->option('held-by-agent') ? 1 : null,
+                'scheduled' => $this->scheduledOption(),
             ]));
 
             if ($r === null) {
@@ -93,6 +95,7 @@ class DispatchQueue extends Command
             'topic_account' => $this->option('topic-account'),
             'lane' => $this->option('lane'),
             'held_by_agent' => $this->option('held-by-agent'),
+            'scheduled' => $this->scheduledOption(),
         ]);
 
         // The census answers for the same board the list would show, under the
@@ -169,5 +172,13 @@ class DispatchQueue extends Command
         }
         $this->table(['Status', 'Count'], $rows);
         $this->info("total: {$total}");
+    }
+
+    /** PU-2.12 (TASK-1060) — `only` | `include`, or null (started work only). */
+    private function scheduledOption(): ?string
+    {
+        $v = $this->option('scheduled');
+
+        return in_array($v, ['only', 'include'], true) ? $v : null;
     }
 }

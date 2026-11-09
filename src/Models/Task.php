@@ -71,6 +71,9 @@ class Task extends Model
         'position',
         'context',
         'due_at',
+        // PU-2.12 (TASK-1060) — not before: hidden from the personal views and
+        // the agent queue until this moment (scopeStarted).
+        'starts_at',
         'duplicate_of',
         // TASK-995 anchor fields. `topic_account_key` is deliberately NOT
         // fillable — it is a STORED rollup only the `saving` hook (via the
@@ -90,6 +93,7 @@ class Task extends Model
         'position' => 'integer',
         'context' => 'array',
         'due_at' => 'datetime',
+        'starts_at' => 'datetime',
         'conversation_id' => 'integer',
     ];
 
@@ -1084,6 +1088,32 @@ class Task extends Model
     public static function inactiveStatuses(): array
     {
         return ['backburner', ...static::closedStatuses()];
+    }
+
+    /**
+     * PU-2.12 (TASK-1060) — work that may be picked up NOW: no start date, or a
+     * start date that has arrived. The agent queue (`next` / `claim` / `queue`,
+     * R30) and a host's personal views read this; the board and search do not,
+     * so scheduled work is never invisible to everyone.
+     */
+    public function scopeStarted(Builder $query, ?\DateTimeInterface $at = null): Builder
+    {
+        $at ??= now();
+
+        return $query->where(fn (Builder $q) => $q->whereNull($q->qualifyColumn('starts_at'))
+            ->orWhere($q->qualifyColumn('starts_at'), '<=', $at));
+    }
+
+    /** PU-2.12 — the other half: scheduled for later. */
+    public function scopeScheduled(Builder $query, ?\DateTimeInterface $at = null): Builder
+    {
+        return $query->where($query->qualifyColumn('starts_at'), '>', $at ?? now());
+    }
+
+    /** Is this task scheduled for later (its start date not reached yet)? */
+    public function isScheduled(): bool
+    {
+        return $this->starts_at !== null && $this->starts_at->isFuture();
     }
 
     public function isInactive(): bool

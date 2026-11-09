@@ -66,6 +66,9 @@ class TaskShow extends Component
     // 'Y-m-d' string the input works with rather than a Carbon instance.
     public ?string $due_at = null;
 
+    /** PU-2.12 (TASK-1060) — not before (Y-m-d), or null. */
+    public ?string $starts_at = null;
+
     // Merge-into-duplicate target (F5, staff/`delete`-ability only).
     public string $mergeTargetCode = '';
 
@@ -116,6 +119,7 @@ class TaskShow extends Component
         $this->label_ids = $task->labels->pluck('id')->all();
         $this->editDescription = $task->description;
         $this->due_at = $task->due_at?->format('Y-m-d');
+        $this->starts_at = $task->starts_at?->format('Y-m-d');
 
         // TASK-998 — opening the task IS looking at it: move this person's read
         // cursor. ⚠️ Fails soft: a cursor is a courtesy, and between a package
@@ -153,6 +157,7 @@ class TaskShow extends Component
             'label_ids.*' => 'integer',
             'editDescription' => 'nullable|string|max:20000',
             'due_at' => 'nullable|date',
+            'starts_at' => 'nullable|date',
         ]);
 
         // Captured BEFORE any mutation below — the notifier routing (N3)
@@ -245,6 +250,12 @@ class TaskShow extends Component
             $changes[] = ['due_at', $oldDueAt, $newDueAt];
             $this->task->due_at = $newDueAt;
         }
+        $newStartsAt = $this->starts_at !== null && $this->starts_at !== '' ? $this->starts_at : null;
+        $oldStartsAt = $this->task->starts_at?->toDateString();
+        if ($oldStartsAt !== $newStartsAt) {
+            $changes[] = ['starts_at', $oldStartsAt, $newStartsAt];
+            $this->task->starts_at = $newStartsAt;
+        }
 
         try {
             $this->task->save();
@@ -277,6 +288,7 @@ class TaskShow extends Component
                         : 'Restricted to participants (submitter, assignee, watchers).',
                     'labels' => 'Labels updated.',
                     'due_at' => $to ? "Due date set to {$to}." : 'Due date cleared.',
+                    'starts_at' => $to ? "Start date set to {$to}." : 'Start date cleared.',
                     default => "Field `{$field}` updated.",
                 };
             }

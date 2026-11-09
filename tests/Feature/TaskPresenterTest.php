@@ -24,7 +24,7 @@ test('the summary shape carries exactly the documented keys', function () {
 
     expect(array_keys($data))->toEqual([
         'code', 'title', 'type', 'priority', 'status', 'is_public',
-        'labels', 'comment_count', 'attachment_count', 'due_at', 'dedupe_key', 'submitter', 'assignee',
+        'labels', 'comment_count', 'attachment_count', 'due_at', 'starts_at', 'dedupe_key', 'submitter', 'assignee',
         'assignee_group',
         // TASK-995 anchor fields.
         'topic_type', 'topic_id', 'topic_account_key', 'origin_type', 'origin_id', 'conversation_id',

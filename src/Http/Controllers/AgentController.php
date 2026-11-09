@@ -75,6 +75,8 @@ class AgentController extends Controller
             'label' => $request->query('label'),
             // TASK-1059 — the agent holder's inbox (refused when no holder is configured).
             'held_by_agent' => $request->boolean('held_by_agent'),
+            // PU-2.12 (TASK-1060) — `only` | `include`; absent = started work only.
+            'scheduled' => in_array($request->query('scheduled'), ['only', 'include'], true) ? $request->query('scheduled') : null,
         ]);
 
         // ?count — return {total, by_status} instead of the task list, so an
@@ -463,6 +465,7 @@ class AgentController extends Controller
             'public' => ['nullable', 'boolean'],
             'key' => ['nullable', 'string'],
             'due_at' => ['nullable', 'string'],
+            'starts_at' => ['nullable', 'string'],
             // TASK-995 — agent verbs can set topic/origin/conversation but
             // NEVER topic_account_key directly (it's stamped server-side by
             // the TopicResolver — there is deliberately no validation rule
@@ -493,6 +496,14 @@ class AgentController extends Controller
                 $attributes['due_at'] = DueDate::parseOrFail($v['due_at']);
             } catch (\InvalidArgumentException $e) {
                 abort(422, $e->getMessage());
+            }
+        }
+        // PU-2.12 (TASK-1060) — the start date, same posture as the due date.
+        if (array_key_exists('starts_at', $v) && ! DueDate::isClear($v['starts_at'])) {
+            try {
+                $attributes['starts_at'] = DueDate::parseOrFail($v['starts_at']);
+            } catch (\InvalidArgumentException $e) {
+                abort(422, str_replace('due_at', 'starts_at', $e->getMessage()));
             }
         }
 
@@ -599,6 +610,7 @@ class AgentController extends Controller
             'labels' => ['nullable', 'array'],
             'labels.*' => ['string'],
             'due_at' => ['nullable', 'string'],
+            'starts_at' => ['nullable', 'string'],
         ]);
 
         /** @var class-string<Task> $taskModel */
@@ -645,6 +657,20 @@ class AgentController extends Controller
         // due date mints no event.
         $dueChanged = $dueProvided && $dueFrom !== $dueTo;
 
+        // PU-2.12 (TASK-1060) — tri-state start date, same as the due date.
+        $startProvided = array_key_exists('starts_at', $v);
+        $startFrom = $task->starts_at?->toDateString();
+        $startTo = $startFrom;
+        if ($startProvided) {
+            try {
+                $task->starts_at = DueDate::resolve($v['starts_at']);
+            } catch (\InvalidArgumentException $e) {
+                abort(422, str_replace('due_at', 'starts_at', $e->getMessage()));
+            }
+            $startTo = $task->starts_at?->toDateString();
+        }
+        $startChanged = $startProvided && $startFrom !== $startTo;
+
         $from = $task->status;
         $task->status = $to;
         $task->withStatusNote($note);
@@ -683,6 +709,14 @@ class AgentController extends Controller
                 null,
                 $this->agentMeta($s, ['due_at' => ['from' => $dueFrom, 'to' => $dueTo]]),
                 $dueTo ? "Due date set to {$dueTo}." : 'Due date cleared.',
+            );
+        }
+        if ($startChanged) {
+            $task->recordEvent(
+                TaskComment::EVENT_COMMENT,
+                null,
+                $this->agentMeta($s, ['starts_at' => ['from' => $startFrom, 'to' => $startTo]]),
+                $startTo ? "Start date set to {$startTo}." : 'Start date cleared.',
             );
         }
 

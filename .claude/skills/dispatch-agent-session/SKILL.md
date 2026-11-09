@@ -199,6 +199,12 @@ Notes on the loop:
   clears an existing date and omitting the flag leaves it untouched. The change
   is memorialized on the timeline, so never write the review-by into a note and
   ask the operator to set the real one in the UI — that detour is retired.
+- **A start date (`--start=`) means "not before".** Same flags and tri-state
+  as `--due` on `add` and `done` (and `starts_at` on a batch op). A task whose
+  start date is still ahead is **not offered by `next`, `claim` or `queue`**,
+  and the census doesn't count it: it joins the pile on its day. Claim-by-code
+  still works, and `dispatch:queue --scheduled=only` lists what is waiting to
+  start. Use it for "do this next week", not for urgency (that's priority).
 - Long or multi-line inputs always have a file escape hatch: `--result-file`,
   `--body-file`, `--description-file` (on `add` **and** `edit`) — or `-` for
   stdin. Never pipe a body through shell command substitution to dodge a missing

@@ -336,14 +336,17 @@ class DispatchBatchService
      */
     protected function assertDueAt(int $i, array $op): void
     {
-        if (! array_key_exists('due_at', $op) || DueDate::isClear($op['due_at'])) {
-            return;
-        }
+        // PU-2.12 (TASK-1060): `starts_at` is a date with the same contract.
+        foreach (['due_at', 'starts_at'] as $key) {
+            if (! array_key_exists($key, $op) || DueDate::isClear($op[$key])) {
+                continue;
+            }
 
-        try {
-            DueDate::parseOrFail($op['due_at']);
-        } catch (\InvalidArgumentException $e) {
-            throw new \InvalidArgumentException("Operation {$i}: ".$e->getMessage());
+            try {
+                DueDate::parseOrFail($op[$key]);
+            } catch (\InvalidArgumentException $e) {
+                throw new \InvalidArgumentException("Operation {$i}: ".str_replace('due_at', $key, $e->getMessage()));
+            }
         }
     }
 
@@ -629,6 +632,9 @@ class DispatchBatchService
         if (array_key_exists('due_at', $op) && ! DueDate::isClear($op['due_at'])) {
             $attributes['due_at'] = DueDate::parseOrFail($op['due_at']);
         }
+        if (array_key_exists('starts_at', $op) && ! DueDate::isClear($op['starts_at'])) {
+            $attributes['starts_at'] = DueDate::parseOrFail($op['starts_at']);
+        }
 
         // TASK-995 — topic/origin/conversation are likewise part of CREATION,
         // not a change: no timeline event, and a fresh task's origin is
@@ -748,6 +754,17 @@ class DispatchBatchService
             // due date is idempotent and mints no event.
             $dueChanged = $dueFrom !== $dueTo;
         }
+        // PU-2.12 (TASK-1060) — `starts_at`, tri-state exactly like due_at.
+        $startFrom = null;
+        $startTo = null;
+        $startChanged = false;
+        if (array_key_exists('starts_at', $op)) {
+            $startFrom = $task->starts_at?->toDateString();
+            $start = DueDate::resolve($op['starts_at']); // validated up front
+            $task->starts_at = $start;
+            $startTo = $start?->toDateString();
+            $startChanged = $startFrom !== $startTo;
+        }
 
         // TASK-995 — topic is EDITABLE (tri-state, like due_at): untouched
         // unless the op names it, cleared by an explicit null. Origin is
@@ -819,6 +836,14 @@ class DispatchBatchService
                 $actorUserId,
                 $actorMeta + ['due_at' => ['from' => $dueFrom, 'to' => $dueTo]],
                 $dueTo ? "Due date set to {$dueTo}." : 'Due date cleared.',
+            );
+        }
+        if ($startChanged) {
+            $task->recordEvent(
+                TaskComment::EVENT_COMMENT,
+                $actorUserId,
+                $actorMeta + ['starts_at' => ['from' => $startFrom, 'to' => $startTo]],
+                $startTo ? "Start date set to {$startTo}." : 'Start date cleared.',
             );
         }
 

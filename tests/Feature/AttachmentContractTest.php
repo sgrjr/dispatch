@@ -54,7 +54,7 @@ test('GOLDEN SHAPE: the summary adds exactly attachment_count; nothing else move
     // trips this lock loudly.
     expect(array_keys(TaskPresenter::toArray($task, false)))->toBe([
         'code', 'title', 'type', 'priority', 'status', 'is_public', 'labels',
-        'comment_count', 'attachment_count', 'due_at', 'dedupe_key',
+        'comment_count', 'attachment_count', 'due_at', 'starts_at', 'dedupe_key',
         'submitter', 'assignee', 'assignee_group',
         // TASK-995 anchor fields.
         'topic_type', 'topic_id', 'topic_account_key', 'origin_type', 'origin_id', 'conversation_id',
@@ -72,7 +72,7 @@ test('GOLDEN SHAPE: the full view adds exactly attachments[] + a per-comment att
     // Full = every summary key, then the full-only adds in order.
     expect(array_keys($full))->toBe([
         'code', 'title', 'type', 'priority', 'status', 'is_public', 'labels',
-        'comment_count', 'attachment_count', 'due_at', 'dedupe_key',
+        'comment_count', 'attachment_count', 'due_at', 'starts_at', 'dedupe_key',
         'submitter', 'assignee', 'assignee_group',
         // TASK-995 anchor fields.
         'topic_type', 'topic_id', 'topic_account_key', 'origin_type', 'origin_id', 'conversation_id',

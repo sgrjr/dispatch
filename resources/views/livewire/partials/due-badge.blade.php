@@ -9,6 +9,10 @@
     deliberate: Carbon 2 defaults to absolute, Carbon 3 to signed float —
     explicit signed + cast reads the same on both.
 --}}
+@if ($task->isScheduled())
+    {{-- PU-2.12 (TASK-1060): scheduled for later — on the board, out of every pile until then. --}}
+    <span class="dispatch-badge" title="Starts {{ $task->starts_at->format('M j, Y') }} — not offered to anyone until then">starts {{ $task->starts_at->format('M j') }}</span>
+@endif
 @if ($task->due_at)
     @php
         $dueDiffDays = (int) now()->startOfDay()->diffInDays($task->due_at->copy()->startOfDay(), false);

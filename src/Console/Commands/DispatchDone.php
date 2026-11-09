@@ -31,6 +31,7 @@ class DispatchDone extends Command
         {--note= : What actually happened, recorded as the body of the status event. REQUIRED for --status=resolved; optional for any other status}
         {--note-file= : Read the --note from a file (or `-` for stdin) — the escape hatch for a multi-line note}
         {--due= : Set (or clear) the review-by date at close — pairs naturally with --status=verifying. Parseable date/time string, e.g. "2026-08-01" or "+3 days"; empty string clears it}
+        {--start= : Set (or clear) the start date — not before: the task stays out of the personal views and the agent queue until then. Parseable date/time; empty string clears it}
         {--commit= : SHA of the code change}
         {--label=* : Label name(s) to ATTACH on close; auto-created if missing, never replaces existing labels. Repeatable — so "park these and tag them" is one verb, not a batch manifest.}
         {--result= : JSON blob stored under context.result}
@@ -77,6 +78,25 @@ class DispatchDone extends Command
                     // The helper's message names the WIRE field; this surface is
                     // a flag, so it keeps its own wording.
                     $this->error("--due could not be parsed as a date: {$raw}");
+
+                    return self::FAILURE;
+                }
+            }
+        }
+
+        // PU-2.12 (TASK-1060) — --start, tri-state exactly like --due.
+        $startProvided = $this->option('start') !== null;
+        $startClear = false;
+        $start = null;
+        if ($startProvided) {
+            $raw = trim((string) $this->option('start'));
+            if (DueDate::isClear($raw)) {
+                $startClear = true;
+            } else {
+                try {
+                    $start = DueDate::parseOrFail($raw);
+                } catch (\InvalidArgumentException) {
+                    $this->error("--start could not be parsed as a date: {$raw}");
 
                     return self::FAILURE;
                 }
@@ -175,6 +195,7 @@ class DispatchDone extends Command
                 // ConvertEmptyStringsToNull rewrites it to null with the key
                 // intact, and key-present-null is the endpoint's clear.
                 'due_at' => $dueProvided ? ($dueClear ? '' : $due->toIso8601String()) : null,
+                'starts_at' => $startProvided ? ($startClear ? '' : $start->toIso8601String()) : null,
             ], fn ($v) => $v !== null));
 
             if ($r === null) {
@@ -219,6 +240,12 @@ class DispatchDone extends Command
             $task->due_at = $dueClear ? null : $due;
             $dueTo = $task->due_at?->toDateString();
         }
+        $startFrom = $task->starts_at?->toDateString();
+        $startTo = $startFrom;
+        if ($startProvided) {
+            $task->starts_at = $startClear ? null : $start;
+            $startTo = $task->starts_at?->toDateString();
+        }
 
         $task->status = $status;
         $task->withStatusNote($note);
@@ -254,6 +281,14 @@ class DispatchDone extends Command
                 Auth::id(),
                 ['due_at' => ['from' => $dueFrom, 'to' => $dueTo]],
                 $dueTo ? "Due date set to {$dueTo}." : 'Due date cleared.',
+            );
+        }
+        if ($startTo !== $startFrom) {
+            $task->recordEvent(
+                TaskComment::EVENT_COMMENT,
+                Auth::id(),
+                ['starts_at' => ['from' => $startFrom, 'to' => $startTo]],
+                $startTo ? "Start date set to {$startTo}." : 'Start date cleared.',
             );
         }
 

@@ -229,7 +229,7 @@ test('dispatch:done --json emits a TaskPresenter summary', function () {
         ->and($decoded['labels'])->toBe(['area:api'])
         ->and(array_keys($decoded))->toEqual([
             'code', 'title', 'type', 'priority', 'status', 'is_public',
-            'labels', 'comment_count', 'attachment_count', 'due_at', 'dedupe_key', 'submitter', 'assignee',
+            'labels', 'comment_count', 'attachment_count', 'due_at', 'starts_at', 'dedupe_key', 'submitter', 'assignee',
             'assignee_group',
             // TASK-995 anchor fields.
             'topic_type', 'topic_id', 'topic_account_key', 'origin_type', 'origin_id', 'conversation_id',

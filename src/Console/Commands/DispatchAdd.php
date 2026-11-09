@@ -34,6 +34,7 @@ class DispatchAdd extends Command
         {--description= : Full task body (markdown). Use heredoc or quoted multi-line.}
         {--description-file= : Read the task body from a file (or `-` for stdin) instead of inline --description}
         {--due= : Due date (parseable date/time string, e.g. "2026-08-01" or "+3 days"), resolved on the caller\'s clock; blank means no due date}
+        {--start= : Start date — not before (parseable date/time, e.g. "2026-08-01" or "+5 days"): the task stays out of the personal views and the agent queue until then}
         {--label=* : Label name(s) to attach; auto-created if missing. Repeatable.}
         {--public : Mark visible outside staff (default: private)}
         {--key= : Idempotency key; returns the existing task with this key instead of creating a duplicate}
@@ -78,6 +79,19 @@ class DispatchAdd extends Command
                 // The helper's message names the WIRE field; this surface is a
                 // flag, so it keeps its own wording.
                 $this->error("--due could not be parsed as a date: {$raw}");
+
+                return self::FAILURE;
+            }
+        }
+
+        // PU-2.12 (TASK-1060) — --start, same posture as --due.
+        $start = null;
+        if ($this->option('start') !== null && ! DueDate::isClear($this->option('start'))) {
+            $raw = trim((string) $this->option('start'));
+            try {
+                $start = DueDate::parseOrFail($raw);
+            } catch (\InvalidArgumentException) {
+                $this->error("--start could not be parsed as a date: {$raw}");
 
                 return self::FAILURE;
             }
@@ -157,6 +171,7 @@ class DispatchAdd extends Command
                 // whenever the server got around to parsing it. Absent when
                 // there is no due date (the filter below drops the null).
                 'due_at' => $due?->toIso8601String(),
+                'starts_at' => $start?->toIso8601String(),
                 // Anchor wire strings travel RAW — the server re-parses them
                 // with the same Anchor::parse(), so there's one parser and one
                 // source of truth for the format either side of the wire.
@@ -187,6 +202,9 @@ class DispatchAdd extends Command
         }
         if ($due !== null) {
             $attributes['due_at'] = $due;
+        }
+        if ($start !== null) {
+            $attributes['starts_at'] = $start;
         }
         if ($topicType !== null) {
             $attributes['topic_type'] = $topicType;
@@ -220,6 +238,9 @@ class DispatchAdd extends Command
         // Read off the task, not the flag: a keyed re-add returns the EXISTING
         // task untouched, and printing the date it actually carries is the
         // honest receipt.
+        if ($task->starts_at) {
+            $this->line('  starts: '.$task->starts_at->toDateTimeString());
+        }
         if ($task->due_at) {
             $this->line('  due: '.$task->due_at->toDateTimeString());
         }
