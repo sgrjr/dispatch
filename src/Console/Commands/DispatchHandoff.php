@@ -33,11 +33,10 @@ class DispatchHandoff extends Command
         {code : The task code to hand off, e.g. TASK-042}
         {--to= : The recipient — a user id or email}
         {--ask : Ask instead of pass — mints a task that BLOCKS this one; closing it returns the ball with the answer}
-        {--lane= : Disambiguate which of the recipient\'s lanes gets the (new) task, when they work more than one}
-        {--note= : A note carried onto the hand-off — the minted task\'s description (pass/ask) or the assignee_change event (a same-lane pass)}
+        {--lane= : Disambiguate which of the recipient\'s lanes the task moves to (a pass) or the question lands in (an ask), when they work more than one}
+        {--note= : A note carried onto the hand-off — the pass event on the task (a pass) or the question task\'s description (an ask)}
         {--note-file= : Read the note from a file (or `-` for stdin) instead of inline --note}
         {--due= : Due date for the task the recipient now holds (parseable date/time string, e.g. "2026-08-01" or "+3 days")}
-        {--keep-open : On a cross-lane/no-lane PASS, leave the passing task open instead of closing it (ignored for a same-lane pass or an ask)}
         {--remote : Act on the configured remote agent API (the default while an agent session token is active)}
         {--local : Act on the local DB even while an agent session token is active (overrides sticky-remote)}
         {--json : Emit machine-readable JSON instead of human text}';
@@ -75,7 +74,6 @@ class DispatchHandoff extends Command
                 // Sent RAW — the server re-parses it on ITS clock, same
                 // posture as every other --due flag that forwards remote.
                 'due_at' => $this->option('due'),
-                'keep_open' => $this->option('keep-open') ? true : null,
             ], fn ($v) => $v !== null));
 
             if ($r === null) {
@@ -109,7 +107,6 @@ class DispatchHandoff extends Command
                 'lane' => $this->option('lane'),
                 'note' => $note,
                 'due' => $this->option('due'),
-                'keep_open' => $this->option('keep-open') ? true : null,
             ], fn ($v) => $v !== null));
         } catch (\InvalidArgumentException $e) {
             $this->error($e->getMessage());

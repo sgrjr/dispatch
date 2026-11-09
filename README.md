@@ -1437,22 +1437,27 @@ returns the ball with the answer. This is the legacy request -> respond ->
 dismiss loop, rebuilt on real data instead of an inbox thread.
 
 ```php
-// Pass: same lane -> moves the ball on THIS task; a different lane (or no
-// lane at all) -> mints a continuation task in the recipient's lane and
-// closes this one (unless keep_open). $actor is nullable — an AgentSession
-// isn't an Authenticatable, and the CLI is often unauthenticated.
+// Pass: ALWAYS moves THIS task. Same lane -> the assignee changes. A
+// different lane (or no lane at all) -> the LANE moves with the ball: the
+// task goes into the recipient's lane, assigned to them, recorded as a
+// `lane_change` + a `handed_off` event (its comments, priority, topic,
+// labels, dependents and open questions all stay put). $actor is nullable —
+// an AgentSession isn't an Authenticatable, and the CLI is often
+// unauthenticated. A kind that hides the Pass control (an approval) refuses.
 $tasks->handoff($task, $recipient, $actor, ['note' => 'over to you']);
 
 // Ask: ALWAYS mints a linked task, even within the same lane, and blocks
 // $task with it. $task keeps its holder untouched until the ask closes.
 // The minted task is titled "Question: <the asker's title>" and its
 // description opens with "Asked from TASK-042." — the note, if any,
-// follows as its own paragraph (a pass-continuation opens with
-// "Passed from TASK-042." the same way, title unchanged).
+// follows as its own paragraph. When the ask closes, the answer lands on
+// $task; the ball goes back to the asker only if nobody else holds $task
+// by then (an answer never takes work back from whoever it was passed to).
 $tasks->handoff($task, $recipient, $actor, ['ask' => true, 'note' => 'what\'s the status on this?']);
 
-// Disambiguate which of the recipient's lanes gets a minted task, when
-// they work more than one (mirrors claimForUser()'s "pick a lane").
+// Disambiguate which of the recipient's lanes the task moves to (or the
+// question lands in), when they work more than one (mirrors
+// claimForUser()'s "pick a lane").
 $tasks->handoff($task, $recipient, $actor, ['lane' => 'marketing:developer']);
 ```
 
@@ -1566,8 +1571,8 @@ real `LaneResolver` is bound and the pick is genuinely ambiguous), and the
 blocked-by/blocks lists as plain links. It is **not** gated on a real
 `LaneResolver` being bound — a pass degrades to a plain reassignment under
 the inert default, so the panel stays useful on a host that hasn't adopted
-lanes at all. A cross-lane pass redirects the page to the new continuation
-task; a same-lane pass or an ask refreshes in place.
+lanes at all. Every hand-off refreshes the page in place — the task it
+shows is still the task that carries the ball.
 
 **Visibility unchanged.** Neither `dispatch_task_links` nor `lane` widens
 who can see a task — `DispatchGate::scopeVisible()` remains the one gate,

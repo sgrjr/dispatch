@@ -385,7 +385,6 @@ class AgentController extends Controller
             'lane' => ['nullable', 'string'],
             'note' => ['nullable', 'string'],
             'due_at' => ['nullable', 'string'],
-            'keep_open' => ['nullable', 'boolean'],
         ]);
 
         /** @var class-string<Task> $taskModel */
@@ -402,7 +401,6 @@ class AgentController extends Controller
                 'lane' => $v['lane'] ?? null,
                 'note' => $v['note'] ?? null,
                 'due' => $v['due_at'] ?? null,
-                'keep_open' => (bool) ($v['keep_open'] ?? false),
             ]);
         } catch (\InvalidArgumentException $e) {
             abort(422, $e->getMessage());

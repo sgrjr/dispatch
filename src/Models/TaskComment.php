@@ -25,9 +25,10 @@ class TaskComment extends Model
     // TASK-997 part A — a task's `lane` changed (routeToLane(), claimForUser()
     // joining a lane, or a batch `update` op's tri-state `lane`).
     public const EVENT_LANE_CHANGE = 'lane_change';
-    // TASK-997 part B (the ball / hand-off) — recorded on the PASSING task
-    // when a cross-lane/no-lane pass mints a continuation task and closes
-    // this one.
+    // TASK-997 part B (the ball / hand-off) — a pass that moved the task into
+    // another lane (R33: the same task moves; `meta.continued_as` is its own
+    // code). Before R33 it was recorded on the PASSING task when a cross-lane
+    // pass minted a continuation (`continued_as` = the new code) and closed it.
     public const EVENT_HANDED_OFF = 'handed_off';
     // Recorded on the ASKER's task when an ask mints the recipient's linked
     // (blocking) task.

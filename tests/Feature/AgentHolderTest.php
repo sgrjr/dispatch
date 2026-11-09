@@ -177,16 +177,16 @@ test('handoff to the holder over HTTP by email keeps the lane', function () {
     expect($task->fresh()->assignee_user_id)->toBe(HOLDER_ID);
 });
 
-test('feature OFF: the same handoff takes the old cross-lane path (a continuation task)', function () {
+test('feature OFF: the same handoff is an ordinary cross-lane pass — the task moves into the no-department lane', function () {
     config(['dispatch.agent.holder' => null]);
     $tasks = app(DispatchTaskService::class);
     $task = $tasks->create(['title' => 'x', 'status' => 'open', 'lane' => 'ops']);
 
     $result = $tasks->handoff($task, holderUser(), null);
 
-    expect($result->code)->not->toBe($task->code)
+    expect($result->code)->toBe($task->code)
         ->and($result->lane)->toBeNull()
-        ->and($task->fresh()->status)->toBe('done');
+        ->and($result->status)->toBe('open');
 });
 
 // --- next / claim ----------------------------------------------------------

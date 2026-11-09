@@ -71,13 +71,6 @@ abstract class RecordGatedKind extends BaseTaskKind
         return true;
     }
 
-    public function continues(Task $from): ?array
-    {
-        $marker = $from->context[static::key()] ?? null;
-
-        return is_array($marker) ? $marker : null;
-    }
-
     public function lockedException(Task $task, bool $filing): TaskKindLocked
     {
         return $filing

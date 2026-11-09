@@ -538,10 +538,9 @@ class TaskShow extends Component
     /**
      * TASK-997 part B — pass or ask. Errors (an ambiguous/invalid lane pick)
      * surface on `handoffLaneChoice`, matching claimForSelf()/routeTask()'s
-     * posture. A cross-lane/no-lane PASS returns a DIFFERENT task (the
-     * continuation) — the ball is no longer here, so the page follows it
-     * (mirroring mergeInto()'s redirect). A same-lane pass or an ask returns
-     * THIS task (moved, or now blocked) — stay put and refresh in place.
+     * posture. Every hand-off returns THIS task (R33: a pass moves this task,
+     * across lanes too; an ask leaves it here, blocked), so the page
+     * refreshes in place.
      */
     public function handoffTask(): void
     {
@@ -555,8 +554,6 @@ class TaskShow extends Component
 
             return;
         }
-
-        $originalCode = $this->task->code;
 
         try {
             $result = app(DispatchTaskService::class)->handoff($this->task, $to, Auth::user(), array_filter([
@@ -574,12 +571,6 @@ class TaskShow extends Component
         $this->handoffAsk = false;
         $this->handoffNote = '';
         $this->handoffLaneChoice = '';
-
-        if ($result->code !== $originalCode) {
-            $this->redirect(route('dispatch.show', $result), navigate: false);
-
-            return;
-        }
 
         $this->task = $result->load(['labels', 'submitter', 'assignee', 'attachments', 'blockedBy', 'blocks']);
         $this->dispatch('task-saved');

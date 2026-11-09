@@ -1,5 +1,42 @@
 # Upgrading `sgrjr/dispatch`
 
+## A pass moves the same task (R33)
+
+**A cross-lane pass no longer mints a continuation task.** `handoff()`
+(and `dispatch:handoff`, `POST agent/handoff`, the TaskShow "Hand off"
+panel) moves THE SAME task into the recipient's lane, assigned to them, and
+records a `lane_change` event plus a `handed_off` event whose
+`meta.continued_as` is the task's own code. The passer's task is not
+closed, so its comments, priority, topic, labels, dependents and open
+questions all stay on the work. Splitting one piece of work into two rows
+caused a run of bugs (a lost answer, a lost question, a dropped topic, a
+request that read as complete after a pass) and confused the people using
+it.
+
+- **`keep_open` is gone** — from `handoff()`'s options, `dispatch:handoff
+  --keep-open` and the agent API's `keep_open` field. A pass never closes
+  anything now, so there is nothing to keep open.
+- **`TaskKind::continues()` is gone** from the contract (and from
+  `BaseTaskKind`/`RecordGatedKind`). A kind's marker stays on the task it
+  was filed on; a host kind that implemented it can delete the method.
+- **A kind that hides the `pass` control refuses a pass** (`TaskKindLocked`)
+  from every surface — approvals, as before.
+- **An answer never takes work back.** When an ask closes, the asker's task
+  returns to the asker only if nobody else holds it by then; otherwise the
+  answer is recorded on it (`answered`) and the current holder keeps it.
+- **History stays readable.** Existing `origin = task:<code>` continuation
+  chains keep resolving (`answersAskOf()`, the inherited-question walk), so
+  tasks passed before this release behave as they did.
+- **TaskShow no longer redirects** after a pass.
+
+Hosts that read `handed_off.meta.continued_as` as "the passer's task is
+finished" must follow the ball instead: the task is still open, just held
+by someone else in another lane.
+
+```bash
+composer update sgrjr/dispatch
+```
+
 ## Livewire 4 support
 
 **Dispatch now installs on Livewire 3 or 4.** The constraint is

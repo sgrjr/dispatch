@@ -274,7 +274,7 @@ function kindsTwoLanes(array $lanesByUser): void
     });
 }
 
-test('a kind that travels: a cross-lane pass marks the continuation and may close the locked passer', function () {
+test('R33: a cross-lane pass moves a kind task as it is — its marker, its kind and its status stay put', function () {
     kindsTwoLanes([710 => ['ops'], 711 => ['support']]);
     $from = dispatchMakeUser(710);
     $to = dispatchMakeUser(711);
@@ -283,15 +283,17 @@ test('a kind that travels: a cross-lane pass marks the continuation and may clos
         'context' => ['checklist' => ['ticks' => 2]],
     ]));
 
-    $new = app(DispatchTaskService::class)->handoff($task, $to, $from);
+    $moved = app(DispatchTaskService::class)->handoff($task, $to, $from);
 
-    expect($new->code)->not->toBe($task->code)
-        ->and($new->fresh()->context['checklist'])->toBe(['ticks' => 2])
-        ->and($new->fresh()->kind())->toBeInstanceOf(ChecklistKind::class)
-        ->and($task->fresh()->status)->toBe('done');
+    expect($moved->code)->toBe($task->code)
+        ->and($moved->fresh()->context['checklist'])->toBe(['ticks' => 2])
+        ->and($moved->fresh()->kind())->toBeInstanceOf(ChecklistKind::class)
+        ->and($moved->fresh()->status)->toBe('open')
+        ->and($moved->fresh()->lane)->toBe('support')
+        ->and($moved->fresh()->assignee_user_id)->toBe(711);
 });
 
-test('⛔ a kind that does NOT travel and locks its status refuses a closing pass (an approval task)', function () {
+test('⛔ a kind that hides the Pass control refuses a pass from every surface (an approval task)', function () {
     config(['dispatch.agent.approval_lane' => 'ops']);
     kindsTwoLanes([712 => ['ops'], 713 => ['support']]);
     $payload = app(AgentSessionService::class)->request('claude-pass', 'work', ['scopes' => ['next']]);

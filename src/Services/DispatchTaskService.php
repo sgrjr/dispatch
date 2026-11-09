@@ -13,6 +13,7 @@ use Sgrjr\Dispatch\Contracts\DispatchNotifier;
 use Sgrjr\Dispatch\Contracts\LaneResolver;
 use Sgrjr\Dispatch\Contracts\SubmitterResolver;
 use Sgrjr\Dispatch\Contracts\TenantResolver;
+use Sgrjr\Dispatch\Exceptions\TaskKindLocked;
 use Sgrjr\Dispatch\Models\AgentSession;
 use Sgrjr\Dispatch\Models\LabelAlias;
 use Sgrjr\Dispatch\Models\Task;
@@ -1088,29 +1089,28 @@ class DispatchTaskService
     }
 
     /**
-     * TASK-997 part B, R15/R22 — the hand-off ("the ball"). $to is always a
-     * PERSON; where they sit relative to $task's lane decides what happens:
+     * TASK-997 part B, R15/R22, amended by R33 (owner, 2026-11-09) — the
+     * hand-off ("the ball"). $to is always a PERSON.
      *
+     * PASS (`$opts['ask']` false, the default) moves the ball on THIS SAME
+     * task, always (R33: "passing the same task would intuitively be the
+     * correct result"):
      *   - $to already works $task's lane (or both are unrouted — see
-     *     `sameLane()`, the inert-compatible reading of R21/R22): the ball
-     *     moves on THIS SAME task (assignee := $to).
-     *   - Otherwise: a NEW task is minted in one of $to's lanes (their single
-     *     most-specific one, or `$opts['lane']` to disambiguate, or the
-     *     no-department lane when $to works none) — same conversation_id,
-     *     origin = `task:<this code>`, assigned to $to. The ball never
-     *     simply leaves its lane: a person holding another lane's task is
-     *     invisible to their own manager.
+     *     `sameLane()`): assignee := $to, ONE `assignee_change` event.
+     *   - Otherwise the LANE MOVES WITH THE BALL: lane := one of $to's lanes
+     *     (their single most-specific one, `$opts['lane']` to disambiguate,
+     *     or the no-department lane when $to works none) and assignee := $to,
+     *     recorded as a `lane_change` + a `handed_off` event. The ball still
+     *     never silently leaves its lane: the receiving manager sees the task
+     *     in their lane at once. Before R33 this minted a continuation task
+     *     and closed the passer's; existing `origin = task:` chains stay
+     *     readable ({@see answersAskOf()}, {@see answersInheritedAskOf()}).
      *
-     * PASS (`$opts['ask']` false, the default): when a new task is minted,
-     * THIS task closes (status -> done) unless `$opts['keep_open']` — its
-     * part is done. ASK (`$opts['ask']` true): ALWAYS mints a new task, even
-     * when $to works this task's own lane, and that new task BLOCKS this
-     * one (a real {@see TaskLink} row) instead of closing it — $task keeps
-     * its holder, untouched, and gains the blocked-by link. See {@see
-     * notifyDependentsOfClosure()} for the return-the-ball half: it runs
-     * whenever ANY task reaches a terminal status and, for an ask
-     * specifically, reassigns the asker's task back to them with the
-     * answer.
+     * ASK (`$opts['ask']` true): ALWAYS mints a new task, even when $to works
+     * this task's own lane, and that new task BLOCKS this one (a real {@see
+     * TaskLink} row) — a question is a new obligation for someone else. $task
+     * keeps its holder, untouched. See {@see notifyDependentsOfClosure()} for
+     * the return-the-ball half.
      *
      * $actor is nullable (not the non-nullable Authenticatable a first read
      * of the contract might suggest): an AgentSession is not an
@@ -1119,10 +1119,10 @@ class DispatchTaskService
      * submitter" posture) — a null actor simply means the timeline events
      * below carry no user_id, same as every other agent/CLI mutation.
      *
-     * @param  array{ask?:bool,lane?:?string,note?:?string,due?:?string,keep_open?:bool}  $opts
-     * @return Task the task now carrying the ball: THIS task (pass, same
-     *              lane; ask, always — it never moves), or the newly minted
-     *              continuation (a pass that left the lane).
+     * @param  array{ask?:bool,lane?:?string,note?:?string,due?:?string}  $opts
+     * @return Task the task now carrying the ball: THIS task for a pass (in
+     *              any lane), and THIS task for an ask too (it never moves —
+     *              the minted question is reachable through its blocked-by).
      *
      * @throws \InvalidArgumentException when `$opts['lane']` isn't one of
      *                                   $to's lanes, or omitting it leaves
@@ -1132,6 +1132,14 @@ class DispatchTaskService
     public function handoff(Task $task, Authenticatable $to, ?Authenticatable $actor, array $opts = []): Task
     {
         $ask = (bool) ($opts['ask'] ?? false);
+
+        // A kind that hides the Pass control (an approval: only its approvers
+        // decide it, wherever it sits) refuses a pass from every surface, not
+        // just the ones that render its controls.
+        $kind = $task->kind();
+        if (! $ask && $kind !== null && in_array('pass', $kind->hides($task), true)) {
+            throw new TaskKindLocked(($task->code ?: 'This task').' cannot be passed on: it is decided only through its own actions.');
+        }
 
         if (app(AgentHolder::class)->is($to->getAuthIdentifier())) {
             return $this->passToAgentHolder($task, $to, $actor, $opts, $ask);
@@ -1149,7 +1157,7 @@ class DispatchTaskService
 
         return $ask
             ? $this->createAskTask($task, $to, $actor, $opts, $lane)
-            : $this->createContinuationTask($task, $to, $actor, $opts, $lane);
+            : $this->passAcrossLanes($task, $to, $actor, $opts, $lane);
     }
 
     /**
@@ -1173,11 +1181,11 @@ class DispatchTaskService
     }
 
     /**
-     * Resolve which lane a MINTED continuation/ask task lands in, when the
+     * Resolve which lane the task MOVES to (a pass) or an ask lands in, when the
      * recipient does NOT already work the passing task's lane. Mirrors
      * claimForUser()'s reduction exactly, but for a THIRD PARTY (the
      * recipient), not the caller — so the messages name "the recipient"
-     * rather than "you". Zero candidates (R15) is not an error: the new
+     * rather than "you". Zero candidates (R15) is not an error: the
      * task lands in the no-department lane for an admin to route.
      *
      * @param  array<int,string>  $recipientLanes
@@ -1206,8 +1214,8 @@ class DispatchTaskService
 
     /**
      * TASK-1059 — a hand-off TO the agent holder ("waiting for an agent").
-     * The holder works no lane, so the ordinary rules would mint a
-     * continuation in the no-department lane: a re-lane, which makes the
+     * The holder works no lane, so the ordinary rules would
+     * re-lane it into the no-department lane, which makes the
      * owning department's board and every lane-keyed monitor lie (R14/R20).
      * Instead the ball always moves on THIS task and the lane stays put;
      * `next`/`claim` reach it through the holder, not the lane.
@@ -1311,85 +1319,78 @@ class DispatchTaskService
     }
 
     /**
-     * PASS, cross-lane (or no lane at all): mint the continuation task and,
-     * unless `$opts['keep_open']`, close THIS one — its part is done.
-     * Returns the NEW task (where the ball now is).
+     * PASS, cross-lane (R33): the ball AND the lane move on THIS task. One
+     * transaction: lane := $lane, assignee := $to, a given `due` applied
+     * tri-state (as {@see passWithinLane()}); then a `lane_change` event (the
+     * lane's history: which department held the work, and when) and a
+     * `handed_off` event carrying the note.
      *
-     * @param  array{note?:?string,due?:?string,keep_open?:bool}  $opts
+     * `handed_off.meta.continued_as` is THIS task's own code: the key has
+     * always meant "the task the ball continued on", and readers keyed on it
+     * (a passer's waiting-on view, "who passed this to me") keep working —
+     * the ball simply continues on the same row now.
+     *
+     * Everything that hung off the task stays put, because nothing moved
+     * rows: its comments, priority, topic, labels, kind marker, dependents
+     * and its own open questions (R28: the answer reaches the new holder —
+     * {@see returnTheBall()} never takes the ball back from them).
+     *
+     * @param  array{note?:?string,due?:?string}  $opts
      */
-    protected function createContinuationTask(Task $task, Authenticatable $to, ?Authenticatable $actor, array $opts, ?string $lane): Task
+    protected function passAcrossLanes(Task $task, Authenticatable $to, ?Authenticatable $actor, array $opts, ?string $lane): Task
     {
         $note = $opts['note'] ?? null;
         $actorId = $actor?->getAuthIdentifier();
 
-        // TASK-1190 — a task KIND that travels with the ball (continues()) hands
-        // its marker to the continuation, and vouches for closing the passer.
-        // One that doesn't travel and locks its status refuses the pass.
-        $kind = $task->kind();
-        $travels = $kind !== null && $kind->continues($task) !== null;
+        return DB::transaction(function () use ($task, $to, $actor, $actorId, $note, $opts, $lane) {
+            $fromId = $task->assignee_user_id;
+            $fromLane = $task->lane;
+            $toId = $to->getAuthIdentifier();
 
-        return DB::transaction(function () use ($task, $to, $actor, $actorId, $note, $opts, $lane, $travels) {
-            $new = $this->mintHandoffTask($task, $to, $actor, $lane, $note, 'Passed from', continuation: true);
+            $dueChanged = false;
+            $dueFrom = null;
+            $dueTo = null;
+            if (array_key_exists('due', $opts) && $opts['due'] !== null) {
+                $dueFrom = $task->due_at?->toDateString();
+                $due = DueDate::resolve($opts['due']);
+                $task->due_at = $due;
+                $dueTo = $due?->toDateString();
+                $dueChanged = $dueFrom !== $dueTo;
+            }
+
+            $task->lane = $lane;
+            $task->assignee_user_id = $toId;
+            $task->save();
+
+            if ($fromLane !== $lane) {
+                $task->recordEvent(
+                    TaskComment::EVENT_LANE_CHANGE,
+                    $actorId,
+                    ['from' => $fromLane, 'to' => $lane],
+                    'Lane changed from '.($fromLane ?? 'no department').' to '.($lane ?? 'no department').'.',
+                );
+            }
 
             $task->recordEvent(
                 TaskComment::EVENT_HANDED_OFF,
                 $actorId,
-                array_filter(['to' => $to->getAuthIdentifier(), 'continued_as' => $new->code, 'note' => $note], fn ($v) => $v !== null),
-                "Passed to {$this->userLabel($to)} — continued as {$new->code}.",
+                array_filter(['from' => $fromId, 'to' => $toId, 'continued_as' => $task->code, 'note' => $note], fn ($v) => $v !== null),
+                $note ? "Passed to {$this->userLabel($to)}: {$note}" : "Passed to {$this->userLabel($to)}.",
             );
 
-            if (empty($opts['keep_open'])) {
-                // BEFORE the close: once $task is terminal it stops gating its
-                // dependents, and a dependent left pointing only at it would read
-                // as unblocked — which is how a passed ask used to lose its answer.
-                $this->moveDependentsOnto($task, $new);
-                // R28 — and the other edge: the passer's OWN open questions go
-                // with the work, so the new holder waits for (and gets) the answer.
-                $this->moveOpenQuestionsOnto($task, $new);
-
-                $from = $task->status;
-                $task->status = 'done';
-                $travels ? TaskKinds::asKind(fn () => $task->save()) : $task->save();
-
+            if ($dueChanged) {
                 $task->recordEvent(
-                    TaskComment::EVENT_STATUS_CHANGE,
+                    TaskComment::EVENT_COMMENT,
                     $actorId,
-                    ['from' => $from, 'to' => 'done'],
-                    "Status changed from `{$from}` to `done` (handed off — continued as {$new->code}).",
+                    ['due_at' => ['from' => $dueFrom, 'to' => $dueTo]],
+                    $dueTo ? "Due date set to {$dueTo}." : 'Due date cleared.',
                 );
-
-                app(DispatchNotifier::class)->taskStatusChanged($task, $from, 'done', $actor);
             }
 
-            return $new;
-        });
-    }
+            app(DispatchNotifier::class)->taskAssigned($task, $fromId, (int) $toId, $actor);
 
-    /**
-     * TASK-1069 — a closing pass hands the work on, it does not finish it, so
-     * whatever was waiting on $from is now waiting on $to: every task $from
-     * BLOCKS gains the same link to $to (same kind, same `created_by_user_id`
-     * — for an ask that is the ASKER, who is who the ball returns to).
-     *
-     * The old link rows stay, for history: $from is about to go terminal, and a
-     * terminal blocker no longer gates ({@see Task::scopeBlocked()}), so only the
-     * new link holds the dependent. Closing $from this way must NOT be read as
-     * an answer — createContinuationTask() never calls
-     * notifyDependentsOfClosure() — and the continuation's own close is
-     * recognised as the answer by {@see answersAskOf()}.
-     *
-     * No cycle check: $to was minted a moment ago and blocks nothing and is
-     * blocked by nothing, so no path can lead back from it.
-     */
-    protected function moveDependentsOnto(Task $from, Task $to): void
-    {
-        TaskLink::query()
-            ->where('blocked_by_task_id', $from->id)
-            ->get()
-            ->each(fn (TaskLink $link) => TaskLink::query()->firstOrCreate(
-                ['task_id' => $link->task_id, 'blocked_by_task_id' => $to->id, 'kind' => $link->kind],
-                ['created_by_user_id' => $link->created_by_user_id],
-            ));
+            return $task->refresh();
+        });
     }
 
     /**
@@ -1438,7 +1439,7 @@ class DispatchTaskService
         $actorId = $actor?->getAuthIdentifier();
 
         return DB::transaction(function () use ($task, $to, $actor, $actorId, $note, $opts, $lane) {
-            $askTask = $this->mintHandoffTask($task, $to, $actor, $lane, $note, 'Asked from', continuation: false);
+            $askTask = $this->mintAskTask($task, $to, $actor, $lane, $note);
 
             if (array_key_exists('due', $opts) && $opts['due'] !== null) {
                 $askTask->due_at = DueDate::resolve($opts['due']);
@@ -1473,43 +1474,36 @@ class DispatchTaskService
     }
 
     /**
-     * Shared mint step for both a pass-continuation and an ask task: same
-     * title/type/priority/visibility/is_public/submitter/conversation/topic as
-     * $task (this IS that work, continuing or being asked-about), status
-     * `open` (already vetted, actionable — not a fresh `triage` report),
-     * `origin` = `task:<$task->code>`, assigned to $to. The create-time
-     * "request received" receipt is suppressed (quietly()) — $to gets the
-     * notification that actually matters here (taskAssigned, the EXISTING
-     * seam, no new channel) instead of $task's submitter being told
-     * "received" a second time for a task they didn't submit.
+     * Mint an ASK's question task: same type/priority/visibility/is_public/
+     * submitter/conversation/topic as $task, status `open` (already vetted,
+     * actionable — not a fresh `triage` report), `origin` = `task:<code>`,
+     * assigned to $to. The create-time "request received" receipt is
+     * suppressed (quietly()) — $to gets the notification that matters
+     * (taskAssigned, the EXISTING seam) instead of $task's submitter being
+     * told "received" for a task they didn't submit.
      *
-     * The TOPIC always carries: both kinds are about the same account/plan/
-     * title, and dropping it takes the work out of every "tasks about this"
-     * view and the topic_account_key rollup the moment it crosses a lane.
-     * LABELS carry only on a continuation (`$continuation`), which IS the
-     * same work under a new holder. An ask is a new task — a question about
-     * that work — and labels such as `source:widget` or `kind:investigate`
-     * describe the original, not the question.
+     * The TOPIC carries: a question about an account/plan/title belongs in
+     * that thing's "tasks about this" view and the topic_account_key rollup.
+     * LABELS do not: `source:widget` or `kind:investigate` describe the
+     * original work, not the question about it.
      *
-     * The DESCRIPTION always opens with the back-reference ("Asked from
-     * TASK-X." / "Passed from TASK-X.") and the note, when there is one,
-     * follows as its own paragraph — a note used to REPLACE the origin line,
-     * so every surface that renders the description (the web board, the
-     * emails, the CLI) lost the only pointer back to the task being asked
-     * about. `origin_type`/`origin_id` still carry the machine link; the
-     * line is for the reader. An ASK also prefixes its title with
-     * {@see ASK_TITLE_PREFIX}: it copies the asker's title, and without the
-     * marker a question about TASK-1479 and TASK-1479 itself read as the
-     * same row on every list (TASK-1525). Asking about a task that is itself
-     * an ask does not stack the prefix.
+     * The DESCRIPTION opens with the back-reference ("Asked from TASK-X.")
+     * and the note follows as its own paragraph; `origin_type`/`origin_id`
+     * carry the machine link, the line is for the reader. The title gets
+     * {@see ASK_TITLE_PREFIX} (TASK-1525) — without it a question about
+     * TASK-1479 and TASK-1479 itself read as the same row on every list —
+     * and asking about a task that is itself an ask does not stack it.
+     *
+     * (Before R33 a cross-lane PASS minted a continuation through this same
+     * step; a pass now moves the task itself — {@see passAcrossLanes()}.)
      */
-    protected function mintHandoffTask(Task $task, Authenticatable $to, ?Authenticatable $actor, ?string $lane, ?string $note, string $verb, bool $continuation): Task
+    protected function mintAskTask(Task $task, Authenticatable $to, ?Authenticatable $actor, ?string $lane, ?string $note): Task
     {
-        $origin = "{$verb} {$task->code}.";
+        $origin = "Asked from {$task->code}.";
         $note = trim((string) $note);
 
         $title = (string) $task->title;
-        if (! $continuation && ! Str::startsWith($title, self::ASK_TITLE_PREFIX)) {
+        if (! Str::startsWith($title, self::ASK_TITLE_PREFIX)) {
             $title = self::ASK_TITLE_PREFIX.$title;
         }
 
@@ -1537,19 +1531,7 @@ class DispatchTaskService
             $attributes['topic_id'] = $task->topic_id;
         }
 
-        $labels = $continuation ? $task->labels()->pluck('name')->all() : [];
-
-        // TASK-1190 — a kind that travels with the ball marks the continuation
-        // too (filed as the kind: its marker is system set).
-        $kind = $continuation ? $task->kind() : null;
-        $marker = $kind?->continues($task);
-        if ($marker !== null) {
-            $attributes['context'] = [$kind::key() => $marker];
-        }
-
-        $new = $marker !== null
-            ? TaskKinds::asKind(fn () => $this->quietly(fn () => $this->create($attributes, $labels, $actor)))
-            : $this->quietly(fn () => $this->create($attributes, $labels, $actor));
+        $new = $this->quietly(fn () => $this->create($attributes, [], $actor));
 
         app(DispatchNotifier::class)->taskAssigned($new, null, (int) $to->getAuthIdentifier(), $actor);
 
@@ -1667,37 +1649,13 @@ class DispatchTaskService
             if ($this->answersAskOf($task, $dependent)) {
                 $this->returnTheBall($dependent, $task, $actorUserId);
             } elseif ($this->answersInheritedAskOf($task, $dependent)) {
-                // R28 — the question travelled here with the work (a pass while it
-                // was open). The ball is already with this task's holder: the
-                // answer is delivered, nobody is reassigned.
+                // R28 — the question travelled here with the work (a pre-R33
+                // continuation that inherited the passer's open question). The
+                // ball is already with this task's holder: the answer is
+                // delivered, nobody is reassigned.
                 $this->deliverAnswer($dependent, $task, $actorUserId);
             } else {
                 $this->notifyGenericDependency($dependent, $task, $actorUserId);
-            }
-        }
-    }
-
-    /**
-     * R28 — a closing pass hands on the passer's OPEN questions: every ACTIVE
-     * blocker of $from also blocks $to (same kind, same `created_by_user_id` —
-     * the asker), so the new holder waits for the answer and receives it
-     * ({@see answersInheritedAskOf()}). A blocker already resolved is left
-     * behind; it gates nothing.
-     *
-     * Cycle-checked through linkBlockedBy(): unlike moveDependentsOnto(), the
-     * continuation by now BLOCKS things (the dependents just moved onto it), so
-     * a path back is possible in principle. A link that would close a cycle is
-     * skipped rather than failing the pass.
-     */
-    protected function moveOpenQuestionsOnto(Task $from, Task $to): void
-    {
-        $open = $from->blockedBy()->whereNotIn('status', $from::inactiveStatuses())->get();
-
-        foreach ($open as $blocker) {
-            try {
-                $this->linkBlockedBy($to, $blocker, $blocker->pivot->created_by_user_id, $blocker->pivot->kind ?? TaskLink::KIND_BLOCKS);
-            } catch (\InvalidArgumentException) {
-                // would close a cycle — the pass still stands without this link
             }
         }
     }
@@ -1771,9 +1729,9 @@ class DispatchTaskService
      */
     protected function returnTheBall(Task $dependent, Task $closedAsk, ?int $actorUserId): void
     {
-        // R28 — the asker passed their task on before the answer came back: it is
-        // closed, and the work (with this question) lives on the continuation. The
-        // ball is never returned onto a closed task; the asker is still told.
+        // R28 — the ball is never returned onto a closed task (an asker's task
+        // passed away under the pre-R33 continuation model is closed); the asker
+        // is still told.
         if ($dependent->isInactive()) {
             $this->deliverAnswer($dependent, $closedAsk, $actorUserId);
 
@@ -1785,6 +1743,16 @@ class DispatchTaskService
             ->where('blocked_by_task_id', $closedAsk->id)
             ->first();
         $askerId = $pivot?->created_by_user_id ?? $dependent->assignee_user_id;
+
+        // R28 + R33 — the asker passed the task on while the question was out:
+        // the work now has another holder, and the answer is THEIRS to use. The
+        // ball stays where it is (an answer never takes work back from the
+        // person it was handed to); the answer is recorded and announced.
+        if ($dependent->assignee_user_id !== null && $askerId !== null && (int) $dependent->assignee_user_id !== (int) $askerId) {
+            $this->deliverAnswer($dependent, $closedAsk, $actorUserId);
+
+            return;
+        }
 
         $fromAssignee = $dependent->assignee_user_id;
         $dependent->assignee_user_id = $askerId;
