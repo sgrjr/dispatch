@@ -45,13 +45,6 @@ class TaskShow extends Component
     public array $actionInput = [];
     public string $type = '';
     public string $priority = '';
-    /**
-     * The assignee slot as ONE select (W13-4): '' = unassigned, a numeric
-     * user id, or 'group:<name>' for a config-defined team. Parsed in
-     * saveMeta into the mutually-exclusive assignee_user_id/assignee_group
-     * column pair.
-     */
-    public string $assignee_choice = '';
     public bool $is_public = false;
     /** W13-5: which staff see the task — 'participants' or 'staff'. */
     public string $visibility = '';
@@ -87,9 +80,10 @@ class TaskShow extends Component
     public string $routeLaneChoice = '';
 
     /**
-     * TASK-997 part B — the "Hand off" panel: who gets the ball, whether
-     * it's an Ask, an optional note, and (only when the choice is
-     * ambiguous — see DispatchTaskService::handoff()) which of the
+     * TASK-997 part B, R33 — the ONE "Assign to" panel: a person (a pass — the
+     * lane rules hold), `none` (unassigned) or `group:<name>` (a team); whether
+     * it's an Ask (people only); an optional note; and — only when the choice
+     * is ambiguous, see DispatchTaskService::handoff() — which of the
      * recipient's lanes to use.
      */
     public string $handoffToUserId = '';
@@ -111,9 +105,6 @@ class TaskShow extends Component
         $this->status = $task->status;
         $this->type = (string) ($task->type ?? ''); // '' = no kind (TASK-1018)
         $this->priority = $task->priority;
-        $this->assignee_choice = $task->assignee_group
-            ? 'group:'.$task->assignee_group
-            : (string) ($task->assignee_user_id ?? '');
         $this->is_public = (bool) $task->is_public;
         $this->visibility = $task->visibility ?? Task::VISIBILITY_STAFF;
         $this->label_ids = $task->labels->pluck('id')->all();
@@ -150,7 +141,6 @@ class TaskShow extends Component
             'status' => 'required|in:'.implode(',', $taskClass::statuses()),
             'type' => 'nullable|in:'.implode(',', $taskClass::types()),
             'priority' => 'required|in:'.implode(',', $taskClass::priorities()),
-            'assignee_choice' => 'nullable|string',
             'is_public' => 'boolean',
             'visibility' => 'required|in:'.implode(',', Task::VISIBILITIES),
             'label_ids' => 'array',
@@ -163,12 +153,9 @@ class TaskShow extends Component
         // Captured BEFORE any mutation below — the notifier routing (N3)
         // needs the pre-save values regardless of what else changed.
         $oldStatus = $this->task->status;
-        $oldAssigneeId = $this->task->assignee_user_id;
-        $oldAssigneeGroup = $this->task->assignee_group;
 
         $changes = [];
         $statusChanged = false;
-        $assigneeChanged = false;
 
         if ($this->task->status !== $this->status) {
             // TASK-1193 — refused BEFORE any mutation, so nothing half-saves.
@@ -188,34 +175,6 @@ class TaskShow extends Component
         }
         if ($this->task->priority !== $this->priority) {
             $this->task->priority = $this->priority;
-        }
-        // W13-4: parse the single choice into the mutually-exclusive
-        // user/group column pair. A group name is validated against config —
-        // a stale option (group removed from dispatch.groups) errors instead
-        // of silently storing an unroutable assignment.
-        $newAssigneeId = null;
-        $newAssigneeGroup = null;
-        if (str_starts_with($this->assignee_choice, 'group:')) {
-            $newAssigneeGroup = substr($this->assignee_choice, 6);
-            if (! Groups::exists($newAssigneeGroup)) {
-                $this->addError('assignee_choice', 'That team is no longer configured.');
-
-                return;
-            }
-        } elseif ($this->assignee_choice !== '') {
-            $newAssigneeId = (int) $this->assignee_choice;
-        }
-
-        $groupChanged = ($this->task->assignee_group ?? null) !== $newAssigneeGroup;
-        if ($this->task->assignee_user_id !== $newAssigneeId || $groupChanged) {
-            $changes[] = [
-                'assignee_user_id',
-                $this->task->assignee_group ? 'group:'.$this->task->assignee_group : $this->task->assignee_user_id,
-                $newAssigneeGroup ? 'group:'.$newAssigneeGroup : $newAssigneeId,
-            ];
-            $this->task->assignee_user_id = $newAssigneeId;
-            $this->task->assignee_group = $newAssigneeGroup;
-            $assigneeChanged = true;
         }
         if ((bool) $this->task->is_public !== $this->is_public) {
             $changes[] = ['is_public', (bool) $this->task->is_public, $this->is_public];
@@ -323,20 +282,6 @@ class TaskShow extends Component
             // holder." A no-op unless $this->task just went terminal AND
             // has dependents.
             app(DispatchTaskService::class)->notifyDependentsOfClosure($this->task, Auth::id());
-        }
-        if ($assigneeChanged) {
-            $notifier = app(DispatchNotifier::class);
-
-            if ($this->task->assignee_group !== null) {
-                // W13-4: group assignment — duck-typed optional hook, same
-                // posture as watcherAdded (a contract change would break
-                // host notifiers).
-                if (method_exists($notifier, 'taskAssignedGroup')) {
-                    $notifier->taskAssignedGroup($this->task, $oldAssigneeGroup, $this->task->assignee_group, Auth::user());
-                }
-            } else {
-                $notifier->taskAssigned($this->task, $oldAssigneeId, $this->task->assignee_user_id, Auth::user());
-            }
         }
 
         $this->task->refresh()->load(['labels', 'submitter', 'assignee', 'attachments']);
@@ -560,6 +505,27 @@ class TaskShow extends Component
 
         $this->validate(['handoffToUserId' => 'required']);
 
+        // R33 (TASK-2462): nobody, or a team, is a plain write — there is no
+        // ball to pass and no lane to follow. A team is validated against
+        // config: a stale option errors instead of storing an unroutable
+        // assignment (W13-4).
+        if ($this->handoffToUserId === 'none' || str_starts_with($this->handoffToUserId, 'group:')) {
+            $group = $this->handoffToUserId === 'none' ? null : substr($this->handoffToUserId, 6);
+            if ($this->handoffAsk) {
+                $this->addError('handoffToUserId', 'An ask goes to a person.');
+
+                return;
+            }
+            if ($group !== null && ! Groups::exists($group)) {
+                $this->addError('handoffToUserId', 'That team is no longer configured.');
+
+                return;
+            }
+            $this->assignPlain($group);
+
+            return;
+        }
+
         $to = AssignableUsers::query()->whereKey($this->handoffToUserId)->first();
         if ($to === null) {
             $this->addError('handoffToUserId', 'Pick a user from the list.');
@@ -585,6 +551,49 @@ class TaskShow extends Component
         $this->handoffLaneChoice = '';
 
         $this->task = $result->load(['labels', 'submitter', 'assignee', 'attachments', 'blockedBy', 'blocks']);
+        $this->dispatch('task-saved');
+    }
+
+    /**
+     * Unassign, or assign to a team (W13-4): the column pair, one
+     * `assignee_change` event, and the notifier — a team hears through the
+     * duck-typed taskAssignedGroup hook (a contract change would break host
+     * notifiers), an unassignment through taskAssigned.
+     */
+    private function assignPlain(?string $group): void
+    {
+        $oldId = $this->task->assignee_user_id;
+        $oldGroup = $this->task->assignee_group;
+        if ($oldId === null && $oldGroup === $group) {
+            $this->handoffToUserId = '';
+
+            return;
+        }
+
+        $this->task->assignee_user_id = null;
+        $this->task->assignee_group = $group;
+        $this->task->save();
+
+        $this->task->recordEvent(
+            TaskComment::EVENT_ASSIGNEE_CHANGE,
+            Auth::id(),
+            ['from' => $oldGroup ? 'group:'.$oldGroup : $oldId, 'to' => $group ? 'group:'.$group : null],
+            'Assignee updated.',
+        );
+
+        $notifier = app(DispatchNotifier::class);
+        if ($group !== null) {
+            if (method_exists($notifier, 'taskAssignedGroup')) {
+                $notifier->taskAssignedGroup($this->task, $oldGroup, $group, Auth::user());
+            }
+        } else {
+            $notifier->taskAssigned($this->task, $oldId, null, Auth::user());
+        }
+
+        $this->handoffToUserId = '';
+        $this->handoffNote = '';
+        $this->handoffLaneChoice = '';
+        $this->task->refresh()->load(['labels', 'submitter', 'assignee', 'attachments', 'blockedBy', 'blocks']);
         $this->dispatch('task-saved');
     }
 

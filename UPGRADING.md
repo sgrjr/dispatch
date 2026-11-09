@@ -1,5 +1,26 @@
 # Upgrading `sgrjr/dispatch`
 
+## One "Assign to" panel on the task page (R33)
+
+**TaskShow's Properties card no longer has an Assignee select.** It wrote the
+column directly and skipped the lane rules, beside a Hand off panel that
+followed them. The panel is now the ONE control, titled **Assign to**: a
+person runs `handoff()` (a pass; their lane comes with them), while
+**Unassigned** and a **team** are plain writes (one `assignee_change` event; a
+team is still validated against `dispatch.groups`). The Ask checkbox turns it
+into a question (people only).
+
+- `TaskShow::$assignee_choice` is gone. Set `handoffToUserId` (a user id,
+  `none`, or `group:<name>`) and call `handoffTask()`.
+- **Fix:** a pass to a person now clears `assignee_group`. A task held by a
+  team and passed to a person used to keep both.
+- A host that published and overrode `task-show.blade.php` should take the
+  new panel.
+
+```bash
+composer update sgrjr/dispatch
+```
+
 ## A task has a start date (PU-2.12)
 
 **New column `dispatch_tasks.starts_at` (migration 000026) — run `php artisan

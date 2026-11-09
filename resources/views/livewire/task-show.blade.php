@@ -659,7 +659,7 @@
                 <section class="dispatch-card dispatch-rail-card" id="dispatch-properties">
                     <div class="dispatch-card-head">
                         <h2 class="dispatch-section-title">Properties</h2>
-                        <span class="dispatch-dirty" wire:dirty wire:target="status,statusNote,type,priority,assignee_choice,due_at,starts_at,visibility,is_public,label_ids,editDescription">Unsaved changes</span>
+                        <span class="dispatch-dirty" wire:dirty wire:target="status,statusNote,type,priority,due_at,starts_at,visibility,is_public,label_ids,editDescription">Unsaved changes</span>
                     </div>
 
                     @if (in_array('status', $hiddenControls, true) && ! empty($kindView['lock_reason']))
@@ -699,25 +699,7 @@
                         </div>
                     </div>
 
-                    @unless (in_array('assignee', $hiddenControls, true))
-                    <div class="dispatch-field" style="margin-top:0.7rem;">
-                        <label class="dispatch-label">Assignee</label>
-                        <select wire:model="assignee_choice" class="dispatch-select">
-                            <option value="">Unassigned</option>
-                            @if (! empty($groupOptions))
-                                <optgroup label="Teams">
-                                    @foreach ($groupOptions as $g)
-                                        <option value="group:{{ $g }}">Team {{ $g }}</option>
-                                    @endforeach
-                                </optgroup>
-                            @endif
-                            @foreach ($assigneeOptions as $u)
-                                <option value="{{ $u->id }}">{{ $u->name }} ({{ $u->email }})</option>
-                            @endforeach
-                        </select>
-                        @error('assignee_choice') <p class="dispatch-error">{{ $message }}</p> @enderror
-                    </div>
-                    @endunless
+                    {{-- R33 (TASK-2462): the assignee is set in the ONE Assign to panel below. --}}
 
                     <div class="dispatch-field-pair">
                         <div class="dispatch-field">
@@ -775,11 +757,26 @@
                      the header, where dependencies read as high-priority context. --}}
                 @if (! (in_array('pass', $hiddenControls, true) && in_array('ask', $hiddenControls, true)))
                     <section class="dispatch-card dispatch-rail-card" data-dispatch-control="handoff">
-                        <h2 class="dispatch-section-title">Hand off</h2>
+                        <h2 class="dispatch-section-title">{{ $handoffAsk ? 'Ask' : 'Assign to' }}</h2>
+                        {{-- R33 (TASK-2462): the ONE place a task changes hands. A person is a
+                             pass (their lane comes with them); Unassigned and a team are plain. --}}
+                        <p style="font-size:0.75rem; margin:0 0 0.4rem; color: var(--dispatch-text-muted);">Now: {{ $task->assigneeLabel() ?? 'Unassigned' }}</p>
 
                         <div class="dispatch-field">
-                            <select wire:model="handoffToUserId" class="dispatch-select" aria-label="Hand off to">
-                                <option value="">Hand off to…</option>
+                            <select wire:model.live="handoffToUserId" class="dispatch-select" aria-label="Assign to">
+                                <option value="">{{ $handoffAsk ? 'Ask someone…' : 'Assign to…' }}</option>
+                                @unless ($handoffAsk)
+                                    @if ($task->assignee_user_id !== null || $task->assignee_group !== null)
+                                        <option value="none">Unassigned</option>
+                                    @endif
+                                    @if (! empty($groupOptions))
+                                        <optgroup label="Teams">
+                                            @foreach ($groupOptions as $g)
+                                                <option value="group:{{ $g }}">Team {{ $g }}</option>
+                                            @endforeach
+                                        </optgroup>
+                                    @endif
+                                @endunless
                                 @foreach ($handoffOptions as $opt)
                                     <option value="{{ $opt->id }}">{{ $opt->name }}</option>
                                 @endforeach
@@ -797,17 +794,17 @@
                             </div>
                         @endif
 
-                        <textarea wire:model="handoffNote" rows="2" placeholder="Note (optional) — becomes the hand-off's description, or rides the pass event" class="dispatch-textarea" style="margin-top:0.6rem;"></textarea>
+                        <textarea wire:model="handoffNote" rows="2" placeholder="{{ $handoffAsk ? 'Your question' : 'Note (optional) — what they need to know' }}" class="dispatch-textarea" style="margin-top:0.6rem;"></textarea>
 
                         @unless (in_array('ask', $hiddenControls, true) || in_array('pass', $hiddenControls, true))
                         <label class="dispatch-check">
                             <input type="checkbox" wire:model="handoffAsk">
-                            <span>Ask (blocks this task instead of closing it)</span>
+                            <span>Ask a question instead (it blocks this task until they answer)</span>
                         </label>
                         @endunless
 
                         <button type="button" wire:click="handoffTask" wire:loading.attr="disabled" wire:target="handoffTask" class="dispatch-btn is-secondary is-block" style="margin-top:0.7rem;">
-                            {{ $handoffAsk ? 'Ask' : 'Hand off' }}
+                            {{ $handoffAsk ? 'Ask' : 'Assign' }}
                         </button>
                         @error('handoffToUserId') <p class="dispatch-error">{{ $message }}</p> @enderror
                         @error('handoffLaneChoice') <p class="dispatch-error">{{ $message }}</p> @enderror

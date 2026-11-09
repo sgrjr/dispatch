@@ -1565,8 +1565,10 @@ naming the operation index.
 the FULL shape only (never the summary/list shape), matching `lane_label`'s
 posture. `dispatch:show` prints them as plain lines.
 
-**Board UI.** `TaskShow` gets a "Hand off" panel (staff only) — a person
-picker, an Ask checkbox, a note, a lane disambiguator (shown only when a
+**Board UI.** `TaskShow` has ONE "Assign to" panel (staff only; R33 — there
+is no separate Assignee select): a person picker (a person is a pass, so the
+lane rules hold), plus "Unassigned" and any configured teams (plain writes),
+an Ask checkbox (people only), a note, a lane disambiguator (shown only when a
 real `LaneResolver` is bound and the pick is genuinely ambiguous), and the
 blocked-by/blocks lists as plain links. It is **not** gated on a real
 `LaneResolver` being bound — a pass degrades to a plain reassignment under

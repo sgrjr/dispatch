@@ -55,8 +55,8 @@ test('assigning a task to a team stores the singular group value, memorializes, 
     Notification::fake();
 
     Livewire::test(TaskShow::class, ['task' => $task])
-        ->set('assignee_choice', 'group:it')
-        ->call('saveMeta')
+        ->set('handoffToUserId', 'group:it')
+        ->call('handoffTask')
         ->assertHasNoErrors();
 
     $fresh = $task->fresh();
@@ -73,8 +73,8 @@ test('assigning a task to a team stores the singular group value, memorializes, 
 
     // Reassigning to a person clears the group (mutual exclusivity).
     Livewire::test(TaskShow::class, ['task' => $fresh])
-        ->set('assignee_choice', (string) $alice->id)
-        ->call('saveMeta')
+        ->set('handoffToUserId', (string) $alice->id)
+        ->call('handoffTask')
         ->assertHasNoErrors();
 
     $fresh = $task->fresh();
@@ -89,9 +89,9 @@ test('a no-longer-configured team errors instead of silently storing an unroutab
     $task = app(DispatchTaskService::class)->create(['title' => 'Stale team target']);
 
     Livewire::test(TaskShow::class, ['task' => $task])
-        ->set('assignee_choice', 'group:disbanded')
-        ->call('saveMeta')
-        ->assertHasErrors('assignee_choice');
+        ->set('handoffToUserId', 'group:disbanded')
+        ->call('handoffTask')
+        ->assertHasErrors('handoffToUserId');
 
     expect($task->fresh()->assignee_group)->toBeNull();
 });
@@ -144,4 +144,29 @@ test('the presented JSON carries assignee_group additively (W13-4)', function ()
 
     expect($summary['assignee_group'])->toBe('it');
     expect($summary['assignee'])->toBeNull();
+});
+
+test('R33: the one Assign to panel unassigns with "none", and an ask must name a person (TASK-2462)', function () {
+    $staff = dispatchMakeUser(1);
+    $alice = dispatchMakeUser(2);
+    $this->actingAs($staff);
+
+    $task = app(DispatchTaskService::class)->create(['title' => 'Held work', 'assignee_user_id' => $alice->id]);
+
+    Livewire::test(TaskShow::class, ['task' => $task])
+        ->set('handoffToUserId', 'none')
+        ->set('handoffAsk', true)
+        ->call('handoffTask')
+        ->assertHasErrors('handoffToUserId');
+    expect($task->fresh()->assignee_user_id)->toBe($alice->id);
+
+    Livewire::test(TaskShow::class, ['task' => $task->fresh()])
+        ->set('handoffToUserId', 'none')
+        ->call('handoffTask')
+        ->assertHasNoErrors();
+
+    $fresh = $task->fresh();
+    expect($fresh->assignee_user_id)->toBeNull()
+        ->and($fresh->assignee_group)->toBeNull()
+        ->and($fresh->comments()->where('event_type', TaskComment::EVENT_ASSIGNEE_CHANGE)->latest('id')->first()->meta)->toBe(['from' => $alice->id, 'to' => null]);
 });

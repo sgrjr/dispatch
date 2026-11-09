@@ -1314,6 +1314,9 @@ class DispatchTaskService
             }
 
             $task->assignee_user_id = $toId;
+            // A person and a team are mutually exclusive (W13-4): the ball is
+            // in one pair of hands.
+            $task->assignee_group = null;
             $task->save();
 
             $task->recordEvent(
@@ -1389,6 +1392,7 @@ class DispatchTaskService
 
             $task->lane = $lane;
             $task->assignee_user_id = $toId;
+            $task->assignee_group = null; // a person, never a person AND a team (W13-4)
             $task->save();
 
             if ($fromLane !== $lane) {
